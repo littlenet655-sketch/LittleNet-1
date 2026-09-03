@@ -8,26 +8,51 @@ def hash_password(password): return bcrypt.hashpw(password.encode(),bcrypt.gensa
 def check_password(password,hashed): return bcrypt.checkpw(password.encode(),hashed.encode())
 
 def register_child(form):
-    if not validate_username(form.get('username')):raise ValueError('invalid_username')
-    if not validate_name(form.get('full_name')):raise ValueError('invalid_full_name')
-    if not validate_name(form.get('parent_name')):raise ValueError('invalid_parent_name')
-    try:age=int(form.get('age'))
-    except (TypeError,ValueError):raise ValueError('invalid_age')
-    if not 4<=age<=18:raise ValueError('invalid_age')
-    if len(form.get('password',''))<8:raise ValueError('weak_password')
-    token=str(uuid.uuid4())
-    conn=get_db_connection()
+    username = (form.get('username') or '').strip()
+    if not validate_username(username):
+        raise ValueError('Username must be 3-30 characters (letters, numbers, underscores) and contain no inappropriate words.')
+    full_name = (form.get('full_name') or '').strip()
+    if not validate_name(full_name):
+        raise ValueError('Full name must start with a letter and be at least 2 characters.')
+    parent_name = (form.get('parent_name') or '').strip()
+    if not validate_name(parent_name):
+        raise ValueError('Parent name must start with a letter and be at least 2 characters.')
     try:
-        cur=conn.cursor()
-        cur.execute("""INSERT INTO users(username,full_name,email,password_hash,role,age) VALUES(%s,%s,%s,%s,'CHILD',%s) RETURNING user_id""",(form['username'].strip(),form['full_name'].strip(),form['email'].strip().lower(),hash_password(form['password']),age))
-        child_id=cur.fetchone()['user_id']
-        cur.execute("""INSERT INTO parent_child_map(child_id,parent_name,parent_email,approval_token) VALUES(%s,%s,%s,%s)""",(child_id,form['parent_name'].strip(),form['parent_email'].strip().lower(),token))
+        age = int(form.get('age', '0'))
+    except (TypeError, ValueError):
+        raise ValueError('Age must be a valid number between 4 and 18.')
+    if not 4 <= age <= 18:
+        raise ValueError('Age must be between 4 and 18 for Kids Mode.')
+    password = form.get('password', '')
+    if len(password) < 8:
+        raise ValueError('Password must be at least 8 characters long.')
+    token = str(uuid.uuid4())
+    conn = get_db_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO users(username,full_name,email,password_hash,role,age) VALUES(%s,%s,%s,%s,'CHILD',%s) RETURNING user_id""",
+            (username, full_name, form['email'].strip().lower(), hash_password(password), age)
+        )
+        child_id = cur.fetchone()['user_id']
+        cur.execute(
+            """INSERT INTO parent_child_map(child_id,parent_name,parent_email,approval_token) VALUES(%s,%s,%s,%s)""",
+            (child_id, parent_name, form['parent_email'].strip().lower(), token)
+        )
         conn.commit()
-    except Exception:
-        conn.rollback();raise
-    finally:conn.close()
-    link=f"{Config.BASE_URL.rstrip('/')}/approve/{token}/"
-    send_email(form['parent_email'],'LittleNet Parent Approval',f'<h2>LittleNet</h2><p>Approve {form["full_name"]}</p><a href="{link}">Approve child account</a>')
+    except Exception as exc:
+        conn.rollback()
+        err_msg = str(exc).lower()
+        if 'unique' in err_msg or 'duplicate' in err_msg:
+            if 'username' in err_msg:
+                raise ValueError(f"The username '{username}' is already taken. Please choose another one.")
+            if 'email' in err_msg:
+                raise ValueError("An account with this email address already exists. Please log in.")
+        raise ValueError(f"Database error: {exc}")
+    finally:
+        conn.close()
+    link = f"{Config.BASE_URL.rstrip('/')}/approve/{token}/"
+    send_email(form['parent_email'], 'LittleNet Parent Approval', f'<h2>LittleNet</h2><p>Approve {full_name}</p><a href="{link}">Approve child account</a>')
     return token
 
 def approve_child_account(token):
@@ -66,9 +91,11 @@ def register_parent_account(token,form):
     except Exception:conn.rollback();raise
     finally:conn.close()
 
-def login_user(email,password):
-    row=fetch_one('SELECT * FROM users WHERE email=%s',(email.strip().lower(),))
-    if not row or not check_password(password,row['password_hash']) or row['account_status']!='ACTIVE':return None
+def login_user(identifier, password):
+    val = (identifier or '').strip()
+    row = fetch_one('SELECT * FROM users WHERE LOWER(email)=%s OR LOWER(username)=%s', (val.lower(), val.lower()))
+    if not row or not check_password(password, row['password_hash']):
+        return None
     return row
 
 def profile_exists(child_id): return bool(fetch_one('SELECT 1 FROM child_profiles WHERE child_id=%s',(child_id,)))

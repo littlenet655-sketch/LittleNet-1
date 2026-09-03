@@ -31,18 +31,33 @@ def mode_select(): return render_template('mode_select.html')
 def login():
     mode=request.args.get('mode','kids').lower()
     if request.method=='POST':
-        user=login_user(request.form.get('email',''),request.form.get('password',''))
-        wanted='CHILD' if request.form.get('mode','kids')=='kids' else 'PARENT'
-        if not user or user['role']!=wanted: return render_template('login.html',mode=request.form.get('mode','kids'),error='Invalid credentials for this mode'),401
-        _set_session(user); return redirect(_dest(user))
+        ident = request.form.get('email', '') or request.form.get('username', '')
+        user = login_user(ident, request.form.get('password', ''))
+        wanted = 'CHILD' if request.form.get('mode', 'kids') == 'kids' else 'PARENT'
+        if not user or user['role'] != wanted:
+            return render_template('login.html', mode=request.form.get('mode', 'kids'), error='Invalid username/email or password for this mode'), 401
+        if user['account_status'] == 'PENDING_APPROVAL':
+            mapping = fetch_one('SELECT approval_token FROM parent_child_map WHERE child_id=%s', (user['user_id'],))
+            tok = mapping['approval_token'] if mapping else None
+            return render_template('login.html', mode=request.form.get('mode', 'kids'),
+                                   error='This child account is waiting for parent approval.',
+                                   approval_token=tok), 403
+        if user['account_status'] != 'ACTIVE':
+            return render_template('login.html', mode=request.form.get('mode', 'kids'), error='Account is suspended or inactive.'), 403
+        _set_session(user)
+        return redirect(_dest(user))
     return render_template('login.html',mode=mode)
 
 @auth_bp.route('/register-child',methods=['GET','POST'])
-@limiter.limit('5 per hour')
+@auth_bp.route('/register-child/',methods=['GET','POST'])
+@limiter.limit('10 per hour')
 def register_page():
     if request.method=='POST':
-        try: register_child(request.form); return render_template('registered.html')
-        except Exception as exc: return render_template('child_register.html',error='Account could not be created. Check duplicate email/username and try again.'),400
+        try:
+            token = register_child(request.form)
+            return render_template('registered.html', token=token, parent_email=request.form.get('parent_email'))
+        except Exception as exc:
+            return render_template('child_register.html', error=str(exc)), 400
     return render_template('child_register.html')
 
 @auth_bp.route('/approve/<token>/',methods=['GET','POST'])
@@ -56,14 +71,15 @@ def approve_child(token):
     return render_template('approved.html',token=token) if row else ('Invalid or already used approval link',400)
 
 @auth_bp.route('/register-parent',methods=['GET','POST'])
-@limiter.limit('5 per hour')
+@auth_bp.route('/register-parent/',methods=['GET','POST'])
+@limiter.limit('10 per hour')
 def register_parent_direct_page():
     if request.method=='POST':
         try:
             register_parent_direct(request.form)
             return redirect('/login/?mode=parent')
-        except Exception:
-            return render_template('parent_register_direct.html',error='Parent account could not be created. Check the details and try again.'),400
+        except Exception as exc:
+            return render_template('parent_register_direct.html',error=str(exc)),400
     return render_template('parent_register_direct.html')
 
 @auth_bp.route('/register-parent/<token>/',methods=['GET','POST'])
