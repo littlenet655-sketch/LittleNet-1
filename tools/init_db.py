@@ -1,7 +1,9 @@
 from pathlib import Path
-import argparse
+import argparse, sys
+root=Path(__file__).parents[1]
+sys.path.insert(0, str(root))
 from dotenv import load_dotenv
-load_dotenv(Path(__file__).parents[1]/'.env')
+load_dotenv(root/'.env')
 from database.connection import get_db_connection
 
 root=Path(__file__).parents[1]

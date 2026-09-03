@@ -2,12 +2,12 @@ from pathlib import Path
 import ast,sys
 root=Path(__file__).parents[1];errors=[];routes=[]
 public_prefixes={
-    'auth/routes.py':{'mode_select','login','register_page','approve_child','register_parent','register_parent_direct_page','face_login','admin_login'},
+    'auth/routes.py':{'mode_select','login','register_page','verify_parent','parent_approve_child','approve_child','register_parent','register_parent_direct_page','face_login','admin_login','logout','switch_mode'},
     'auth/api.py':{'api_login'},
 }
 route_files=sorted(set(root.rglob('routes.py'))|set(root.rglob('api.py')))
 for p in route_files:
-    mod=ast.parse(p.read_text());rel=str(p.relative_to(root))
+    mod=ast.parse(p.read_text(encoding='utf-8'));rel=p.relative_to(root).as_posix()
     for n in mod.body:
         if not isinstance(n,(ast.FunctionDef,ast.AsyncFunctionDef)):continue
         decos=[];route=None;methods=['GET']
