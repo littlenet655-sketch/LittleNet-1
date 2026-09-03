@@ -83,7 +83,23 @@
   function bindDouble(root=document){
     $$('[data-double-like]',root).forEach(el=>{
       if(el.dataset.doubleBound)return;el.dataset.doubleBound='1';let last=0;
-      el.addEventListener('pointerup',async()=>{const now=Date.now();if(now-last<320){const h=$('.heart-burst',el);h?.classList.add('show');setTimeout(()=>h?.classList.remove('show'),550);const r=await postForm(`/like/${el.dataset.doubleLike}/`);if(r.ok){const b=document.querySelector(`[data-like=\"${el.dataset.doubleLike}\"]`);if(b){b.classList.toggle('liked',!!r.data.liked);b.setAttribute('aria-pressed',r.data.liked?'true':'false');}showToast('Liked! 💛');}}last=now;});
+      el.addEventListener('pointerup',async()=>{
+        const now=Date.now();
+        if(now-last<340){
+          const h=$('.heart-burst',el);
+          if(h){
+            h.classList.remove('show');
+            void h.offsetWidth;
+            h.classList.add('show');
+            setTimeout(()=>h.classList.remove('show'),600);
+          }
+          const b=document.querySelector(`[data-like="${el.dataset.doubleLike}"]`);
+          if(b && !b.classList.contains('liked')){
+            b.click();
+          }
+        }
+        last=now;
+      });
     });
   }
 
@@ -106,7 +122,7 @@
   }
   function markActiveNav(){
     const path=location.pathname.replace(/\/$/,'');
-    $$('.bottom-nav a,.parent-bottom-nav a,.parent-nav a').forEach(a=>{
+    $$('.bottom-nav a,.parent-bottom-nav a,.parent-nav a,.ig-bottom-nav a').forEach(a=>{
       const href=(a.getAttribute('href')||'').replace(/\/$/,'');
       if(href && path===href)a.classList.add('active');
     });

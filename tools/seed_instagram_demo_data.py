@@ -252,13 +252,13 @@ print("✅ Pre-stacked Instagram feed posts, likes & comments created!")
 
 # 4. Pre-stack Stories
 STORIES_DATA = [
-    ("maya_astronomy", "Stargazing tonight! Moon at 85% illumination 🌕", (30, 41, 59)),
-    ("leo_robotics", "Testing the new lidar sensor for my rover 🤖", (5, 150, 105)),
-    ("sam_origami", "Starting a giant origami peacock today! 🦚", (225, 29, 72)),
-    ("ait_star_student", "Just passed level 10 of Python code challenges! 🏆", (37, 99, 235))
+    ("maya_astronomy", "Stargazing tonight! Moon at 85% illumination 🌕", (30, 41, 59), "Science"),
+    ("leo_robotics", "Testing the new lidar sensor for my rover 🤖", (5, 150, 105), "Technology"),
+    ("sam_origami", "Starting a giant origami peacock today! 🦚", (225, 29, 72), "Art"),
+    ("ait_star_student", "Just passed level 10 of Python code challenges! 🏆", (37, 99, 235), "Coding")
 ]
 
-for author, caption, color in STORIES_DATA:
+for author, caption, color, cat in STORIES_DATA:
     author_id = user_id_map.get(author)
     if not author_id:
         continue
@@ -268,8 +268,8 @@ for author, caption, color in STORIES_DATA:
 
     s_row = execute(
         """INSERT INTO posts(child_id, media_type, media_path, caption, content_category, moderation_status, is_safe, is_story, is_reel)
-           VALUES(%s, 'IMAGE', %s, %s, 'Daily', 'ALLOWED', TRUE, TRUE, FALSE) RETURNING post_id""",
-        (author_id, img_path, caption),
+           VALUES(%s, 'IMAGE', %s, %s, %s, 'ALLOWED', TRUE, TRUE, FALSE) RETURNING post_id""",
+        (author_id, img_path, caption, cat),
         returning=True
     )
     s_id = s_row['post_id'] if s_row else None

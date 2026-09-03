@@ -20,26 +20,31 @@
 /* =========================================================
    LittleNet Instagram Clone UI System
    ========================================================= */
-body[data-role="CHILD"]{background:#FAFAFA;color:#262626;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+body[data-role="CHILD"]{background:#FAFAFA;color:#262626;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;scroll-behavior:smooth;-webkit-overflow-scrolling:touch}
 body[data-role="CHILD"] .app{background:#FFFFFF;max-width:470px;border-left:1px solid #DBDBDB;border-right:1px solid #DBDBDB;min-height:100vh}
-.ig-topbar{height:54px;background:rgba(255,255,255,.98);backdrop-filter:blur(16px);border-bottom:1px solid #DBDBDB;display:flex;align-items:center;justify-content:space-between;padding:0 16px;position:sticky;top:0;z-index:30}
-.ig-brand{font-family:'Grand Hotel',cursive,sans-serif;font-size:32px;font-weight:500;color:#262626;text-decoration:none;letter-spacing:0}
+.ig-topbar{height:54px;background:rgba(255,255,255,0.85);backdrop-filter:blur(20px) saturate(180%);-webkit-backdrop-filter:blur(20px) saturate(180%);border-bottom:1px solid rgba(0,0,0,0.08);display:flex;align-items:center;justify-content:space-between;padding:0 16px;position:sticky;top:0;z-index:30}
+.ig-brand{font-family:'Grand Hotel',cursive,sans-serif;font-size:32px;font-weight:500;color:#262626;text-decoration:none;letter-spacing:0;transition:opacity .15s ease}
+.ig-brand:hover{opacity:.85}
 .ig-top-actions{display:flex;align-items:center;gap:18px}
-.ig-icon-btn{background:none;border:0;padding:4px;color:#262626;cursor:pointer;display:grid;place-items:center;text-decoration:none}
+.ig-icon-btn{background:none;border:0;padding:4px;color:#262626;cursor:pointer;display:grid;place-items:center;text-decoration:none;transition:transform .12s cubic-bezier(0.2,0.8,0.2,1)}
+.ig-icon-btn:active{transform:scale(0.92)}
 .ig-icon-btn svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
 .ig-stories-tray{background:#FFFFFF;border-bottom:1px solid #EFEFEF;padding:14px 0 10px;margin-bottom:8px}
-.ig-stories-scroll{display:flex;gap:16px;overflow-x:auto;padding:0 16px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.ig-stories-scroll{display:flex;gap:16px;overflow-x:auto;padding:0 16px;scrollbar-width:none;-webkit-overflow-scrolling:touch;scroll-snap-type:x proximity;scroll-behavior:smooth}
 .ig-stories-scroll::-webkit-scrollbar{display:none}
-.ig-story-item{min-width:64px;text-align:center;text-decoration:none;color:#262626;display:flex;flex-direction:column;align-items:center}
+.ig-story-item{min-width:64px;scroll-snap-align:start;text-align:center;text-decoration:none;color:#262626;display:flex;flex-direction:column;align-items:center;transition:transform .16s cubic-bezier(0.2,0.8,0.2,1)}
+.ig-story-item:hover{transform:translateY(-2px)}
+.ig-story-item:active{transform:scale(0.94)}
 .ig-avatar-wrap{position:relative;width:64px;height:64px;margin:0 auto}
 .ig-story-avatar{width:60px;height:60px;border-radius:50%;object-fit:cover;background:#EFEFEF}
 .ig-add-story-badge{position:absolute;bottom:2px;right:2px;background:#0095F6;color:#fff;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:15px;font-weight:700;border:2px solid #FFFFFF}
-.ig-ring{width:66px;height:66px;border-radius:50%;background:linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%);padding:2px;display:grid;place-items:center}
+.ig-ring{width:66px;height:66px;border-radius:50%;background:linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%);padding:2px;display:grid;place-items:center;transition:box-shadow .2s ease}
+.ig-story-item:hover .ig-ring{box-shadow:0 3px 10px rgba(220,39,67,0.28)}
 .ig-ring-gap{background:#FFFFFF;border-radius:50%;padding:2px;width:100%;height:100%;display:grid;place-items:center}
 .ig-ring-gap img{width:100%;height:100%;border-radius:50%;object-fit:cover}
 .ig-story-name{font-size:11px;color:#262626;margin-top:5px;max-width:68px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .ig-feed{max-width:470px;margin:0 auto}
-.ig-post{background:#FFFFFF;border:1px solid #DBDBDB;border-radius:8px;margin-bottom:16px;overflow:hidden}
+.ig-post{background:#FFFFFF;border:1px solid #E5E5E5;border-radius:8px;margin-bottom:16px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.02)}
 .ig-post-header{display:flex;align-items:center;padding:10px 14px;gap:10px}
 .ig-mini-ring{width:36px;height:36px;border-radius:50%;background:linear-gradient(45deg,#f09433 0%,#dc2743 50%,#bc1888 100%);padding:1.5px;display:grid;place-items:center}
 .ig-post-avatar{width:32px;height:32px;border-radius:50%;object-fit:cover;background:#fff;border:1.5px solid #fff}
@@ -47,12 +52,14 @@ body[data-role="CHILD"] .app{background:#FFFFFF;max-width:470px;border-left:1px 
 .ig-post-username{font-size:14px;font-weight:600;color:#262626;text-decoration:none;display:block}
 .ig-post-category{font-size:11px;color:#737373;display:block;margin-top:1px}
 .ig-safety-text{color:#10B981;font-weight:600}
-.ig-more-btn{background:none;border:0;color:#737373;cursor:pointer;padding:4px}
+.ig-more-btn{background:none;border:0;color:#737373;cursor:pointer;padding:4px;transition:transform .12s ease}
+.ig-more-btn:active{transform:scale(0.88)}
 .ig-post-media{width:100%;aspect-ratio:1/1;background:#000000;position:relative;overflow:hidden;display:grid;place-items:center}
 .ig-post-media img,.ig-post-media video{width:100%;height:100%;object-fit:cover;display:block}
 .ig-post-actions{display:flex;align-items:center;justify-content:space-between;padding:10px 14px 6px}
 .ig-actions-left{display:flex;align-items:center;gap:16px}
-.ig-action-btn{background:none;border:0;padding:0;color:#262626;cursor:pointer;display:flex;align-items:center;text-decoration:none}
+.ig-action-btn{background:none;border:0;padding:0;color:#262626;cursor:pointer;display:flex;align-items:center;text-decoration:none;transition:transform .12s cubic-bezier(0.2,0.8,0.2,1)}
+.ig-action-btn:active{transform:scale(0.88)}
 .ig-action-btn svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
 .reaction-btn .icon-on{display:none;color:#ED4956!important;font-size:26px;line-height:1}
 .reaction-btn.liked .icon-off{display:none}
@@ -63,15 +70,16 @@ body[data-role="CHILD"] .app{background:#FFFFFF;max-width:470px;border-left:1px 
 .ig-caption-user{font-weight:600;color:#262626;text-decoration:none;margin-right:6px}
 .ig-comments-link{padding:4px 14px;font-size:14px;color:#737373;text-decoration:none;display:block}
 .ig-time-row{padding:4px 14px 12px;font-size:10px;color:#8E8E8E;text-transform:uppercase;letter-spacing:.2px}
-.ig-bottom-nav{height:48px;background:rgba(255,255,255,.98);border-top:1px solid #DBDBDB;display:flex;align-items:center;justify-content:space-around;position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(470px,100%);z-index:40;padding:0 8px}
-.ig-nav-item{color:#262626;background:none;border:0;padding:8px;text-decoration:none;display:grid;place-items:center}
+.ig-bottom-nav{height:48px;background:rgba(255,255,255,0.88);backdrop-filter:blur(24px) saturate(180%);-webkit-backdrop-filter:blur(24px) saturate(180%);border-top:1px solid rgba(0,0,0,0.08);display:flex;align-items:center;justify-content:space-around;position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(470px,100%);z-index:40;padding:0 8px}
+.ig-nav-item{color:#262626;background:none;border:0;padding:8px;text-decoration:none;display:grid;place-items:center;transition:transform .12s cubic-bezier(0.2,0.8,0.2,1)}
+.ig-nav-item:active{transform:scale(0.88)}
 .ig-nav-item svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
 .ig-nav-item.active svg{stroke-width:2.7}
 .ig-nav-avatar{width:24px;height:24px;border-radius:50%;overflow:hidden;display:block;border:1.5px solid #262626}
 .ig-nav-avatar img{width:100%;height:100%;object-fit:cover}
 .ig-empty-feed{text-align:center;padding:48px 24px;color:#737373}
 .ig-empty-icon{width:64px;height:64px;margin:0 auto 16px;color:#262626}
-@keyframes igLikePop{0%{transform:scale(.6)}60%{transform:scale(1.28)}100%{transform:scale(1)}}
+@keyframes igLikePop{0%{transform:scale(.5)}50%{transform:scale(1.32)}100%{transform:scale(1)}}
 @media(max-width:500px){body[data-role="CHILD"] .app{border-left:0;border-right:0}.ig-post{border-left:0;border-right:0;border-radius:0}}
 
 /* =========================================================
