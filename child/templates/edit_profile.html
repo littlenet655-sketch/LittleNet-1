@@ -1,1 +1,162 @@
-{% extends 'base.html' %}{% block content %}<div class="form-card"><h2>Edit profile</h2>{% if error %}<div class="error">{{error}}</div>{% endif %}<form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token()}}">{% for n,l in [('full_name','Full name'),('school_name','School'),('location','Location'),('current_class','Class')] %}<div class="field"><label>{{l}}</label><input name="{{n}}" value="{{profile[n] or ''}}"></div>{% endfor %}<div class="field"><label>Bio</label><textarea name="bio">{{profile.bio or ''}}</textarea></div><button class="btn primary">Save</button></form></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Edit Profile | LittleNet{% endblock %}
+
+{% block content %}
+<div class="profile-setup-wrap">
+  <div class="profile-card">
+    <div class="profile-setup-header">
+      <h2>Edit Profile</h2>
+      <p>Update your personal bio and profile information</p>
+    </div>
+
+    {% if error %}
+    <div class="error-banner">
+      <span>⚠️</span>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <form method="post" action="/child/edit-profile/" class="profile-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="form-group">
+        <label for="edit-fullname">Full Name <span class="required">*</span></label>
+        <input type="text" 
+               id="edit-fullname" 
+               name="full_name" 
+               class="form-input" 
+               value="{{ profile.full_name or '' }}" 
+               required>
+      </div>
+
+      <div class="form-group">
+        <label for="edit-bio">Bio / About Me</label>
+        <textarea id="edit-bio" 
+                  name="bio" 
+                  class="form-textarea" 
+                  rows="3">{{ profile.bio or '' }}</textarea>
+      </div>
+
+      <div class="form-actions">
+        <button type="submit" class="btn primary save-profile-btn">
+          <span>Save Changes</span>
+        </button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<style>
+.profile-setup-wrap {
+  width: 100%;
+  padding: 18px 14px 100px;
+  box-sizing: border-box;
+}
+
+.profile-card {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  background: #FFFFFF;
+  border: 1px solid var(--ln-line, #F1E7DA);
+  border-radius: 26px;
+  box-shadow: 0 8px 30px rgba(88, 68, 45, 0.07);
+  padding: 24px 20px 32px;
+  box-sizing: border-box;
+}
+
+.profile-setup-header {
+  text-align: center;
+  margin-bottom: 22px;
+}
+
+.profile-setup-header h2 {
+  font-family: ui-rounded, "Arial Rounded MT Bold", sans-serif;
+  font-size: 22px;
+  color: var(--ln-ink, #1F2937);
+  margin: 0 0 4px;
+}
+
+.profile-setup-header p {
+  color: #6B7280;
+  font-size: 13px;
+  margin: 0;
+}
+
+.error-banner {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #B91C1C;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+.profile-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+
+.form-group label {
+  font-size: 13px;
+  font-weight: 750;
+  color: #374151;
+}
+
+.required {
+  color: #EF4444;
+}
+
+.form-input, .form-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  background: #F9FAFB;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 14px;
+  padding: 12px 14px;
+  font-size: 14px;
+  color: #111827;
+  outline: none;
+  font-family: inherit;
+}
+
+.form-input:focus, .form-textarea:focus {
+  background: #FFFFFF;
+  border-color: #10B981;
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+.form-textarea {
+  resize: vertical;
+  min-height: 72px;
+}
+
+.form-actions {
+  margin-top: 10px;
+}
+
+.save-profile-btn {
+  width: 100%;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #10B981;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 16px;
+  font-size: 14px;
+  font-weight: 800;
+  cursor: pointer;
+}
+</style>
+{% endblock %}
