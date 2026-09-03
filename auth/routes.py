@@ -24,10 +24,19 @@ def _dest(user):
     return '/admin/'
 
 @auth_bp.route('/')
-def mode_select(): return render_template('mode_select.html')
+def mode_select():
+    if session.get('user_id'):
+        if session.get('role') == 'CHILD':
+            return redirect('/child/dashboard/' if profile_exists(session['user_id']) else '/child/create-profile/')
+        elif session.get('role') == 'PARENT':
+            return redirect('/parent/dashboard/')
+        elif session.get('role') == 'ADMIN':
+            return redirect('/admin/')
+    mode = request.args.get('mode', 'kids').lower()
+    return render_template('login.html', mode=mode)
 
 @auth_bp.route('/login/',methods=['GET','POST'])
-@limiter.limit('10 per minute')
+@limiter.limit('30 per minute')
 def login():
     mode=request.args.get('mode','kids').lower()
     if request.method=='POST':
@@ -50,18 +59,24 @@ def login():
 
 @auth_bp.route('/register-child',methods=['GET','POST'])
 @auth_bp.route('/register-child/',methods=['GET','POST'])
-@limiter.limit('10 per hour')
+@limiter.limit('100 per hour')
 def register_page():
     if request.method=='POST':
         try:
             token = register_child(request.form)
+            if request.form.get('instant_demo') == '1':
+                approve_child_account(token)
+                child_user = fetch_one('SELECT * FROM users WHERE LOWER(username)=%s', (request.form.get('username','').strip().lower(),))
+                if child_user:
+                    _set_session(child_user)
+                    return redirect(_dest(child_user))
             return render_template('registered.html', token=token, parent_email=request.form.get('parent_email'))
         except Exception as exc:
             return render_template('child_register.html', error=str(exc)), 400
     return render_template('child_register.html')
 
 @auth_bp.route('/approve/<token>/',methods=['GET','POST'])
-@limiter.limit('10 per minute')
+@limiter.limit('30 per minute')
 def approve_child(token):
     pending=fetch_one('''SELECT m.child_id,u.full_name FROM parent_child_map m JOIN users u ON u.user_id=m.child_id
       WHERE m.approval_token=%s AND m.approved=FALSE''',(token,))
@@ -72,12 +87,15 @@ def approve_child(token):
 
 @auth_bp.route('/register-parent',methods=['GET','POST'])
 @auth_bp.route('/register-parent/',methods=['GET','POST'])
-@limiter.limit('10 per hour')
+@limiter.limit('100 per hour')
 def register_parent_direct_page():
     if request.method=='POST':
         try:
-            register_parent_direct(request.form)
-            return redirect('/login/?mode=parent')
+            res = register_parent_direct(request.form)
+            uid = res['user_id']
+            user = fetch_one('SELECT * FROM users WHERE user_id=%s', (uid,))
+            _set_session(user)
+            return redirect('/parent/dashboard/')
         except Exception as exc:
             return render_template('parent_register_direct.html',error=str(exc)),400
     return render_template('parent_register_direct.html')

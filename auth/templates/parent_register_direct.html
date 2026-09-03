@@ -1,1 +1,66 @@
-{% extends 'base.html' %}{% block content %}<div class="form-card"><h1>Parent Mode</h1><h3>Create parent account</h3>{% if error %}<div class="error">{{error}}</div>{% endif %}<form method="post"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><div class="field"><label>Full name</label><input name="full_name" required></div><div class="field"><label>Username</label><input name="username" required pattern="[A-Za-z0-9_.]{3,30}"></div><div class="field"><label>Email</label><input name="email" type="email" required></div><div class="field"><label>Password</label><input name="password" type="password" minlength="8" required></div><button class="btn primary" style="width:100%">Create Parent Mode account</button></form><p class="muted">After login, Parent Mode can create and configure the child account directly.</p></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Create Parent Account | LittleNet{% endblock %}
+
+{% block content %}
+<link rel="stylesheet" href="/static/css/instagram-auth.css">
+
+<div class="ig-auth-wrapper">
+  <div class="ig-auth-column" style="max-width:420px;">
+    
+    <div class="ig-card">
+      <div class="ig-logo-wrap">
+        <div class="ig-logo-icon" style="background:linear-gradient(135deg, #1E293B 0%, #0F172A 100%);border-color:rgba(59,130,246,0.4);box-shadow:0 8px 24px -4px rgba(59,130,246,0.35);">
+          <span style="font-size:26px;">🛡️</span>
+        </div>
+        <h1 class="ig-logo-text">Parent Mode</h1>
+        <p class="ig-logo-tagline">Manage screen time, approvals & AI filters</p>
+      </div>
+
+      {% if error %}
+      <div class="ig-alert ig-alert-error">
+        <span>⚠️</span>
+        <span>{{ error }}</span>
+      </div>
+      {% endif %}
+
+      <form method="post" action="/register-parent/">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+        <div class="ig-field">
+          <input type="text" name="full_name" class="ig-input" placeholder="Parent full name" required>
+        </div>
+
+        <div class="ig-field">
+          <input type="text" name="username" class="ig-input" placeholder="Parent username (e.g. dad_ramesh)" required pattern="[A-Za-z0-9_.]{3,30}">
+        </div>
+
+        <div class="ig-field">
+          <input type="email" name="email" class="ig-input" placeholder="Parent email address" required>
+        </div>
+
+        <div class="ig-field">
+          <input type="password" name="password" class="ig-input" placeholder="Password (min 8 characters)" required minlength="8">
+        </div>
+
+        <button type="submit" class="ig-btn-primary" style="background:linear-gradient(135deg, #3B82F6 0%, #6366F1 50%, #8B5CF6 100%);box-shadow:0 6px 20px rgba(59,130,246,0.35);margin-top:8px;">
+          Create Parent Account & Log In
+        </button>
+      </form>
+
+      <p style="color:#64748B;font-size:12px;margin:14px 0 0;line-height:1.4;">
+        After account creation, you will be automatically logged into your Parent Dashboard to configure child settings.
+      </p>
+    </div>
+
+    <!-- Sign In Option -->
+    <div class="ig-subcard">
+      Already registered as Parent? <a href="/login/?mode=parent" style="color:#38BDF8;">Log in here</a>
+    </div>
+
+  </div>
+</div>
+
+<script>
+document.body.classList.add('auth-page-body');
+</script>
+{% endblock %}

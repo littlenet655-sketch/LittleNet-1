@@ -1,0 +1,533 @@
+/* =========================================================
+   LittleNet — Instagram-Style Dark Mode Authentication Experience
+   Designed for AIT CS&E (Data Science) Major Project Phase II
+   ========================================================= */
+
+:root {
+  --ig-bg: #0B0F19;
+  --ig-surface: rgba(22, 30, 46, 0.85);
+  --ig-surface-border: rgba(255, 255, 255, 0.09);
+  --ig-input-bg: #0F172A;
+  --ig-input-border: #334155;
+  --ig-text: #F8FAFC;
+  --ig-muted: #94A3B8;
+  --ig-gradient: linear-gradient(135deg, #6366F1 0%, #A855F7 50%, #EC4899 100%);
+  --ig-gradient-warm: linear-gradient(45deg, #F09433 0%, #E6683C 25%, #DC2743 50%, #CC2366 75%, #BC1888 100%);
+  --ig-glow: 0 0 35px rgba(168, 85, 247, 0.28);
+}
+
+/* Full-bleed override for auth pages */
+body.auth-page-body {
+  margin: 0;
+  padding: 0;
+  background-color: var(--ig-bg) !important;
+  color: var(--ig-text) !important;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  overflow-x: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+body.auth-page-body .app {
+  max-width: 100% !important;
+  width: 100% !important;
+  min-height: 100vh !important;
+  background: transparent !important;
+  border: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+}
+
+/* Ambient glow background effect */
+.ig-auth-wrapper {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  position: relative;
+  background: radial-gradient(circle at 15% 20%, rgba(99, 102, 241, 0.18) 0%, transparent 45%),
+              radial-gradient(circle at 85% 80%, rgba(236, 72, 153, 0.16) 0%, transparent 45%),
+              #0B0F19;
+  padding: 30px 16px 20px;
+}
+
+.ig-main-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 40px;
+  width: 100%;
+  max-width: 960px;
+  margin: auto 0;
+}
+
+/* -------------------------------------------------------------
+   Left Column: Instagram-style Smartphone Showcase
+   ------------------------------------------------------------- */
+.ig-phone-frame {
+  width: 380px;
+  height: 610px;
+  background: #000;
+  border-radius: 46px;
+  padding: 12px;
+  box-shadow: 0 25px 60px -15px rgba(0, 0, 0, 0.7),
+              0 0 0 1px rgba(255, 255, 255, 0.15),
+              inset 0 0 0 2px #1E293B;
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.ig-phone-screen {
+  width: 100%;
+  height: 100%;
+  background: #0F172A;
+  border-radius: 36px;
+  overflow: hidden;
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Phone top notch */
+.ig-phone-notch {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 110px;
+  height: 22px;
+  background: #000;
+  border-radius: 12px;
+  z-index: 20;
+}
+
+/* Rotating screen slides */
+.ig-slide-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.ig-slide {
+  position: absolute;
+  inset: 0;
+  padding: 44px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  animation: igSlideRotate 15s infinite;
+  transition: opacity 0.8s ease-in-out;
+}
+
+.ig-slide:nth-child(1) { animation-delay: 0s; }
+.ig-slide:nth-child(2) { animation-delay: 5s; }
+.ig-slide:nth-child(3) { animation-delay: 10s; }
+
+@keyframes igSlideRotate {
+  0%, 30% { opacity: 1; z-index: 2; }
+  33%, 97% { opacity: 0; z-index: 1; }
+  100% { opacity: 1; z-index: 2; }
+}
+
+/* Slide Cards inside phone */
+.ig-mock-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.ig-mock-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(52, 211, 153, 0.15);
+  color: #34D399;
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.ig-mock-post {
+  background: #1E293B;
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.ig-mock-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+}
+
+.ig-mock-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #EC4899, #F59E0B);
+  display: grid;
+  place-items: center;
+  font-size: 14px;
+}
+
+.ig-mock-img {
+  width: 100%;
+  height: 210px;
+  object-fit: cover;
+  display: block;
+}
+
+.ig-mock-content {
+  padding: 12px;
+}
+
+.ig-mock-actions {
+  display: flex;
+  gap: 14px;
+  font-size: 18px;
+  margin-bottom: 8px;
+  color: #F43F5E;
+}
+
+.ig-ai-shield-callout {
+  margin-top: 14px;
+  padding: 12px;
+  background: rgba(99, 102, 241, 0.15);
+  border: 1px solid rgba(99, 102, 241, 0.3);
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ig-ai-shield-icon {
+  font-size: 26px;
+}
+
+.ig-ai-shield-text b {
+  display: block;
+  font-size: 12px;
+  color: #A5B4FC;
+}
+
+.ig-ai-shield-text span {
+  font-size: 11px;
+  color: #94A3B8;
+}
+
+/* -------------------------------------------------------------
+   Right Column: Instagram-style Dark Cards
+   ------------------------------------------------------------- */
+.ig-auth-column {
+  width: 100%;
+  max-width: 380px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ig-card {
+  background: var(--ig-surface);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--ig-surface-border);
+  border-radius: 20px;
+  padding: 32px 28px;
+  box-shadow: 0 18px 40px -10px rgba(0, 0, 0, 0.5);
+  text-align: center;
+}
+
+/* Brand Logo */
+.ig-logo-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.ig-logo-icon {
+  width: 58px;
+  height: 58px;
+  border-radius: 18px;
+  background: linear-gradient(135deg, #1E1B4B 0%, #312E81 100%);
+  border: 1.5px solid rgba(168, 85, 247, 0.4);
+  box-shadow: 0 8px 24px -4px rgba(168, 85, 247, 0.35);
+  display: grid;
+  place-items: center;
+  margin-bottom: 12px;
+  font-size: 28px;
+}
+
+.ig-logo-text {
+  font-size: 34px;
+  font-weight: 900;
+  letter-spacing: -0.8px;
+  background: linear-gradient(135deg, #FFFFFF 0%, #E2E8F0 50%, #F472B6 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  margin: 0;
+  line-height: 1.1;
+}
+
+.ig-logo-tagline {
+  color: var(--ig-muted);
+  font-size: 13px;
+  margin: 6px 0 0;
+  font-weight: 500;
+}
+
+/* Segmented Pill Mode Switcher */
+.ig-mode-pills {
+  display: flex;
+  background: #090D16;
+  border: 1px solid var(--ig-surface-border);
+  border-radius: 12px;
+  padding: 4px;
+  margin-bottom: 20px;
+  gap: 4px;
+}
+
+.ig-pill-btn {
+  flex: 1;
+  padding: 9px 12px;
+  border-radius: 9px;
+  border: none;
+  background: transparent;
+  color: var(--ig-muted);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.ig-pill-btn.active {
+  background: var(--ig-gradient);
+  color: #FFFFFF;
+  box-shadow: 0 4px 14px rgba(168, 85, 247, 0.4);
+}
+
+/* Form Fields */
+.ig-field {
+  margin-bottom: 12px;
+  text-align: left;
+  position: relative;
+}
+
+.ig-input {
+  width: 100%;
+  background: var(--ig-input-bg);
+  border: 1px solid var(--ig-input-border);
+  border-radius: 10px;
+  padding: 13px 14px;
+  color: #FFFFFF;
+  font-size: 14px;
+  outline: none;
+  transition: all 0.18s ease;
+  box-sizing: border-box;
+}
+
+.ig-input:focus {
+  border-color: #8B5CF6;
+  background: #131C31;
+  box-shadow: 0 0 0 3px rgba(139, 92, 246, 0.25);
+}
+
+.ig-input::placeholder {
+  color: #64748B;
+  font-size: 13px;
+}
+
+/* Gradient Action Button */
+.ig-btn-primary {
+  width: 100%;
+  min-height: 46px;
+  border: none;
+  border-radius: 10px;
+  background: var(--ig-gradient-warm);
+  color: #FFFFFF;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  box-shadow: 0 6px 20px rgba(220, 39, 67, 0.35);
+  transition: transform 0.15s ease, filter 0.15s ease;
+  margin-top: 6px;
+  text-decoration: none;
+}
+
+.ig-btn-primary:hover {
+  filter: brightness(1.08);
+}
+
+.ig-btn-primary:active {
+  transform: scale(0.98);
+}
+
+/* OR Divider */
+.ig-divider {
+  display: flex;
+  align-items: center;
+  margin: 18px 0;
+  color: #64748B;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.ig-divider::before,
+.ig-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #334155;
+}
+
+.ig-divider span {
+  padding: 0 14px;
+}
+
+/* Secondary Button (Face ID) */
+.ig-btn-alt {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: #E2E8F0;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-decoration: none;
+  transition: background 0.18s ease;
+}
+
+.ig-btn-alt:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+/* Secondary Instagram Box: Sign Up */
+.ig-subcard {
+  background: var(--ig-surface);
+  border: 1px solid var(--ig-surface-border);
+  border-radius: 16px;
+  padding: 18px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ig-muted);
+}
+
+.ig-subcard a {
+  color: #F43F5E;
+  text-decoration: none;
+  font-weight: 800;
+  margin-left: 4px;
+}
+
+.ig-subcard a:hover {
+  text-decoration: underline;
+}
+
+/* Error & Alert Banners */
+.ig-alert {
+  padding: 10px 14px;
+  border-radius: 10px;
+  margin-bottom: 14px;
+  font-size: 13px;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ig-alert-error {
+  background: rgba(239, 68, 68, 0.12);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  color: #FCA5A5;
+}
+
+.ig-alert-pending {
+  background: rgba(245, 158, 11, 0.12);
+  border: 1px dashed rgba(245, 158, 11, 0.5);
+  color: #FCD34D;
+  flex-direction: column;
+  align-items: stretch;
+  text-align: center;
+}
+
+/* Department & Viva Footer */
+.ig-footer {
+  width: 100%;
+  max-width: 960px;
+  margin-top: 24px;
+  padding: 16px;
+  text-align: center;
+  font-size: 12px;
+  color: #64748B;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ig-footer a {
+  color: #94A3B8;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.ig-footer a:hover {
+  color: #F43F5E;
+}
+
+/* -------------------------------------------------------------
+   Responsive Breakpoints
+   ------------------------------------------------------------- */
+@media (max-width: 860px) {
+  .ig-phone-frame {
+    display: none;
+  }
+  
+  .ig-main-container {
+    justify-content: center;
+  }
+  
+  .ig-auth-column {
+    max-width: 400px;
+  }
+}
+
+@media (max-width: 480px) {
+  .ig-auth-wrapper {
+    padding: 16px 12px;
+    justify-content: flex-start;
+  }
+  
+  .ig-card {
+    padding: 24px 18px;
+    border-radius: 16px;
+  }
+  
+  .ig-logo-text {
+    font-size: 28px;
+  }
+}

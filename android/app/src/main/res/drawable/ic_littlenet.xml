@@ -1,1 +1,25 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108"><path android:fillColor="#FFFFFF" android:pathData="M0,0h108v108h-108z"/><path android:fillColor="#0095F6" android:pathData="M54,12C35,12 20,27 20,46v19c0,17 14,31 31,31h6c17,0 31,-14 31,-31V46C88,27 73,12 54,12z"/><path android:fillColor="#FFFFFF" android:pathData="M39,43a7,7 0,1 0,14 0a7,7 0,1 0,-14 0M55,43a7,7 0,1 0,14 0a7,7 0,1 0,-14 0M35,65c5,10 13,15 19,15s14,-5 19,-15h-8c-3,5 -7,7 -11,7s-8,-2 -11,-7z"/></vector>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Dark slate background -->
+    <path
+        android:fillColor="#0B0F19"
+        android:pathData="M0,0h108v108h-108z"/>
+    <!-- Outer Shield Gradient Purple/Pink -->
+    <path
+        android:fillColor="#8B5CF6"
+        android:pathData="M54,16C71,16 83,23 86,30C86,59 69,80 54,92C39,80 22,59 22,30C25,23 37,16 54,16Z"/>
+    <!-- Inner Dark Shield -->
+    <path
+        android:fillColor="#1E1B4B"
+        android:pathData="M54,23C67,23 76,28 78,34C78,57 65,74 54,84C43,74 30,57 30,34C32,28 41,23 54,23Z"/>
+    <!-- Center 4-Point AI Sparkle Star in White/Rose -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,34 L58,49 L73,53 L58,57 L54,72 L50,57 L35,53 L50,49 Z"/>
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M54,49a4,4 0,1 0,0.01 0Z"/>
+</vector>
