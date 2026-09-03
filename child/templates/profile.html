@@ -1,6 +1,116 @@
-{% extends 'base.html' %}{% block content %}{% import '_icons.html' as ico %}
-<section class="profile-head kid-profile"><div class="profile-row"><div class="profile-avatar-wrap"><img class="profile-avatar" src="/{{profile.profile_picture}}" data-hide-error alt="{{profile.full_name}}"><span class="profile-safe-badge">{{ico.icon('shield',14)}}</span></div><div class="stats"><div><b>{{counts.posts}}</b><span>{{t('posts')}}</span></div><div><b>{{counts.followers}}</b><span>{{t('followers')}}</span></div><div><b>{{counts.following}}</b><span>{{t('following')}}</span></div></div></div><div class="bio"><h2>{{profile.full_name}}</h2><p>{{profile.bio or 'Learning, sharing and staying safe on LittleNet.'}}</p></div>
-<form class="profile-photo-form" method="post" action="/child/upload-profile-picture/" enctype="multipart/form-data" data-profile-photo><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><label class="btn outline file-btn">{{ico.icon('camera',18)}} {{t('change_photo')}}<input type="file" name="photo" accept="image/*" capture="user"></label><button class="btn primary">Save photo</button></form>
-<div class="profile-tools"><a class="tool-pill" href="/face/enroll/">{{ico.icon('camera',18)}}<span>{{t('face_login')}}</span></a><a class="tool-pill" href="/recommended/">{{ico.icon('sparkles',18)}}<span>{{t('for_you')}}</span></a><a class="tool-pill" href="/live-safety/">{{ico.icon('shield',18)}}<span>{{t('live_safety')}}</span></a><a class="tool-pill" href="/learning/">{{ico.icon('book',18)}}<span>{{t('learning')}}</span></a><a class="tool-pill" href="/saved/">{{ico.icon('bookmark',18)}}<span>{{t('saved')}}</span></a></div>
-<form method="post" action="/switch-mode/" class="switch-mode-row"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="btn outline">{{ico.icon('lock',17)}} {{t('switch_mode')}}</button></form></section>
-<div class="section-title"><span>Your posts</span></div><div class="grid kid-grid">{% for p in posts %}<a class="tile" href="/post/{{p.post_id}}/">{% if p.media_type=='IMAGE' %}<img loading="lazy" src="/{{p.media_path}}" alt="Post">{% elif p.media_type=='VIDEO' %}<video muted playsinline preload="metadata" src="/{{p.media_path}}"></video>{% elif p.media_type=='AUDIO' %}<div class="grid-audio">{{ico.icon('volume',28)}}</div>{% else %}<div class="text-post grid-text">{{p.caption}}</div>{% endif %}</a>{% else %}<div class="empty-state grid-empty"><div class="empty-illustration">{{ico.icon('plus',36)}}</div><h3>No posts yet</h3><a class="btn primary" href="/child/upload-post/">Create one</a></div>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block content %}
+{% import '_icons.html' as ico %}
+
+<div class="ig-profile-page">
+  <!-- Profile Header -->
+  <header class="ig-profile-header">
+    <div class="ig-profile-top-row">
+      <div class="ig-profile-avatar-container">
+        <img class="ig-profile-avatar-img" src="/{{ profile.profile_picture if profile and profile.profile_picture else 'uploads/profile_pictures/download.webp' }}" data-hide-error alt="{{ profile.full_name }}">
+        <span class="ig-profile-safety-badge" title="LittleNet AI Protected">{{ ico.icon('shield', 13) }}</span>
+      </div>
+
+      <div class="ig-profile-stats">
+        <div class="ig-stat-col">
+          <b>{{ counts.posts }}</b>
+          <span>posts</span>
+        </div>
+        <a href="/followers/" class="ig-stat-col" style="text-decoration: none; color: inherit;">
+          <b>{{ counts.followers }}</b>
+          <span>followers</span>
+        </a>
+        <a href="/following/" class="ig-stat-col" style="text-decoration: none; color: inherit;">
+          <b>{{ counts.following }}</b>
+          <span>following</span>
+        </a>
+      </div>
+    </div>
+
+    <!-- Bio Section -->
+    <div class="ig-profile-bio">
+      <h2 class="ig-bio-name">{{ profile.full_name if profile else session.get('username') }}</h2>
+      <p class="ig-bio-text">{{ profile.bio if profile and profile.bio else '🌟 Sharing, learning and staying safe on LittleNet.' }}</p>
+    </div>
+
+    <!-- Action Buttons -->
+    <div class="ig-profile-actions">
+      <form class="profile-photo-form" method="post" action="/child/upload-profile-picture/" enctype="multipart/form-data" data-profile-photo style="margin: 0; flex: 1;">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label class="ig-btn ig-btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; width: 100%;">
+          {{ ico.icon('camera', 16) }} Change Photo
+          <input type="file" name="photo" accept="image/*" capture="user" style="display: none;">
+        </label>
+      </form>
+      <a href="/saved/" class="ig-btn ig-btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none;">
+        {{ ico.icon('bookmark', 16) }} Saved
+      </a>
+    </div>
+
+    <!-- Quick Highlights Bar -->
+    <div class="ig-highlights-tray">
+      <a href="/learning/" class="ig-highlight-item">
+        <div class="ig-highlight-circle">{{ ico.icon('book', 20) }}</div>
+        <span>Learning</span>
+      </a>
+      <a href="/face/enroll/" class="ig-highlight-item">
+        <div class="ig-highlight-circle">{{ ico.icon('camera', 20) }}</div>
+        <span>Face ID</span>
+      </a>
+      <a href="/recommended/" class="ig-highlight-item">
+        <div class="ig-highlight-circle">{{ ico.icon('sparkles', 20) }}</div>
+        <span>For You</span>
+      </a>
+      <a href="/live-safety/" class="ig-highlight-item">
+        <div class="ig-highlight-circle">{{ ico.icon('shield', 20) }}</div>
+        <span>Safety</span>
+      </a>
+    </div>
+
+    <form method="post" action="/switch-mode/" style="margin-top: 10px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button class="ig-btn ig-btn-outline" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">
+        {{ ico.icon('lock', 15) }} Switch Mode
+      </button>
+    </form>
+  </header>
+
+  <!-- Profile Grid Tabs -->
+  <div class="ig-grid-tabs">
+    <div class="ig-tab active">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </div>
+    <a href="/reels/" class="ig-tab" style="color: inherit; text-decoration: none;">
+      {{ ico.icon('clips', 20) }}
+    </a>
+    <a href="/saved/" class="ig-tab" style="color: inherit; text-decoration: none;">
+      {{ ico.icon('bookmark', 20) }}
+    </a>
+  </div>
+
+  <!-- 3-Column Instagram Post Grid -->
+  <div class="ig-post-grid">
+    {% for p in posts %}
+    <a class="ig-grid-tile" href="/post/{{ p.post_id }}/">
+      {% if p.media_type=='IMAGE' %}
+        <img loading="lazy" src="/{{ p.media_path }}" alt="Post">
+      {% elif p.media_type=='VIDEO' %}
+        <video muted playsinline preload="metadata" src="/{{ p.media_path }}"></video>
+        <span class="ig-tile-badge">{{ ico.icon('clips', 14) }}</span>
+      {% elif p.media_type=='AUDIO' %}
+        <div class="ig-audio-tile">{{ ico.icon('volume', 28) }}</div>
+      {% else %}
+        <div class="ig-text-tile grid-text">{{ p.caption }}</div>
+      {% endif %}
+    </a>
+    {% else %}
+    <div class="ig-empty-grid">
+      <div class="ig-empty-camera">{{ ico.icon('camera', 42) }}</div>
+      <h3>Share Photos</h3>
+      <p>When you share safe photos and clips, they appear on your profile.</p>
+      <a class="btn primary" href="/child/upload-post/">Share your first post</a>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}

@@ -1,5 +1,66 @@
-{% extends 'base.html' %}{% block content %}{% import '_icons.html' as ico %}
-<section class="kid-page-head"><span class="eyebrow">Parent-approved network</span><h1>Find friends</h1><p>LittleNet does not show a public stranger directory.</p></section>
-<div class="search-wrap">{{ico.icon('search',20)}}<input class="searchbox" placeholder="{{t('search_students')}}" aria-label="{{t('search_students')}}"></div>
-<div class="people-cards">{% for c in children %}<div class="person-card"><a href="/child/view-profile/{{c.user_id}}/" class="person-main"><img class="avatar" src="/{{c.profile_picture}}" data-hide-error alt="{{c.full_name}}"><span><b>{{c.full_name}}</b><small>{{c.recommendation_reason or 'Approved network'}}</small></span></a><button class="btn {{'outline' if c.is_following else 'primary'}}" data-follow="{{c.user_id}}">{{t('following') if c.is_following else t('requested') if c.is_pending else t('follow')}}</button></div>{% else %}<div class="empty-state"><div class="empty-illustration">{{ico.icon('user',42)}}</div><h3>No suggestions yet</h3><p>Ask Parent Mode to approve connections when they become available.</p></div>{% endfor %}</div>
+{% extends 'base.html' %}
+{% block content %}
+{% import '_icons.html' as ico %}
+
+<div class="ig-explore-page" style="max-width: 470px; margin: 0 auto; padding-bottom: 60px;">
+  <!-- Search Bar (Instagram Style) -->
+  <div class="ig-search-bar-wrap" style="padding: 10px 16px; position: sticky; top: 54px; background: #FFFFFF; z-index: 25; border-bottom: 1px solid #EFEFEF;">
+    <div style="background: #EFEFEF; border-radius: 8px; display: flex; align-items: center; padding: 0 12px; gap: 8px; height: 36px;">
+      <span style="color: #8E8E8E; display: grid; place-items: center;">{{ ico.icon('search', 16) }}</span>
+      <input type="text" class="searchbox" placeholder="Search approved classmates..." aria-label="Search" style="background: transparent; border: 0; outline: none; width: 100%; font-size: 14px; color: #262626;">
+    </div>
+  </div>
+
+  <!-- Suggested Classmates Section -->
+  <div style="padding: 14px 16px 8px;">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+      <span style="font-size: 14px; font-weight: 600; color: #262626;">Suggested for you</span>
+      <span style="font-size: 12px; font-weight: 600; color: #0095F6; cursor: pointer;">See All</span>
+    </div>
+
+    <div class="people-cards" style="padding: 0; display: flex; flex-direction: column; gap: 12px;">
+      {% for c in children %}
+      <div class="person-card" style="display: flex; align-items: center; justify-content: space-between; padding: 0; border: 0; background: transparent; margin: 0;">
+        <a href="/child/view-profile/{{ c.user_id }}/" style="display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; min-width: 0; flex: 1;">
+          <div style="width: 44px; height: 44px; border-radius: 50%; padding: 1.5px; background: linear-gradient(45deg, #f09433, #dc2743, #bc1888); flex: none; display: grid; place-items: center;">
+            <img src="/{{ c.profile_picture }}" data-hide-error alt="{{ c.full_name }}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1.5px solid #fff; background: #fff;">
+          </div>
+          <div style="min-width: 0; flex: 1;">
+            <b style="display: block; font-size: 13px; color: #262626; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ c.full_name }}</b>
+            <small style="display: block; font-size: 11px; color: #737373; margin-top: 1px;">{{ c.recommendation_reason or 'Parent-approved classmate' }}</small>
+          </div>
+        </a>
+        <button class="ig-btn {% if c.is_following or c.is_pending %}ig-btn-secondary{% else %}ig-btn-primary{% endif %}" data-follow="{{ c.user_id }}" style="font-size: 12px; padding: 6px 14px; flex: none;">
+          {{ 'Following' if c.is_following else 'Requested' if c.is_pending else 'Follow' }}
+        </button>
+      </div>
+      {% else %}
+      <div style="text-align: center; padding: 24px 0; color: #737373;">
+        <p style="font-size: 13px;">No new classmates to suggest right now.</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Discover Safe Content Grid -->
+  <div style="margin-top: 16px; border-top: 1px solid #EFEFEF; padding-top: 12px;">
+    <div style="padding: 0 16px 10px;">
+      <span style="font-size: 14px; font-weight: 600; color: #262626;">Explore Safe Posts</span>
+    </div>
+    <div class="ig-post-grid">
+      {% for p in recommended_posts if recommended_posts is defined and recommended_posts %}
+      <a class="ig-grid-tile" href="/post/{{ p.post_id }}/">
+        {% if p.media_type == 'IMAGE' %}
+          <img loading="lazy" src="/{{ p.media_path }}" alt="Explore">
+        {% elif p.media_type == 'VIDEO' %}
+          <video muted playsinline preload="metadata" src="/{{ p.media_path }}"></video>
+          <span class="ig-tile-badge">{{ ico.icon('clips', 14) }}</span>
+        {% else %}
+          <div class="ig-text-tile">{{ p.caption }}</div>
+        {% endif %}
+      </a>
+      {% endfor %}
+    </div>
+  </div>
+</div>
 {% endblock %}

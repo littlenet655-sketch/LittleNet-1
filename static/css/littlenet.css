@@ -17,37 +17,105 @@
    LittleNet kid-native UI pass — local, vanilla CSS only
    Palette intentionally distinct from adult social products.
    ========================================================= */
-:root{
-  --ln-cream:#FFF7ED;--ln-mint:#34D399;--ln-mint-dark:#047857;--ln-coral:#FB7185;
-  --ln-sun:#FBBF24;--ln-sky:#38BDF8;--ln-ink:#1F2937;--ln-soft:#FFFDF9;
-  --ln-line:#F1E7DA;--ln-muted:#6B7280;--ln-shadow:0 10px 28px rgba(88,68,45,.10);
-  --ln-radius:20px;--ln-tap:48px;
-}
-body[data-role="CHILD"]{background:#fff;color:#0b0b0b}
-body[data-role="CHILD"] .app{background:#fff}
-body[data-role="CHILD"] .safety-chip,body[data-role="CHILD"] .kid-topbar{background:var(--ln-cream)}
-.ln-icon{display:block;flex:none}
-.kid-topbar{height:62px;background:rgba(255,247,237,.94);border-bottom:1px solid var(--ln-line);padding:0 14px}
-.brand{font-family:ui-rounded,"Arial Rounded MT Bold","Trebuchet MS",sans-serif;color:var(--ln-ink);text-decoration:none;font-weight:900;letter-spacing:-.8px;display:inline-flex;align-items:center;gap:8px}
-.brand-dot{width:13px;height:13px;border-radius:50%;background:linear-gradient(135deg,var(--ln-mint),var(--ln-sky));box-shadow:0 0 0 4px rgba(52,211,153,.15)}
-.kid-icon-btn{min-width:var(--ln-tap);min-height:var(--ln-tap);border-radius:999px;background:rgba(255,255,255,.72);transition:transform .18s ease,background .18s ease}
-.kid-icon-btn:active{transform:scale(.94);background:#fff}
-.top-actions{gap:5px}
-.page{padding-bottom:120px!important;overflow:visible!important}
-.bottom-nav{height:74px;background:rgba(255,253,249,.96);border-top:1px solid var(--ln-line);padding:4px 5px max(4px,env(safe-area-inset-bottom));box-shadow:0 -8px 24px rgba(31,41,55,.06)}
-.bottom-nav .nav-item{min-width:58px;min-height:60px;padding:5px 4px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;border-radius:16px;color:var(--ln-ink);text-decoration:none;font-weight:750}
-.nav-icon{width:34px;height:32px;display:grid;place-items:center;border-radius:13px}.nav-label{font-size:10px;line-height:1}
-.bottom-nav .nav-item:active .nav-icon{transform:scale(.9)}
-.create-bubble{width:42px;height:36px;background:var(--ln-mint);color:#063c2a;box-shadow:0 6px 12px rgba(52,211,153,.28)}
-.language-form.compact{position:fixed;right:max(8px,calc(50% - 252px));bottom:82px;z-index:35;opacity:.78}.language-form.compact select{background:#fff;border:1px solid var(--ln-line);border-radius:999px;padding:5px 8px;color:var(--ln-ink);font-size:11px}
-.kid-welcome{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:18px 16px 8px}.kid-welcome h1,.kid-page-head h1{font-size:24px;margin:3px 0 4px;letter-spacing:-.5px}.kid-welcome p,.kid-page-head p{margin:0;color:var(--ln-muted);font-size:13px;line-height:1.45}.eyebrow{display:block;color:var(--ln-mint-dark);font-size:11px;font-weight:900;letter-spacing:.08em;text-transform:uppercase}.safe-orbit{width:48px;height:48px;display:grid;place-items:center;border-radius:50%;color:var(--ln-mint-dark);background:#D1FAE5;box-shadow:0 0 0 6px rgba(52,211,153,.12)}
-.stories{gap:14px;padding:12px 14px 14px}.story{min-width:76px;font-size:12px;font-weight:700;color:var(--ln-ink)}.ring{width:70px;height:70px;padding:4px;background:conic-gradient(from 20deg,var(--ln-coral),var(--ln-sun),var(--ln-mint),var(--ln-sky),var(--ln-coral));box-shadow:0 5px 12px rgba(251,113,133,.18)}.ring-inner{background:var(--ln-cream);padding:3px;display:grid;place-items:center}.empty-ring{filter:saturate(.8)}.add-story .ring-inner{background:#fff;color:var(--ln-mint-dark)}
-.learn-card{margin:2px 14px 12px;padding:13px 14px;background:linear-gradient(135deg,#DDF7FF,#E8FFF4 55%,#FFF2C7);border:1px solid rgba(56,189,248,.18);border-radius:22px;display:flex;align-items:center;gap:12px;color:var(--ln-ink);text-decoration:none;box-shadow:var(--ln-shadow)}.learn-card b{display:block;font-size:14px}.learn-card small{display:block;color:#4B5563;margin-top:2px}.learn-illustration{width:48px;height:48px;display:grid;place-items:center;border-radius:16px;background:#fff;color:#0E7490}.learn-go{margin-left:auto;font-size:28px;color:#0E7490}
-.section-title{padding:12px 15px 8px}.section-title a{color:var(--ln-mint-dark);font-size:12px;text-decoration:none}.feed-heading{padding-top:16px}.tiny-status,.mini-safe{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:800;color:var(--ln-mint-dark);background:#D1FAE5;border-radius:999px;padding:4px 8px}
-.rail{gap:11px;padding:0 14px 14px}.reel-teaser{min-width:142px;height:210px;border-radius:20px;box-shadow:var(--ln-shadow);border:2px solid rgba(255,255,255,.9)}.reel-teaser:active{transform:scale(.985)}.reel-teaser .meta{left:9px;bottom:9px;display:flex;flex-direction:column;align-items:flex-start;gap:5px}.empty-reel{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;background:linear-gradient(160deg,#BAE6FD,#D1FAE5);color:var(--ln-ink);text-align:center;padding:16px;text-decoration:none}
-.kid-card.post{margin:0 10px 14px;background:#fff;border:1px solid var(--ln-line);border-radius:22px;overflow:hidden;box-shadow:0 6px 20px rgba(85,64,42,.07)}.post-head{padding:10px 12px}.post-head .avatar{width:40px;height:40px}.avatar-link{width:40px;height:40px;flex:none}.post-user{color:var(--ln-ink);text-decoration:none;font-size:13px}.post-user small{display:block;color:var(--ln-muted);font-size:10px;font-weight:600;margin-top:2px}.post-media{background:#F5F2EC;min-height:190px}.post-media img,.post-media video{max-height:650px}.text-post{background:linear-gradient(145deg,#FFF2C7,#E7FAF2 55%,#E0F2FE);color:var(--ln-ink);font-family:ui-rounded,"Arial Rounded MT Bold",sans-serif}.audio-post{gap:12px}.audio-post audio{width:min(100%,320px)}
-.icon-btn{min-width:44px;min-height:44px;border-radius:999px;color:var(--ln-ink);transition:transform .16s ease,background .16s ease}.post-actions{padding:8px 8px 1px;gap:3px}.post-actions .icon-btn:hover{background:#FFF7ED}.post-actions .icon-btn:active{transform:scale(.88)}.reaction-btn .icon-on{display:none;color:var(--ln-coral);font-size:25px;line-height:1}.reaction-btn.liked .icon-off{display:none}.reaction-btn.liked .icon-on{display:block;animation:lnLikePop .38s cubic-bezier(.2,1.5,.5,1)}.save-btn.saved{color:var(--ln-sky);background:#E0F2FE}.heart-burst{color:var(--ln-coral);text-shadow:0 5px 18px rgba(251,113,133,.35)}.heart-burst.show{animation:lnBurst .55s cubic-bezier(.2,1.4,.4,1)}@keyframes lnLikePop{0%{transform:scale(.55)}60%{transform:scale(1.25)}100%{transform:scale(1)}}@keyframes lnBurst{0%{opacity:0;transform:translate(-50%,-50%) scale(.3) rotate(-12deg)}40%{opacity:1;transform:translate(-50%,-50%) scale(1.25) rotate(8deg)}100%{opacity:0;transform:translate(-50%,-50%) scale(.85)}}
-.likes,.caption{font-size:13px}.safety-chip{display:inline-flex;align-items:center;gap:4px}.allow-chip{background:#D1FAE5;color:#047857}.safety-banner{margin:6px 14px 2px;padding:10px 12px;border-radius:16px;background:#ECFDF5;color:#047857;display:flex;align-items:center;gap:7px;font-size:12px;font-weight:800}
+/* =========================================================
+   LittleNet Instagram Clone UI System
+   ========================================================= */
+body[data-role="CHILD"]{background:#FAFAFA;color:#262626;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+body[data-role="CHILD"] .app{background:#FFFFFF;max-width:470px;border-left:1px solid #DBDBDB;border-right:1px solid #DBDBDB;min-height:100vh}
+.ig-topbar{height:54px;background:rgba(255,255,255,.98);backdrop-filter:blur(16px);border-bottom:1px solid #DBDBDB;display:flex;align-items:center;justify-content:space-between;padding:0 16px;position:sticky;top:0;z-index:30}
+.ig-brand{font-family:'Grand Hotel',cursive,sans-serif;font-size:32px;font-weight:500;color:#262626;text-decoration:none;letter-spacing:0}
+.ig-top-actions{display:flex;align-items:center;gap:18px}
+.ig-icon-btn{background:none;border:0;padding:4px;color:#262626;cursor:pointer;display:grid;place-items:center;text-decoration:none}
+.ig-icon-btn svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
+.ig-stories-tray{background:#FFFFFF;border-bottom:1px solid #EFEFEF;padding:14px 0 10px;margin-bottom:8px}
+.ig-stories-scroll{display:flex;gap:16px;overflow-x:auto;padding:0 16px;scrollbar-width:none;-webkit-overflow-scrolling:touch}
+.ig-stories-scroll::-webkit-scrollbar{display:none}
+.ig-story-item{min-width:64px;text-align:center;text-decoration:none;color:#262626;display:flex;flex-direction:column;align-items:center}
+.ig-avatar-wrap{position:relative;width:64px;height:64px;margin:0 auto}
+.ig-story-avatar{width:60px;height:60px;border-radius:50%;object-fit:cover;background:#EFEFEF}
+.ig-add-story-badge{position:absolute;bottom:2px;right:2px;background:#0095F6;color:#fff;width:20px;height:20px;border-radius:50%;display:grid;place-items:center;font-size:15px;font-weight:700;border:2px solid #FFFFFF}
+.ig-ring{width:66px;height:66px;border-radius:50%;background:linear-gradient(45deg,#f09433 0%,#e6683c 25%,#dc2743 50%,#cc2366 75%,#bc1888 100%);padding:2px;display:grid;place-items:center}
+.ig-ring-gap{background:#FFFFFF;border-radius:50%;padding:2px;width:100%;height:100%;display:grid;place-items:center}
+.ig-ring-gap img{width:100%;height:100%;border-radius:50%;object-fit:cover}
+.ig-story-name{font-size:11px;color:#262626;margin-top:5px;max-width:68px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ig-feed{max-width:470px;margin:0 auto}
+.ig-post{background:#FFFFFF;border:1px solid #DBDBDB;border-radius:8px;margin-bottom:16px;overflow:hidden}
+.ig-post-header{display:flex;align-items:center;padding:10px 14px;gap:10px}
+.ig-mini-ring{width:36px;height:36px;border-radius:50%;background:linear-gradient(45deg,#f09433 0%,#dc2743 50%,#bc1888 100%);padding:1.5px;display:grid;place-items:center}
+.ig-post-avatar{width:32px;height:32px;border-radius:50%;object-fit:cover;background:#fff;border:1.5px solid #fff}
+.ig-post-user-meta{flex:1;min-width:0}
+.ig-post-username{font-size:14px;font-weight:600;color:#262626;text-decoration:none;display:block}
+.ig-post-category{font-size:11px;color:#737373;display:block;margin-top:1px}
+.ig-safety-text{color:#10B981;font-weight:600}
+.ig-more-btn{background:none;border:0;color:#737373;cursor:pointer;padding:4px}
+.ig-post-media{width:100%;aspect-ratio:1/1;background:#000000;position:relative;overflow:hidden;display:grid;place-items:center}
+.ig-post-media img,.ig-post-media video{width:100%;height:100%;object-fit:cover;display:block}
+.ig-post-actions{display:flex;align-items:center;justify-content:space-between;padding:10px 14px 6px}
+.ig-actions-left{display:flex;align-items:center;gap:16px}
+.ig-action-btn{background:none;border:0;padding:0;color:#262626;cursor:pointer;display:flex;align-items:center;text-decoration:none}
+.ig-action-btn svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
+.reaction-btn .icon-on{display:none;color:#ED4956!important;font-size:26px;line-height:1}
+.reaction-btn.liked .icon-off{display:none}
+.reaction-btn.liked .icon-on{display:block;animation:igLikePop .35s cubic-bezier(.2,1.5,.5,1)}
+.save-btn.saved svg{fill:#262626}
+.ig-likes-row{padding:2px 14px;font-size:14px;font-weight:600;color:#262626}
+.ig-caption-row{padding:4px 14px;font-size:14px;color:#262626;line-height:1.4}
+.ig-caption-user{font-weight:600;color:#262626;text-decoration:none;margin-right:6px}
+.ig-comments-link{padding:4px 14px;font-size:14px;color:#737373;text-decoration:none;display:block}
+.ig-time-row{padding:4px 14px 12px;font-size:10px;color:#8E8E8E;text-transform:uppercase;letter-spacing:.2px}
+.ig-bottom-nav{height:48px;background:rgba(255,255,255,.98);border-top:1px solid #DBDBDB;display:flex;align-items:center;justify-content:space-around;position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:min(470px,100%);z-index:40;padding:0 8px}
+.ig-nav-item{color:#262626;background:none;border:0;padding:8px;text-decoration:none;display:grid;place-items:center}
+.ig-nav-item svg{width:24px;height:24px;stroke:currentColor;fill:none;stroke-width:2}
+.ig-nav-item.active svg{stroke-width:2.7}
+.ig-nav-avatar{width:24px;height:24px;border-radius:50%;overflow:hidden;display:block;border:1.5px solid #262626}
+.ig-nav-avatar img{width:100%;height:100%;object-fit:cover}
+.ig-empty-feed{text-align:center;padding:48px 24px;color:#737373}
+.ig-empty-icon{width:64px;height:64px;margin:0 auto 16px;color:#262626}
+@keyframes igLikePop{0%{transform:scale(.6)}60%{transform:scale(1.28)}100%{transform:scale(1)}}
+@media(max-width:500px){body[data-role="CHILD"] .app{border-left:0;border-right:0}.ig-post{border-left:0;border-right:0;border-radius:0}}
+
+/* =========================================================
+   Instagram Profile Page System
+   ========================================================= */
+.ig-profile-page{max-width:470px;margin:0 auto;background:#FFFFFF;min-height:100vh;padding-bottom:60px}
+.ig-profile-header{padding:16px 16px 12px;border-bottom:1px solid #DBDBDB}
+.ig-profile-top-row{display:flex;align-items:center;gap:28px;margin-bottom:14px}
+.ig-profile-avatar-container{position:relative;width:78px;height:78px;flex:none}
+.ig-profile-avatar-img{width:78px;height:78px;border-radius:50%;object-fit:cover;border:1px solid #DBDBDB;background:#FAFAFA}
+.ig-profile-safety-badge{position:absolute;bottom:0;right:0;width:22px;height:22px;border-radius:50%;background:#10B981;color:#FFFFFF;display:grid;place-items:center;border:2px solid #FFFFFF}
+.ig-profile-stats{display:flex;align-items:center;justify-content:space-around;flex:1}
+.ig-stat-col{text-align:center;font-size:14px}
+.ig-stat-col b{display:block;font-size:16px;font-weight:700;color:#262626}
+.ig-stat-col span{display:block;font-size:12px;color:#737373;margin-top:1px}
+.ig-profile-bio{margin-bottom:14px}
+.ig-bio-name{font-size:14px;font-weight:600;color:#262626;margin:0 0 2px}
+.ig-bio-text{font-size:13px;color:#262626;margin:0;line-height:1.4}
+.ig-profile-actions{display:flex;align-items:center;gap:8px;margin-bottom:14px}
+.ig-btn{min-height:32px;border-radius:8px;padding:6px 16px;font-size:13px;font-weight:600;cursor:pointer;border:0;display:inline-flex;align-items:center;justify-content:center;transition:background .15s ease}
+.ig-btn-primary{background:#0095F6;color:#FFFFFF}
+.ig-btn-primary:hover{background:#1877F2}
+.ig-btn-secondary{background:#EFEFEF;color:#262626}
+.ig-btn-secondary:hover{background:#DBDBDB}
+.ig-btn-outline{background:#FFFFFF;border:1px solid #DBDBDB;color:#262626}
+.ig-btn-outline:hover{background:#FAFAFA}
+.ig-highlights-tray{display:flex;gap:16px;overflow-x:auto;padding:6px 0 10px;scrollbar-width:none}
+.ig-highlights-tray::-webkit-scrollbar{display:none}
+.ig-highlight-item{display:flex;flex-direction:column;align-items:center;text-decoration:none;color:#262626;min-width:60px}
+.ig-highlight-circle{width:56px;height:56px;border-radius:50%;background:#FAFAFA;border:1px solid #DBDBDB;display:grid;place-items:center;color:#262626;margin-bottom:4px}
+.ig-highlight-item span{font-size:11px;color:#262626;max-width:60px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ig-grid-tabs{display:flex;border-bottom:1px solid #DBDBDB;height:44px}
+.ig-tab{flex:1;display:grid;place-items:center;color:#737373;cursor:pointer;border-top:1px solid transparent}
+.ig-tab.active{color:#262626;border-top:1px solid #262626}
+.ig-post-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:2px;background:#FFFFFF}
+.ig-grid-tile{position:relative;aspect-ratio:1/1;background:#000000;overflow:hidden;display:block}
+.ig-grid-tile img,.ig-grid-tile video{width:100%;height:100%;object-fit:cover;display:block}
+.ig-tile-badge{position:absolute;top:6px;right:6px;color:#FFFFFF}
+.ig-audio-tile{width:100%;height:100%;background:#1E293B;color:#FFFFFF;display:grid;place-items:center}
+.ig-text-tile{width:100%;height:100%;background:#F3F4F6;color:#262626;padding:8px;font-size:11px;display:flex;align-items:center;justify-content:center;text-align:center;overflow:hidden}
+.ig-empty-grid{grid-column:1/-1;text-align:center;padding:48px 24px}
+.ig-empty-camera{width:64px;height:64px;border-radius:50%;border:2px solid #262626;display:grid;place-items:center;margin:0 auto 12px;color:#262626}
+.ig-empty-grid h3{font-size:20px;font-weight:700;margin:0 0 6px;color:#262626}
+.ig-empty-grid p{font-size:13px;color:#737373;margin:0 auto 16px;max-width:280px}
 .empty-state{margin:18px 14px;padding:28px 20px;text-align:center;background:#fff;border:1px dashed #E7D9C8;border-radius:24px}.empty-state h3{margin:9px 0 5px}.empty-state p{margin:0 auto 15px;max-width:310px;color:var(--ln-muted);font-size:13px;line-height:1.45}.empty-illustration{width:72px;height:72px;margin:auto;display:grid;place-items:center;border-radius:24px;background:linear-gradient(145deg,#FFF2C7,#D1FAE5);color:#047857}.grid-empty{grid-column:1/-1}.kid-page-head{padding:18px 15px 5px}.compact-head{display:flex;align-items:center;justify-content:space-between;gap:12px}.search-wrap{margin:9px 14px 14px;display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--ln-line);border-radius:18px;padding:0 12px;box-shadow:0 4px 12px rgba(85,64,42,.05)}.search-wrap .searchbox{margin:0;padding:13px 0;width:auto;flex:1;background:transparent;border:0}.people-cards{padding:0 12px}.person-card{display:flex;align-items:center;gap:12px;padding:11px;background:#fff;border:1px solid var(--ln-line);border-radius:18px;margin-bottom:9px}.person-main{display:flex;align-items:center;gap:10px;flex:1;text-decoration:none;color:var(--ln-ink)}.person-main .avatar{width:52px;height:52px}.person-main small{display:block;color:var(--ln-muted);font-weight:500;font-size:11px;margin-top:2px}
 .notification-list{padding:0 12px}.notification-card{display:flex;gap:12px;padding:13px;background:#fff;border:1px solid var(--ln-line);border-radius:18px;margin-bottom:9px}.notification-unread{border-color:#A7F3D0;background:#F0FDF9}.notification-icon{width:42px;height:42px;display:grid;place-items:center;border-radius:14px;background:#FFF7ED;color:#047857;flex:none}.notification-card p{margin:4px 0;color:var(--ln-muted);font-size:13px}.text-link{color:#047857;font-weight:800;font-size:12px}.kid-profile{background:#fff;margin:10px;border:1px solid var(--ln-line);border-radius:24px}.profile-avatar-wrap{position:relative}.profile-safe-badge{position:absolute;right:-3px;bottom:2px;width:26px;height:26px;display:grid;place-items:center;border-radius:50%;background:#D1FAE5;color:#047857;border:3px solid #fff}.bio h2{font-size:17px;margin:12px 0 2px}.bio p{margin:0;color:var(--ln-muted)}.profile-photo-form{display:flex;gap:7px;align-items:center;margin-top:12px}.file-btn input{display:none}.profile-tools{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:13px}.tool-pill{min-height:58px;border-radius:16px;background:#FFF7ED;color:var(--ln-ink);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;text-decoration:none;font-size:10px;font-weight:800;text-align:center}.tool-pill:nth-child(2n){background:#E8F8FF}.tool-pill:nth-child(3n){background:#ECFDF5}.switch-mode-row{margin-top:12px}.kid-grid{gap:4px;padding:0 6px}.kid-grid .tile{border-radius:12px}
 .btn{min-height:44px;border-radius:14px;padding:10px 14px}.btn.primary{background:var(--ln-mint);color:#073C2A}.btn.primary:hover{background:#2DCB90}.btn.outline{border:1px solid #E4D7C8;background:#fff}.big-btn{width:100%;min-height:52px;display:flex;align-items:center;justify-content:center;gap:8px;font-size:14px}.create-card{margin-top:14px;background:#fff;border:1px solid var(--ln-line);border-radius:24px;box-shadow:var(--ln-shadow)}.create-hero{display:flex;gap:12px;align-items:center;margin-bottom:12px}.create-hero h1{margin:2px 0;text-align:left}.create-hero-icon,.auth-icon{width:54px;height:54px;border-radius:18px;display:grid;place-items:center;background:linear-gradient(145deg,#D1FAE5,#BAE6FD);color:#047857}.upload-drop{display:flex;min-height:150px;flex-direction:column;align-items:center;justify-content:center;gap:7px;border:2px dashed #D9C9B5;border-radius:20px;background:#FFFCF8;text-align:center;padding:18px;cursor:pointer}.upload-drop small{color:var(--ln-muted);max-width:250px}.upload-drop input{position:absolute;width:1px;height:1px;opacity:0}.moderation-note{display:flex;align-items:flex-start;gap:6px;color:#047857;font-size:12px}.upload-status:not(:empty){padding:10px 12px;border-radius:14px;background:#FFF7ED;margin-bottom:10px}

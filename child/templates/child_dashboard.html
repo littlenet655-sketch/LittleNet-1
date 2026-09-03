@@ -1,20 +1,47 @@
-{% extends 'base.html' %}{% block content %}{% import '_post.html' as ui %}{% import '_icons.html' as ico %}
-<section class="kid-welcome">
-  <div><span class="eyebrow">Kids Mode</span><h1>Hi{% if profile and profile.full_name %}, {{profile.full_name.split(' ')[0]}}{% endif %}! 👋</h1><p>Share, learn and connect with people your parent has approved.</p></div>
-  <span class="safe-orbit" title="LittleNet safety is on">{{ico.icon('shield',22)}}</span>
-</section>
+{% extends 'base.html' %}
+{% block content %}
+{% import '_post.html' as ui %}
+{% import '_icons.html' as ico %}
+
+<!-- Instagram Stories Tray -->
 {% if not child_controls or child_controls.allow_stories %}
-<section aria-label="Stories"><div class="stories">{% for s in stories %}<a class="story" href="/story/{{s.post_id}}/"><div class="ring"><div class="ring-inner"><img class="avatar" src="/{{s.profile_picture}}" data-hide-error alt="{{s.full_name}}"></div></div><span>{{s.full_name}}</span></a>{% else %}<a class="story add-story" href="/child/upload-post/"><div class="ring empty-ring"><div class="ring-inner">{{ico.icon('plus',24)}}</div></div><span>Add story</span></a>{% endfor %}</div></section>
+<section class="ig-stories-tray" aria-label="Stories">
+  <div class="ig-stories-scroll">
+    <!-- User's own story button -->
+    <a class="ig-story-item your-story" href="/child/upload-post/">
+      <div class="ig-avatar-wrap">
+        <img class="ig-story-avatar" src="/{{ profile.profile_picture if profile and profile.profile_picture else 'uploads/profile_pictures/download.webp' }}" data-hide-error alt="Your story">
+        <span class="ig-add-story-badge">+</span>
+      </div>
+      <span class="ig-story-name">Your story</span>
+    </a>
+
+    <!-- Friends' stories -->
+    {% for s in stories %}
+    <a class="ig-story-item has-story" href="/story/{{ s.post_id }}/">
+      <div class="ig-ring">
+        <div class="ig-ring-gap">
+          <img class="ig-story-avatar" src="/{{ s.profile_picture }}" data-hide-error alt="{{ s.full_name }}">
+        </div>
+      </div>
+      <span class="ig-story-name">{{ (s.username or s.full_name).split(' ')[0] }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</section>
 {% endif %}
 
-<a class="learn-card" href="/learning/"><span class="learn-illustration">{{ico.icon('book',34)}}</span><span><b>Learn something tiny today</b><small>Quiz, puzzle or kind-act challenge</small></span><span class="learn-go">›</span></a>
-
-{% if not child_controls or child_controls.allow_reels %}
-<div class="section-title"><span>Clips for you</span><a href="/reels/">{{t('see_all')}}</a></div>
-<div class="rail">{% for p in reels %}<a class="reel-teaser" href="/reels/"><video muted playsinline preload="metadata" src="/{{p.media_path}}"></video><div class="meta"><span class="mini-safe">{{ico.icon('shield',12)}} Safe</span><b>{{p.full_name}}</b></div></a>{% else %}<a class="reel-teaser empty-reel" href="/child/upload-post/"><span>{{ico.icon('clips',32)}}</span><b>Create the first safe Clip</b></a>{% endfor %}</div>
-{% endif %}
-
-{% if child_controls and child_controls.educational_only_feed %}<div class="safety-banner">{{ico.icon('book',18)}} {{t('educational_feed')}}</div>{% endif %}
-<div class="section-title feed-heading"><span>Your safe feed</span><span class="tiny-status">{{ico.icon('check',14)}} Filtered</span></div>
-{% for p in posts %}{{ui.post_card(p)}}{% else %}<div class="empty-state"><div class="empty-illustration">{{ico.icon('sparkles',42)}}</div><h3>{{t('safe_feed_ready')}}</h3><p>{{t('safe_feed_hint')}}</p><a class="btn primary" href="/discover/">Find approved friends</a></div>{% endfor %}
+<!-- Instagram Feed Posts -->
+<div class="ig-feed">
+  {% for p in posts %}
+    {{ ui.post_card(p) }}
+  {% else %}
+    <div class="ig-empty-feed">
+      <div class="ig-empty-icon">{{ ico.icon('camera', 48) }}</div>
+      <h3>Welcome to LittleNet</h3>
+      <p>When friends you follow share safe photos and clips, they'll show up here.</p>
+      <a class="btn primary" href="/discover/">Find Approved Friends</a>
+    </div>
+  {% endfor %}
+</div>
 {% endblock %}
