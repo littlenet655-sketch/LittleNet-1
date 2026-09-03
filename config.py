@@ -12,6 +12,7 @@ class Config:
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "1" if BASE_URL.startswith("https://") else "0") == "1"
     WTF_CSRF_SSL_STRICT = False
+    WTF_CSRF_TIME_LIMIT = None  # Valid for the life of the session
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
     ADULT_HARD_BLOCK_THRESHOLD = min(float(os.getenv("ADULT_HARD_BLOCK_THRESHOLD", "0.40")), 0.40)
     REEL_MAX_SECONDS = int(os.getenv("REEL_MAX_SECONDS", "180"))

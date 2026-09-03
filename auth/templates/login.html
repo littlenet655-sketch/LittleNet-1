@@ -49,10 +49,11 @@
     </div>
 
     <!-- Error Alert -->
-    {% if error %}
+    {% set display_error = error or request.args.get('error') %}
+    {% if display_error %}
     <div class="auth-alert auth-alert-error" role="alert">
       <span class="alert-icon">⚠️</span>
-      <span>{{ error }}</span>
+      <span>{{ display_error }}</span>
     </div>
     {% endif %}
 

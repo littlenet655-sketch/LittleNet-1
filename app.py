@@ -28,6 +28,14 @@ def create_app():
         if Config.AI_SERVICE_URL and not Config.AI_SHARED_SECRET:
             raise RuntimeError('AI_SHARED_SECRET is required when AI_SERVICE_URL is configured')
     csrf.init_app(app);limiter.init_app(app)
+    from flask_wtf.csrf import CSRFError
+    @app.errorhandler(CSRFError)
+    def handle_csrf_error(e):
+        if request.path.startswith(('/login', '/switch-mode', '/register', '/logout')):
+            session.clear()
+            return redirect('/login/?error=Your+session+was+refreshed.+Please+enter+your+credentials+to+continue.')
+        return render_template('csrf_error.html', reason=e.description), 400
+
     for bp in [auth_bp,api_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp]:app.register_blueprint(bp)
 
     @app.before_request
