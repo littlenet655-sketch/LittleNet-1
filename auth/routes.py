@@ -80,7 +80,13 @@ def register_page():
 def approve_child(token):
     pending=fetch_one('''SELECT m.child_id,u.full_name FROM parent_child_map m JOIN users u ON u.user_id=m.child_id
       WHERE m.approval_token=%s AND m.approved=FALSE''',(token,))
-    if not pending:return ('Invalid or already used approval link',400)
+    if not pending:
+        already=fetch_one('''SELECT m.child_id,u.full_name FROM parent_child_map m JOIN users u ON u.user_id=m.child_id
+          WHERE m.approval_token=%s AND m.approved=TRUE''',(token,))
+        if already:
+            flash(f"Account for {already['full_name']} is already approved and ready to log in!", "success")
+            return redirect(url_for('auth.login_page', mode='kids'))
+        return ('Invalid or expired approval link',400)
     if request.method=='GET':return render_template('approve_confirm.html',token=token,child=pending)
     row=approve_child_account(token)
     return render_template('approved.html',token=token) if row else ('Invalid or already used approval link',400)

@@ -1,0 +1,81 @@
+name: Build LittleNet classroom APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "HTTPS LittleNet backend URL"
+        required: true
+        default: "https://littlenet655--littlenet-web-web.modal.run/"
+        type: string
+  push:
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-littlenet-apk.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BACKEND_URL: ${{ inputs.backend_url || 'https://littlenet655--littlenet-web-web.modal.run/' }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Validate backend URL
+        run: |
+          python - <<'PY'
+          import os
+          from urllib.parse import urlparse
+
+          value = os.environ["BACKEND_URL"].strip()
+          parsed = urlparse(value)
+          if parsed.scheme != "https" or not parsed.netloc:
+              raise SystemExit("BACKEND_URL must be an absolute HTTPS URL")
+          print(f"Using HTTPS backend host: {parsed.netloc}")
+          PY
+
+      - name: Inject backend URL
+        run: |
+          python - <<'PY'
+          import html
+          import os
+          from pathlib import Path
+
+          path = Path("android/app/src/main/res/values/strings.xml")
+          value = html.escape(os.environ["BACKEND_URL"].strip(), quote=False)
+          source = path.read_text()
+          if '<string name="backend_url">' in source:
+              start = source.index('<string name="backend_url">')
+              end = source.index("</string>", start) + len("</string>")
+              replacement = f'<string name="backend_url">{value}</string>'
+              path.write_text(source[:start] + replacement + source[end:])
+          PY
+
+      - name: Build installable debug APK
+        working-directory: android
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleNet-classroom-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
