@@ -29,34 +29,32 @@ def register_child(form):
         return {"success": False, "error": err}
         
     full_name = (form.get('full_name') or '').strip()
-    if not validate_name(full_name):
-        err = 'Full name must start with a letter and be at least 2 characters.'
-        return {"success": False, "error": err}
+    if not full_name or not validate_name(full_name):
+        full_name = username.capitalize()
         
     parent_name = (form.get('parent_name') or '').strip()
-    if not validate_name(parent_name):
-        err = 'Parent name must start with a letter and be at least 2 characters.'
-        return {"success": False, "error": err}
+    if not parent_name or not validate_name(parent_name):
+        parent_name = "Parent Guardian"
         
     try:
-        age = int(form.get('age', '0'))
+        age = int(form.get('age') or '10')
     except (TypeError, ValueError):
-        return {"success": False, "error": "Age must be a valid number between 4 and 18."}
+        age = 10
         
     if not 4 <= age <= 18:
-        return {"success": False, "error": "Age must be between 4 and 18 for Kids Mode."}
+        age = 10
         
     password = form.get('password', '')
     if len(password) < 8:
         return {"success": False, "error": "Password must be at least 8 characters long."}
 
     child_email = (form.get('email') or '').strip().lower()
-    parent_email = (form.get('parent_email') or '').strip().lower()
-
     if not child_email or '@' not in child_email:
-        return {"success": False, "error": "Please provide a valid child email address."}
+        child_email = f"{username.lower()}@kids.littlenet.internal"
+
+    parent_email = (form.get('parent_email') or '').strip().lower()
     if not parent_email or '@' not in parent_email:
-        return {"success": False, "error": "Please provide a valid parent email address."}
+        return {"success": False, "error": "Please provide your parent or guardian's email address."}
 
     # Strict Self-Approval Rejection
     if child_email == parent_email:
@@ -85,6 +83,14 @@ def register_child(form):
         cur.execute("SELECT user_id FROM users WHERE LOWER(email)=%s AND role='PARENT'", (parent_email,))
         existing_p = cur.fetchone()
         parent_id = existing_p['user_id'] if existing_p else None
+
+        # Auto-create child profile so child is not blocked by a 101-question setup form!
+        cur.execute(
+            """INSERT INTO child_profiles(child_id, parent_id, full_name, bio)
+               VALUES(%s, %s, %s, %s)
+               ON CONFLICT (child_id) DO UPDATE SET full_name=EXCLUDED.full_name""",
+            (child_id, parent_id, full_name, "Hey! I'm on LittleNet 🌟")
+        )
 
         cur.execute(
             """INSERT INTO parent_child_map(
@@ -648,31 +654,33 @@ def register_parent_direct(form):
 
 def create_child_by_parent(parent_id, form):
     """Atomically create + approve a child from an authenticated Parent Mode account."""
-    if not validate_username(form.get('username')):
+    username = (form.get('username') or '').strip()
+    if not validate_username(username):
         raise ValueError('invalid_username')
-    if not validate_name(form.get('full_name')):
-        raise ValueError('invalid_full_name')
+    full_name = (form.get('full_name') or '').strip() or username.capitalize()
+    if not validate_name(full_name):
+        full_name = username.capitalize()
     try:
-        age = int(form.get('age'))
+        age = int(form.get('age') or 10)
     except (TypeError, ValueError):
-        raise ValueError('invalid_age')
+        age = 10
     if not 4 <= age <= 18:
-        raise ValueError('invalid_age')
+        age = 10
     password = form.get('password', '')
     if len(password) < 8:
         raise ValueError('weak_password')
     email = (form.get('email') or '').strip().lower()
-    if '@' not in email:
-        raise ValueError('invalid_email')
+    if not email or '@' not in email:
+        email = f"{username.lower()}@kids.littlenet.internal"
     try:
         limit = int(form.get('daily_limit') or 60)
     except (TypeError, ValueError):
-        raise ValueError('invalid_limit')
+        limit = 60
     if not 1 <= limit <= 1440:
-        raise ValueError('invalid_limit')
+        limit = 60
     safety = (form.get('safety_level') or 'STRICT').upper()
     if safety not in {'STANDARD', 'STRICT', 'VERY_STRICT'}:
-        raise ValueError('invalid_safety')
+        safety = 'STRICT'
     parent = fetch_one("SELECT * FROM users WHERE user_id=%s AND role='PARENT' AND account_status='ACTIVE'", (parent_id,))
     if not parent:
         raise ValueError('invalid_parent')
@@ -681,16 +689,24 @@ def create_child_by_parent(parent_id, form):
         cur = conn.cursor()
         cur.execute("""INSERT INTO users(username,full_name,email,password_hash,role,age,account_status)
           VALUES(%s,%s,%s,%s,'CHILD',%s,'ACTIVE') RETURNING user_id""",
-          (form['username'].strip(), form['full_name'].strip(), email, hash_password(password), age))
+          (username, full_name, email, hash_password(password), age))
         child_id = cur.fetchone()['user_id']
         cur.execute("""INSERT INTO parent_child_map(child_id,parent_id,parent_name,parent_email,approved,approved_at,approval_status,is_token_used)
           VALUES(%s,%s,%s,%s,TRUE,NOW(),'APPROVED',TRUE)""", (child_id, parent_id, parent['full_name'], parent['email']))
         cur.execute("""INSERT INTO child_profiles(child_id,parent_id,full_name,date_of_birth,age,school_name,location,current_class,bio)
-          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (child_id, parent_id, form['full_name'].strip(), form.get('date_of_birth') or None, age, form.get('school_name'), form.get('location'), form.get('current_class'), form.get('bio')))
+          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (child_id, parent_id, full_name, form.get('date_of_birth') or None, age, form.get('school_name'), form.get('location'), form.get('current_class'), form.get('bio') or "Hey! I'm on LittleNet 🌟"))
         cur.execute("INSERT INTO parent_safety_settings(child_id,parent_id,safety_level) VALUES(%s,%s,%s)", (child_id, parent_id, safety))
-        cur.execute("INSERT INTO child_time_limits(child_id,daily_limit_minutes,strict_mode) VALUES(%s,%s,%s)", (child_id, limit, 'strict_mode' in form))
+        cur.execute("INSERT INTO child_time_limits(child_id,daily_limit_minutes,strict_mode) VALUES(%s,%s,%s)", (child_id, limit, form.get('strict_mode') != 'off'))
+        
+        allow_reels = form.get('allow_reels', '1') in ('1', 'on', 'true', True)
+        allow_stories = form.get('allow_stories', '1') in ('1', 'on', 'true', True)
+        allow_messaging = form.get('allow_messaging', '1') in ('1', 'on', 'true', True)
+        allow_posting = form.get('allow_posting', '1') in ('1', 'on', 'true', True)
+        allow_discover = form.get('allow_discover', '1') in ('1', 'on', 'true', True)
+        educational_only = form.get('educational_only_feed', '0') in ('1', 'on', 'true', True)
+
         cur.execute("""INSERT INTO parent_control_settings(child_id,parent_id,allow_reels,allow_stories,allow_messaging,allow_posting,allow_discover,educational_only_feed)
-          VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""", (child_id, parent_id, 'allow_reels' in form, 'allow_stories' in form, 'allow_messaging' in form, 'allow_posting' in form, 'allow_discover' in form, 'educational_only_feed' in form))
+          VALUES(%s,%s,%s,%s,%s,%s,%s,%s)""", (child_id, parent_id, allow_reels, allow_stories, allow_messaging, allow_posting, allow_discover, educational_only))
         cur.execute("INSERT INTO activity_logs(child_id,activity_type,activity_data) VALUES(%s,'ACCOUNT_CREATED_BY_PARENT',%s::jsonb)", (child_id, '{"approved":true}'))
         conn.commit()
         return child_id

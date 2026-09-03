@@ -38,7 +38,13 @@ def _set_session(user, method='PASSWORD'):
 
 def _dest(user):
     if user['role'] == 'CHILD':
-        return '/child/dashboard/' if profile_exists(user['user_id']) else '/child/create-profile/'
+        if not profile_exists(user['user_id']):
+            try:
+                from child.service import create_child_profile
+                create_child_profile(user['user_id'], {'full_name': user.get('full_name') or user.get('username') or 'Student', 'bio': "Hey! I'm on LittleNet 🌟"})
+            except Exception:
+                pass
+        return '/child/dashboard/'
     if user['role'] == 'PARENT':
         return '/parent/dashboard/'
     return '/admin/'

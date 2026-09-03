@@ -44,38 +44,10 @@
                  id="reg-username"
                  name="username" 
                  class="auth-input" 
-                 placeholder="Username (letters, numbers, _)" 
+                 placeholder="e.g. superkid_24" 
                  required 
                  pattern="[A-Za-z0-9_.]{3,30}"
                  autocomplete="username">
-        </div>
-      </div>
-
-      <div class="auth-field">
-        <label class="field-label" for="reg-fullname">Full Name</label>
-        <div class="input-wrap">
-          <span class="input-icon">📝</span>
-          <input type="text" 
-                 id="reg-fullname"
-                 name="full_name" 
-                 class="auth-input" 
-                 placeholder="Your full name" 
-                 required 
-                 autocomplete="name">
-        </div>
-      </div>
-
-      <div class="auth-field">
-        <label class="field-label" for="reg-email">Child Email Address</label>
-        <div class="input-wrap">
-          <span class="input-icon">✉️</span>
-          <input type="email" 
-                 id="reg-email"
-                 name="email" 
-                 class="auth-input" 
-                 placeholder="child@example.com" 
-                 required 
-                 autocomplete="email">
         </div>
       </div>
 
@@ -87,11 +59,25 @@
                  id="reg-password"
                  name="password" 
                  class="auth-input" 
-                 placeholder="Minimum 8 characters" 
+                 placeholder="At least 8 characters" 
                  required 
                  minlength="8" 
                  autocomplete="new-password">
         </div>
+      </div>
+
+      <div class="auth-field">
+        <label class="field-label" for="reg-pemail">Parent / Guardian Email</label>
+        <div class="input-wrap">
+          <span class="input-icon">📩</span>
+          <input type="email" 
+                 id="reg-pemail"
+                 name="parent_email" 
+                 class="auth-input" 
+                 placeholder="parent@example.com" 
+                 required>
+        </div>
+        <small style="color: #64748B; font-size: 11px; margin-top: 4px; display: block;">For safety oversight and parent dashboard linking.</small>
       </div>
 
       <div class="auth-field">
@@ -110,35 +96,32 @@
         </div>
       </div>
 
-      <div class="section-divider">
-        <span>PARENT / GUARDIAN VERIFICATION</span>
-      </div>
-
-      <div class="auth-field">
-        <label class="field-label" for="reg-pname">Parent / Guardian Name</label>
-        <div class="input-wrap">
-          <span class="input-icon">🛡️</span>
-          <input type="text" 
-                 id="reg-pname"
-                 name="parent_name" 
-                 class="auth-input" 
-                 placeholder="Parent full name" 
-                 required>
+      <details style="margin: 8px 0 14px; font-size: 12px; color: #64748B;">
+        <summary style="cursor: pointer; padding: 4px 0; font-weight: 600; color: #0F766E;">+ Optional additional details (Full Name, Child Email)</summary>
+        <div style="margin-top: 8px; display: grid; gap: 10px;">
+          <div class="auth-field" style="margin: 0;">
+            <label class="field-label" for="reg-fullname">Full Name (Optional)</label>
+            <div class="input-wrap">
+              <span class="input-icon">📝</span>
+              <input type="text" id="reg-fullname" name="full_name" class="auth-input" placeholder="Your full name">
+            </div>
+          </div>
+          <div class="auth-field" style="margin: 0;">
+            <label class="field-label" for="reg-email">Child Email (Optional)</label>
+            <div class="input-wrap">
+              <span class="input-icon">✉️</span>
+              <input type="email" id="reg-email" name="email" class="auth-input" placeholder="Auto-generated if empty">
+            </div>
+          </div>
+          <div class="auth-field" style="margin: 0;">
+            <label class="field-label" for="reg-pname">Parent Name (Optional)</label>
+            <div class="input-wrap">
+              <span class="input-icon">🛡️</span>
+              <input type="text" id="reg-pname" name="parent_name" class="auth-input" placeholder="Parent / Guardian">
+            </div>
+          </div>
         </div>
-      </div>
-
-      <div class="auth-field">
-        <label class="field-label" for="reg-pemail">Parent Email Address</label>
-        <div class="input-wrap">
-          <span class="input-icon">📩</span>
-          <input type="email" 
-                 id="reg-pemail"
-                 name="parent_email" 
-                 class="auth-input" 
-                 placeholder="parent@example.com" 
-                 required>
-        </div>
-      </div>
+      </details>
 
       <!-- Instant Demo Mode Checkbox -->
       <div class="demo-checkbox-wrap">

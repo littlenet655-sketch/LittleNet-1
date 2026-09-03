@@ -49,40 +49,33 @@
                   rows="3"></textarea>
       </div>
 
-      <div class="form-group">
-        <label for="prof-skills">Skills & Hobbies <small>(comma separated)</small></label>
-        <input type="text" 
-               id="prof-skills" 
-               name="skills" 
-               class="form-input" 
-               placeholder="Drawing, Cricket, Piano, Chess">
-      </div>
+      <details style="margin: 10px 0 16px; font-size: 13px;">
+        <summary style="cursor: pointer; font-weight: 700; color: #0F766E; padding: 4px 0;">+ Add Hobbies, Interests & Dreams (Optional)</summary>
+        <div style="margin-top: 10px; display: grid; gap: 10px;">
+          <div class="form-group" style="margin: 0;">
+            <label for="prof-skills">Skills & Hobbies <small>(comma separated)</small></label>
+            <input type="text" id="prof-skills" name="skills" class="form-input" placeholder="Drawing, Cricket, Piano, Chess">
+          </div>
+          <div class="form-group" style="margin: 0;">
+            <label for="prof-interests">Interests <small>(comma separated)</small></label>
+            <input type="text" id="prof-interests" name="interests" class="form-input" placeholder="Space, Robotics, Dinosaurs, Coding">
+          </div>
+          <div class="form-group" style="margin: 0;">
+            <label for="prof-ambitions">Ambitions & Dreams <small>(comma separated)</small></label>
+            <input type="text" id="prof-ambitions" name="ambitions" class="form-input" placeholder="Astronaut, Doctor, Game Developer">
+          </div>
+        </div>
+      </details>
 
-      <div class="form-group">
-        <label for="prof-interests">Interests <small>(comma separated)</small></label>
-        <input type="text" 
-               id="prof-interests" 
-               name="interests" 
-               class="form-input" 
-               placeholder="Space, Robotics, Dinosaurs, Coding">
-      </div>
-
-      <div class="form-group">
-        <label for="prof-ambitions">Ambitions & Dreams <small>(comma separated)</small></label>
-        <input type="text" 
-               id="prof-ambitions" 
-               name="ambitions" 
-               class="form-input" 
-               placeholder="Astronaut, Doctor, Game Developer">
-      </div>
-
-      <div class="form-actions">
+      <div class="form-actions" style="display: flex; flex-direction: column; gap: 10px;">
         <button type="submit" class="btn primary save-profile-btn">
-          <span>Save & Start Exploring</span>
+          <span>Save Profile</span>
           <span>→</span>
         </button>
+        <a href="/child/dashboard/" class="btn outline" style="text-align: center; text-decoration: none; display: flex; align-items: center; justify-content: center; min-height: 42px;">
+          Skip to Feed 🚀
+        </a>
       </div>
-
     </form>
 
   </div>

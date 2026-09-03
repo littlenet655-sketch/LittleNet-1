@@ -27,7 +27,11 @@ def _public_profile_text(form):
 def dashboard():
     g=_guard()
     if g:return g
-    if not profile_exists(session['user_id']):return redirect('/child/create-profile/')
+    if not profile_exists(session['user_id']):
+        try:
+            create_child_profile(session['user_id'], {'full_name': session.get('full_name') or 'Student', 'bio': "Hey! I'm on LittleNet 🌟"})
+        except Exception:
+            pass
     return render_template('child_dashboard.html',profile=get_child_profile(session['user_id']),stories=active_stories(session['user_id']),posts=visible_posts(session['user_id'],False,12,0),reels=visible_posts(session['user_id'],True,5,0))
 
 
