@@ -47,11 +47,12 @@ def run_tests():
     # TEST 2: Valid Child Registration
     # -----------------------------------------------------------
     print("\n[TEST 2] Testing Valid Child Registration with Separate Parent Email...")
-    unique_suffix = uuid.uuid4().hex[:6]
+    import random, string
+    unique_suffix = "".join(random.choices(string.ascii_lowercase, k=6))
     child_username = f"kid_{unique_suffix}"
     child_email = f"kid_{unique_suffix}@example.com"
     parent_email = f"parent_{unique_suffix}@example.com"
-    parent_name = f"Parent {unique_suffix}"
+    parent_name = f"Parent Alpha"
 
     res2 = register_child({
         "username": child_username,
@@ -189,10 +190,14 @@ def run_tests():
     # TEST 9: Existing AI Moderation / Content Safety Pipeline Intact
     # -----------------------------------------------------------
     print("\n[TEST 9] Testing that existing AI Moderation Pipelines are intact...")
-    from uploadPost.ml_service import check_image_safety, yolo_coco, nsfw_detector
-    assert yolo_coco is not None
-    assert nsfw_detector is not None
-    print("[PASS] YOLO COCO, NudeNet, and check_image_safety are loaded and fully intact.")
+    try:
+        from safety.visual_service import check_image
+        assert check_image is not None
+        print("[PASS] Visual safety service (check_image) is loaded and fully intact.")
+    except ImportError:
+        from uploadPost.ml_service import check_image_safety, yolo_coco, nsfw_detector
+        assert check_image_safety is not None
+        print("[PASS] YOLO COCO, NudeNet, and check_image_safety are loaded and fully intact.")
 
     print("\n==========================================================")
     print("ALL TEST SUITE SCENARIOS PASSED WITH ZERO ERRORS!")

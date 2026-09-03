@@ -5,7 +5,7 @@ class Contracts(unittest.TestCase):
  def text(self,p):return (ROOT/p).read_text(encoding='utf-8')
  def test_python_parses(self):
   for p in ROOT.rglob('*.py'):
-   if '__pycache__' not in p.parts:ast.parse(p.read_text())
+   if '__pycache__' not in p.parts:ast.parse(p.read_text(encoding='utf-8'))
  def test_no_git(self):self.assertFalse((ROOT/'.git').exists())
  def test_adult_hard_block_precedes_partial(self):
   s=self.text('safety/policy.py');self.assertLess(s.index("if adult >="),s.index("if partial_failure"))

@@ -1,1 +1,34 @@
-{% extends 'base.html' %}{% block title %}Registration Submitted | LittleNet{% endblock %}{% block content %}<div class="form-card auth-card" style="max-width:480px;margin:30px auto;padding:28px 20px;text-align:center"><div style="font-size:52px;margin-bottom:12px">🎉</div><h2>Registration Submitted!</h2><p class="muted">To ensure child safety, a parent must approve this account before Kids Mode can be used.</p>{% if token %}<div style="margin:20px 0;padding:16px;background:#FFF7ED;border-radius:12px;border:1.5px dashed #EA580C"><p style="margin:0 0 6px;font-weight:700;color:#EA580C">Demo & Presentation Instant Approval</p><p style="margin:0 0 14px;font-size:12px;color:#7C2D12">For college evaluation / viva testing, click below to approve instantly:</p><a href="/approve/{{ token }}/" class="btn primary" style="display:inline-block;padding:10px 20px;text-decoration:none;font-size:14px">🛡️ Approve Child Account Now</a></div>{% endif %}<div style="margin-top:20px"><a class="btn outline" href="/login/?mode=kids" style="text-decoration:none">Back to Login</a></div></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Child Registration Submitted | LittleNet{% endblock %}
+{% block content %}
+<div class="form-card auth-card" style="max-width:540px;margin:40px auto;padding:32px 24px;text-align:center;border-radius:18px;box-shadow:0 12px 30px rgba(0,0,0,0.08);">
+  <div style="font-size:54px;margin-bottom:12px">🎉</div>
+  <h2 style="margin-bottom:8px;font-weight:800;color:#1e293b;">Registration Submitted!</h2>
+  <p class="muted" style="font-size:15px;color:#64748b;line-height:1.5;margin-bottom:20px;">
+    An invitation has been dispatched to <strong>{{ parent_email }}</strong> to verify and supervise <strong>{{ child_name or 'the child' }}</strong>'s account.
+  </p>
+
+  {% if token %}
+  <div style="margin:24px 0;padding:20px;background:#f0fdf4;border-radius:14px;border:1.5px solid #86efac;text-align:left;">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px;">
+      <span style="font-size:22px;">🛡️</span>
+      <strong style="color:#166534;font-size:15px;">Parent Supervision & Verification Portal</strong>
+    </div>
+    <p style="margin:0 0 14px;font-size:13px;color:#15803d;line-height:1.4;">
+      For demonstration, evaluation, or viva testing, you can open the Parent Verification portal directly:
+    </p>
+    <div style="text-align:center;">
+      <a href="/verify-parent/{{ token }}/" class="btn primary" style="display:inline-block;padding:12px 24px;background:#10b981;color:#ffffff;font-weight:700;border-radius:10px;text-decoration:none;font-size:14px;box-shadow:0 4px 12px rgba(16,185,129,0.3);">
+        📸 Open Parent Verification & Selfie Capture
+      </a>
+    </div>
+  </div>
+  {% endif %}
+
+  <div style="margin-top:24px;">
+    <a class="btn outline" href="/login/?mode=kids" style="text-decoration:none;padding:10px 20px;border-radius:8px;">
+      ← Back to Kids Login
+    </a>
+  </div>
+</div>
+{% endblock %}
