@@ -1,0 +1,11 @@
+-r requirements-text.txt
+torchvision>=0.17,<0.23
+ultralytics>=8.3,<9
+nudenet>=3.4,<4
+faster-whisper>=1.1,<2
+deepface>=0.0.93,<0.1
+tensorflow>=2.16,<2.19
+
+tf-keras>=2.16,<2.19
+
+opencv-python-headless==4.11.0.86

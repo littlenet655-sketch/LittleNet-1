@@ -1,0 +1,1 @@
+{% extends 'parent_base.html' %}{% block content %}<h2>Activity history</h2>{% for r in rows %}<div class="parent-card"><b>{{r.activity_type}}</b><p>{{r.activity_data}}</p><small>{{r.created_at}}</small></div>{% else %}<p>No activity yet.</p>{% endfor %}{% endblock %}

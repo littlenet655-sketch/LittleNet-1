@@ -1,0 +1,45 @@
+name: Deploy LittleNet to Modal
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploy_web:
+        description: "Also deploy the optional Modal Flask web service"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Modal CLI
+        run: python -m pip install --upgrade "modal>=1.1,<2"
+
+      - name: Verify Modal credentials exist
+        shell: bash
+        run: |
+          test -n "$MODAL_TOKEN_ID" || (echo "Missing MODAL_TOKEN_ID secret" && exit 1)
+          test -n "$MODAL_TOKEN_SECRET" || (echo "Missing MODAL_TOKEN_SECRET secret" && exit 1)
+          modal token info
+
+      - name: Deploy AI service
+        run: modal deploy modal_ai.py --stream-logs
+
+      - name: Deploy optional web service
+        if: ${{ inputs.deploy_web }}
+        run: modal deploy modal_web.py --stream-logs

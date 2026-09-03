@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}<h2 style="padding:0 14px">{{title}}</h2><div class="chat-list">{% for p in people %}<a href="/child/view-profile/{{p.user_id}}/"><img class="avatar" style="width:48px;height:48px" src="/{{p.profile_picture}}"><b>{{p.full_name}}</b></a>{% endfor %}</div>{% endblock %}

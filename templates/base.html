@@ -1,0 +1,50 @@
+{% import '_icons.html' as ico %}
+<!doctype html>
+<html lang="{{ (ui_language or 'EN')|lower }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="description" content="LittleNet - Child-Centric Social Platform with AI-based Content Filtering, Parental Oversight, Cyberbullying Protection, and Safe Learning.">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
+  <meta name="theme-color" content="#FFF7ED">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <title>{% block title %}LittleNet - Safe Child Social Platform{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/littlenet.css">
+</head>
+<body data-role="{{ session.get('role','') }}">
+<div class="app">
+  {% if session.get('role')=='CHILD' %}
+  <header class="topbar kid-topbar">
+    <a href="/child/dashboard/" class="brand" aria-label="LittleNet home"><span class="brand-dot"></span>LittleNet</a>
+    <div class="top-actions">
+      <a href="/learning/" class="icon-btn kid-icon-btn" aria-label="{{t('learning')}}">{{ ico.icon('sparkles') }}</a>
+      <a href="/notifications/" class="icon-btn kid-icon-btn" aria-label="{{t('notifications')}}">{{ ico.icon('bell') }}</a>
+      {% if not child_controls or child_controls.allow_messaging %}<a href="/messages/" class="icon-btn kid-icon-btn" aria-label="{{t('messages')}}">{{ ico.icon('message') }}</a>{% endif %}
+    </div>
+  </header>
+  {% endif %}
+
+  <main class="page">{% block content %}{% endblock %}</main>
+
+  {% if session.get('role')=='CHILD' %}
+  <nav class="bottom-nav" aria-label="Kids Mode navigation">
+    <a href="/child/dashboard/" class="nav-item" aria-label="{{t('home')}}"><span class="nav-icon">{{ ico.icon('home') }}</span><span class="nav-label">{{t('home')}}</span></a>
+    {% if not child_controls or child_controls.allow_discover %}<a href="/discover/" class="nav-item" aria-label="{{t('discover')}}"><span class="nav-icon">{{ ico.icon('search') }}</span><span class="nav-label">Find</span></a>{% endif %}
+    {% if not child_controls or child_controls.allow_posting %}<a href="/child/upload-post/" class="nav-item create-nav" aria-label="{{t('create')}}"><span class="nav-icon create-bubble">{{ ico.icon('plus') }}</span><span class="nav-label">{{t('create')}}</span></a>{% endif %}
+    {% if not child_controls or child_controls.allow_reels %}<a href="/reels/" class="nav-item" aria-label="{{t('reels')}}"><span class="nav-icon">{{ ico.icon('clips') }}</span><span class="nav-label">Clips</span></a>{% endif %}
+    <a href="/child/profile/" class="nav-item" aria-label="{{t('profile')}}"><span class="nav-icon">{{ ico.icon('user') }}</span><span class="nav-label">Me</span></a>
+  </nav>
+  {% endif %}
+
+  {% if session.get('user_id') %}
+  <form class="language-form compact" method="post" action="/language/">
+    <input type="hidden" name="csrf_token" value="{{csrf_token()}}">
+    <select name="language" aria-label="{{t('language')}}" data-language-select>{% for code,name in ui_languages.items() %}<option value="{{code}}" {% if ui_language==code %}selected{% endif %}>{{name}}</option>{% endfor %}</select>
+  </form>
+  {% endif %}
+</div>
+<div class="toast-stack" aria-live="polite" aria-atomic="true"></div>
+<script src="/static/js/littlenet.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

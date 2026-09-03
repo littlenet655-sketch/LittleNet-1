@@ -1,0 +1,31 @@
+{% import '_icons.html' as ico %}
+{% macro post_card(p) %}
+<article class="post kid-card" data-post-card="{{p.post_id}}">
+  <div class="post-head">
+    <a class="avatar-link" href="/child/view-profile/{{p.child_id}}/"><img class="avatar" src="/{{p.profile_picture}}" data-hide-error alt="{{p.full_name}}"></a>
+    <a class="post-user" href="/child/view-profile/{{p.child_id}}/">{{p.full_name}}<small>{{p.content_category or 'LittleNet'}}</small></a>
+    <span class="safety-chip allow-chip">{{ ico.icon('shield',14) }} Kids Safe</span>
+    {% if p.child_id!=session.get('user_id') %}<button class="icon-btn post-more" type="button" data-report-post="{{p.post_id}}" aria-label="Report post">{{ ico.icon('more') }}</button>{% endif %}
+  </div>
+
+  <div class="post-media" data-double-like="{{p.post_id}}">
+    <span class="heart-burst" aria-hidden="true">♥</span>
+    {% if p.media_type=='IMAGE' %}<img loading="lazy" src="/{{p.media_path}}" alt="Post by {{p.full_name}}">
+    {% elif p.media_type=='VIDEO' %}<video data-autoplay muted playsinline loop preload="metadata" src="/{{p.media_path}}"></video>
+    {% elif p.media_type=='AUDIO' %}<div class="text-post audio-post">{{ ico.icon('volume',34) }}<strong>Listen safely</strong><audio controls src="/{{p.media_path}}"></audio></div>
+    {% else %}<div class="text-post">{{p.caption}}</div>{% endif %}
+  </div>
+
+  <div class="post-actions">
+    <button class="icon-btn reaction-btn" data-like="{{p.post_id}}" aria-label="Like" aria-pressed="false"><span class="icon-off">{{ ico.icon('heart') }}</span><span class="icon-on" aria-hidden="true">♥</span></button>
+    <a class="icon-btn" href="/post/{{p.post_id}}/" aria-label="Comment">{{ ico.icon('comment') }}</a>
+    <button class="icon-btn" type="button" data-share-post="{{p.post_id}}" aria-label="Share with approved friend">{{ ico.icon('send') }}</button>
+    <span class="spacer"></span>
+    <button class="icon-btn save-btn" type="button" data-save-post="{{p.post_id}}" aria-label="Save" aria-pressed="false">{{ ico.icon('bookmark') }}</button>
+  </div>
+  <div class="likes"><span data-like-count="{{p.post_id}}">{{p.likes or 0}}</span> likes</div>
+  {% if p.caption and p.media_type!='TEXT' %}<div class="caption"><b>{{p.full_name}}</b>{{p.caption}}</div>{% endif %}
+  {% if p.story_music_path %}<audio controls preload="none" src="/{{p.story_music_path}}"></audio>{% endif %}
+  <div class="time">{{p.created_at}}</div>
+</article>
+{% endmacro %}

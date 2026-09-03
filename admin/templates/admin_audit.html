@@ -1,0 +1,1 @@
+{% extends 'admin_base.html' %}{% block content %}<h2>Moderator audit log</h2>{% for a in rows %}<div class="parent-card"><b>{{a.action}}</b><p>{{a.admin_name}} · {{a.target_type or 'SYSTEM'}} {{a.target_id or ''}}</p><small>{{a.details}} · {{a.created_at}}</small></div>{% else %}<p>No actions recorded.</p>{% endfor %}{% endblock %}

@@ -1,70 +1,14 @@
-from flask import Blueprint
-from flask import jsonify
-from flask import request
-
-from auth.service import login_user
-from child.service import profile_exists
-
-api_bp = Blueprint(
-    "api",
-    __name__
-)
-
-@api_bp.route(
-    "/api/login/",
-    methods=["POST"]
-)
+from flask import Blueprint,request,jsonify,session
+from extensions import csrf,limiter
+from auth.service import login_user,profile_exists
+from services.usage import start_session
+api_bp=Blueprint('api',__name__)
+@api_bp.route('/api/login/',methods=['POST'])
+@csrf.exempt
+@limiter.limit('10 per minute')
 def api_login():
-
-    print("Mobile Login API Called")
-
-    data = request.get_json()
-
-    email = data.get("email")
-    password = data.get("password")
-
-    user = login_user(
-        email,
-        password
-    )
-
-    if not user:
-
-        return jsonify({
-
-            "success": False,
-            "message": "Invalid Email or Password"
-
-        }), 401
-
-    if user["role"] == "CHILD":
-
-        if user["account_status"] != "ACTIVE":
-
-            return jsonify({
-
-                "success": False,
-                "message": "Waiting for Parent Approval"
-
-            }), 403
-
-        return jsonify({
-
-            "success": True,
-            "role": "CHILD",
-            "user_id": user["user_id"],
-            "full_name": user["full_name"],
-            "has_profile": profile_exists(
-                user["user_id"]
-            )
-
-        })
-
-    return jsonify({
-
-        "success": True,
-        "role": "PARENT",
-        "user_id": user["user_id"],
-        "full_name": user["full_name"]
-
-    })
+    d=request.get_json(silent=True) or {}; u=login_user(d.get('email',''),d.get('password',''))
+    if not u:return jsonify(success=False,message='Invalid credentials'),401
+    session.clear(); session['user_id']=u['user_id'];session['role']=u['role'];session['full_name']=u['full_name']
+    if u['role']=='CHILD': session['usage_session_key']=str(start_session(u['user_id'])['session_key'])
+    return jsonify(success=True,role=u['role'],user_id=u['user_id'],full_name=u['full_name'],has_profile=profile_exists(u['user_id']) if u['role']=='CHILD' else True)

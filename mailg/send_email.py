@@ -1,40 +1,15 @@
-import smtplib
-import os
+import os, smtplib
 from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from dotenv import load_dotenv
 
-load_dotenv()
-
-EMAIL = os.getenv("MAIL_EMAIL")
-PASSWORD = os.getenv("MAIL_PASSWORD")
-
-
-def send_email(receiver, subject, body):
-    """
-    Sends an HTML email to the receiver.
-    Gracefully catches and logs any SMTP errors to ensure system resilience.
-    """
-    if not EMAIL or not PASSWORD:
-        print(f"[MAIL WARN] Mail credentials not set in .env. Email to {receiver} logged to console:\nSubject: {subject}\n")
+def send_email(receiver,subject,body):
+    email=os.getenv('MAIL_EMAIL'); password=os.getenv('MAIL_PASSWORD')
+    if not email or not password:
+        print(f'[MAIL-DEMO] {subject} -> {receiver}')
         return False
-
     try:
-        msg = MIMEMultipart("alternative")
-        msg["Subject"] = subject
-        msg["From"] = f"LittleNet Safe Supervision <{EMAIL}>"
-        msg["To"] = receiver
-
-        html_part = MIMEText(body, "html")
-        msg.attach(html_part)
-
-        server = smtplib.SMTP("smtp.gmail.com", 587, timeout=10)
-        server.starttls()
-        server.login(EMAIL, PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print(f"[MAIL SUCCESS] Sent email to {receiver} | Subject: {subject}")
+        msg=MIMEText(body,'html'); msg['Subject']=subject; msg['From']=email; msg['To']=receiver
+        with smtplib.SMTP('smtp.gmail.com',587,timeout=15) as s:
+            s.starttls(); s.login(email,password); s.send_message(msg)
         return True
-    except Exception as e:
-        print(f"[MAIL ERROR] Could not deliver email to {receiver}: {e}")
-        return False
+    except Exception as exc:
+        print('[MAIL WARNING]',exc); return False

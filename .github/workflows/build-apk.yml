@@ -1,0 +1,56 @@
+name: Build LittleNet APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: 'HTTPS LittleNet backend URL'
+        required: true
+        type: string
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'android/**'
+      - '.github/workflows/build-apk.yml'
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      BACKEND_URL: ${{ github.event.inputs.backend_url || secrets.LITTLENET_BACKEND_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - name: Validate backend URL
+        run: |
+          python - <<'PY'
+          import os,sys
+          u=os.environ.get('BACKEND_URL','').strip()
+          if not u.startswith('https://'):
+              sys.exit('BACKEND_URL must be a real HTTPS URL')
+          print('Backend:',u)
+          PY
+      - name: Inject backend URL
+        run: python tools/set_backend_url.py "$BACKEND_URL"
+      - name: Build debug APK
+        working-directory: android
+        run: gradle --no-daemon :app:assembleDebug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleNet-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14

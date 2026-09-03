@@ -1,52 +1,19 @@
-from flask import Blueprint, jsonify
-import flask
-from parent.service import get_child_profile_for_parent, get_parent_children
+from flask import Blueprint,jsonify,session
+from decorators import parent_required
+from parent.service import children,owns
+from database.connection import fetch_one
+parent_api_bp=Blueprint('parent_api',__name__)
+@parent_api_bp.route('/api/parent/children/')
+@parent_required
+def api_children():return jsonify(success=True,children=children(session['user_id']))
+@parent_api_bp.route('/api/parent/child/<int:child_id>/')
+@parent_required
+def api_child(child_id):
+    if not owns(session['user_id'],child_id):return jsonify(success=False),404
+    return jsonify(success=True,profile=fetch_one('SELECT * FROM child_profiles WHERE child_id=%s',(child_id,)))
 
-parent_api_bp = Blueprint(
-    "parent_api",
-    __name__
-)
-
-@parent_api_bp.route("/api/parent/child/<int:child_id>/", methods=["GET"])
-def api_child_profile(child_id):
-
-    profile = get_child_profile_for_parent(child_id)
-
-    if not profile:
-
-        return flask.jsonify({
-
-            "success": False,
-            "message": "Child not found"
-
-        }), 404
-
-    return flask.jsonify({
-
-        "success": True,
-
-        "profile": {
-
-            "user_id": profile["child_id"],
-            "full_name": profile["full_name"],
-            "age": profile["age"],
-            "school_name": profile["school_name"],
-            "location": profile["location"],
-            "current_class": profile["current_class"],
-            "bio": profile["bio"]
-
-        }
-
-    })
-
-@parent_api_bp.route("/api/parent/children/<int:parent_id>/")
-def api_parent_children(parent_id):
-
-    children = get_parent_children(parent_id)
-
-    return jsonify({
-
-        "success": True,
-        "children": children
-
-    })
+@parent_api_bp.route('/api/parent/children/<int:parent_id>/')
+@parent_required
+def api_children_compat(parent_id):
+    if parent_id!=session['user_id']:return jsonify(success=False),403
+    return jsonify(success=True,children=children(session['user_id']))

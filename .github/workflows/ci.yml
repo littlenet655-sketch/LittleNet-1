@@ -1,0 +1,26 @@
+name: LittleNet CI
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+
+jobs:
+  source-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      - name: Install lightweight test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Run local source audits
+        run: python tools/audit_all.py

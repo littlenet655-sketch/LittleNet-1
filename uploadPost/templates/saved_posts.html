@@ -1,0 +1,1 @@
+{% extends 'base.html' %}{% block content %}{% import '_post.html' as ui %}<div class="section-title"><span>Saved</span><span class="muted">Only content still allowed in Kids Mode appears here.</span></div>{% for p in posts %}{{ui.post_card(p)}}{% else %}<div class="form-card"><p>No saved posts yet.</p></div>{% endfor %}{% endblock %}
