@@ -2,101 +2,405 @@
 {% block title %}Sign Up for Kids Mode | LittleNet{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="/static/css/instagram-auth.css">
-
-<div class="ig-auth-wrapper">
-  <div class="ig-auth-column" style="max-width:440px;">
+<div class="auth-shell">
+  <div class="auth-card">
     
-    <div class="ig-card">
-      <div class="ig-logo-wrap">
-        <div class="ig-logo-icon">
-          <svg width="34" height="34" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <path d="M32 10 C42 10 49 14 51 18 C51 35 41 47 32 54 C23 47 13 35 13 18 C15 14 22 10 32 10 Z" fill="none" stroke="url(#ig-star-grad-reg)" stroke-width="4"/>
-            <path d="M32 20 L34.5 28.5 L43 31 L34.5 33.5 L32 42 L29.5 33.5 L21 31 L29.5 28.5 Z" fill="#FFFFFF"/>
-            <defs>
-              <linearGradient id="ig-star-grad-reg" x1="0%" y1="0%" x2="100%" y2="100%">
-                <stop offset="0%" stop-color="#8B5CF6"/>
-                <stop offset="50%" stop-color="#EC4899"/>
-                <stop offset="100%" stop-color="#F97316"/>
-              </linearGradient>
-            </defs>
-          </svg>
+    <!-- Brand Header -->
+    <div class="auth-brand-wrap">
+      <div class="auth-logo-badge">
+        <svg width="40" height="40" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M32 8 C44 8 52 13 54 18 C54 37 43 49 32 56 C21 49 10 37 10 18 C12 13 20 8 32 8 Z" fill="url(#ln-shield-reg)" stroke="#10B981" stroke-width="3"/>
+          <path d="M32 18 L34.8 26.6 L44 29.2 L34.8 31.8 L32 40.5 L29.2 31.8 L20 29.2 L29.2 26.6 Z" fill="#FFFFFF"/>
+          <defs>
+            <linearGradient id="ln-shield-reg" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#34D399"/>
+              <stop offset="50%" stop-color="#38BDF8"/>
+              <stop offset="100%" stop-color="#818CF8"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <h1 class="brand auth-title">Create Kids Account</h1>
+      <p class="auth-subtitle">Join your safe, creative & educational circle</p>
+    </div>
+
+    <!-- Error Alert -->
+    {% if error %}
+    <div class="auth-alert auth-alert-error" role="alert">
+      <span class="alert-icon">⚠️</span>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Registration Form -->
+    <form method="post" action="/register-child/" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="auth-field">
+        <label class="field-label" for="reg-username">Choose a Username</label>
+        <div class="input-wrap">
+          <span class="input-icon">👤</span>
+          <input type="text" 
+                 id="reg-username"
+                 name="username" 
+                 class="auth-input" 
+                 placeholder="Username (letters, numbers, _)" 
+                 required 
+                 pattern="[A-Za-z0-9_.]{3,30}"
+                 autocomplete="username">
         </div>
-        <h1 class="ig-logo-text">Create Kids Account</h1>
-        <p class="ig-logo-tagline">Join your safe, creative & educational circle</p>
       </div>
 
-      {% if error %}
-      <div class="ig-alert ig-alert-error">
-        <span>⚠️</span>
-        <span>{{ error }}</span>
+      <div class="auth-field">
+        <label class="field-label" for="reg-fullname">Full Name</label>
+        <div class="input-wrap">
+          <span class="input-icon">📝</span>
+          <input type="text" 
+                 id="reg-fullname"
+                 name="full_name" 
+                 class="auth-input" 
+                 placeholder="Your full name" 
+                 required 
+                 autocomplete="name">
+        </div>
       </div>
-      {% endif %}
 
-      <form method="post" action="/register-child/">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-        <div class="ig-field">
-          <input type="text" name="username" class="ig-input" placeholder="Username (letters, numbers, _)" required pattern="[A-Za-z0-9_.]{3,30}">
+      <div class="auth-field">
+        <label class="field-label" for="reg-email">Child Email Address</label>
+        <div class="input-wrap">
+          <span class="input-icon">✉️</span>
+          <input type="email" 
+                 id="reg-email"
+                 name="email" 
+                 class="auth-input" 
+                 placeholder="child@example.com" 
+                 required 
+                 autocomplete="email">
         </div>
-
-        <div class="ig-field">
-          <input type="text" name="full_name" class="ig-input" placeholder="Full name" required>
-        </div>
-
-        <div class="ig-field">
-          <input type="email" name="email" class="ig-input" placeholder="Child email address" required>
-        </div>
-
-        <div class="ig-field">
-          <input type="password" name="password" class="ig-input" placeholder="Password (min 8 characters)" required minlength="8">
-        </div>
-
-        <div class="ig-field">
-          <input type="number" name="age" class="ig-input" placeholder="Age (4 to 18)" required min="4" max="18" value="11">
-        </div>
-
-        <div style="border-top:1px solid #334155;margin:16px 0 12px;padding-top:10px;text-align:left;">
-          <small style="color:#A5B4FC;font-weight:700;font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Parent / Guardian Verification</small>
-        </div>
-
-        <div class="ig-field">
-          <input type="text" name="parent_name" class="ig-input" placeholder="Parent / Guardian full name" required>
-        </div>
-
-        <div class="ig-field">
-          <input type="email" name="parent_email" class="ig-input" placeholder="Parent email address" required>
-        </div>
-
-        <!-- Instant Demo Auto-Approve Checkbox (Checked by default for viva & testing) -->
-        <div style="margin:14px 0;padding:10px 12px;background:rgba(99,102,241,0.12);border:1px solid rgba(99,102,241,0.3);border-radius:10px;text-align:left;display:flex;align-items:center;gap:10px;">
-          <input type="checkbox" name="instant_demo" id="instant_demo" value="1" checked style="width:18px;height:18px;accent-color:#EC4899;cursor:pointer;">
-          <label for="instant_demo" style="color:#E2E8F0;font-size:12px;cursor:pointer;line-height:1.3;">
-            <b style="color:#F472B6;display:block;">⚡ Instant Demo & Presentation Mode</b>
-            Auto-approve and enter Kids Mode immediately without email delays.
-          </label>
-        </div>
-
-        <button type="submit" class="ig-btn-primary" style="margin-top:10px;">
-          Create & Enter Kids Mode
-        </button>
-      </form>
-
-      <div style="margin-top:16px;display:flex;align-items:center;justify-content:center;gap:6px;color:#64748B;font-size:11px;">
-        <span>🔒</span>
-        <span>No stranger direct messages • AI-shielded</span>
       </div>
+
+      <div class="auth-field">
+        <label class="field-label" for="reg-password">Password</label>
+        <div class="input-wrap">
+          <span class="input-icon">🔒</span>
+          <input type="password" 
+                 id="reg-password"
+                 name="password" 
+                 class="auth-input" 
+                 placeholder="Minimum 8 characters" 
+                 required 
+                 minlength="8" 
+                 autocomplete="new-password">
+        </div>
+      </div>
+
+      <div class="auth-field">
+        <label class="field-label" for="reg-age">Age</label>
+        <div class="input-wrap">
+          <span class="input-icon">🎂</span>
+          <input type="number" 
+                 id="reg-age"
+                 name="age" 
+                 class="auth-input" 
+                 placeholder="Age (4 to 18)" 
+                 required 
+                 min="4" 
+                 max="18" 
+                 value="11">
+        </div>
+      </div>
+
+      <div class="section-divider">
+        <span>PARENT / GUARDIAN VERIFICATION</span>
+      </div>
+
+      <div class="auth-field">
+        <label class="field-label" for="reg-pname">Parent / Guardian Name</label>
+        <div class="input-wrap">
+          <span class="input-icon">🛡️</span>
+          <input type="text" 
+                 id="reg-pname"
+                 name="parent_name" 
+                 class="auth-input" 
+                 placeholder="Parent full name" 
+                 required>
+        </div>
+      </div>
+
+      <div class="auth-field">
+        <label class="field-label" for="reg-pemail">Parent Email Address</label>
+        <div class="input-wrap">
+          <span class="input-icon">📩</span>
+          <input type="email" 
+                 id="reg-pemail"
+                 name="parent_email" 
+                 class="auth-input" 
+                 placeholder="parent@example.com" 
+                 required>
+        </div>
+      </div>
+
+      <!-- Instant Demo Mode Checkbox -->
+      <div class="demo-checkbox-wrap">
+        <input type="checkbox" name="instant_demo" id="instant_demo" value="1" checked>
+        <label for="instant_demo">
+          <b>⚡ Instant Demo & Presentation Mode</b>
+          Auto-approve and enter Kids Mode immediately without waiting for email.
+        </label>
+      </div>
+
+      <button type="submit" class="btn primary auth-submit-btn">
+        <span>Create & Enter Kids Mode</span>
+        <span class="btn-arrow">→</span>
+      </button>
+    </form>
+
+    <div class="privacy-badge">
+      <span>🔒</span>
+      <span>No stranger direct messages • Multimodal AI safety active</span>
     </div>
 
     <!-- Sign In Option -->
-    <div class="ig-subcard">
-      Already have an account? <a href="/login/?mode=kids">Log in</a>
+    <div class="auth-signup-box">
+      Already have an account? <a href="/login/?mode=kids" class="signup-link kid-link">Log in here</a>
     </div>
 
   </div>
 </div>
 
-<script>
-document.body.classList.add('auth-page-body');
-</script>
+<style>
+.auth-shell {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--ln-cream, #FFF7ED);
+  box-sizing: border-box;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: #FFFFFF;
+  border: 1px solid var(--ln-line, #F1E7DA);
+  border-radius: 28px;
+  box-shadow: 0 16px 40px rgba(88, 68, 45, 0.08);
+  padding: 32px 28px;
+  box-sizing: border-box;
+  text-align: center;
+  margin: auto;
+}
+
+.auth-brand-wrap {
+  margin-bottom: 22px;
+}
+
+.auth-logo-badge {
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 12px;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #ECFDF5, #E0F2FE);
+  box-shadow: 0 8px 20px rgba(52, 211, 153, 0.18);
+}
+
+.auth-title {
+  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  font-size: 26px;
+  font-weight: 900;
+  color: var(--ln-ink, #1F2937);
+  margin: 0 0 6px;
+  letter-spacing: -0.5px;
+}
+
+.auth-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #6B7280;
+  line-height: 1.45;
+}
+
+.auth-alert {
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  margin-bottom: 18px;
+  text-align: left;
+}
+
+.auth-alert-error {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #B91C1C;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-form {
+  text-align: left;
+}
+
+.auth-field {
+  margin-bottom: 14px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 750;
+  color: #374151;
+  margin-bottom: 5px;
+}
+
+.input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: 14px;
+  font-size: 15px;
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.auth-input {
+  width: 100%;
+  height: 46px;
+  background: #F9FAFB;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 16px;
+  padding: 0 16px 0 40px;
+  font-size: 14px;
+  color: #111827;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.auth-input:focus {
+  background: #FFFFFF;
+  border-color: #10B981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+}
+
+.section-divider {
+  display: flex;
+  align-items: center;
+  margin: 18px 0 14px;
+  color: #059669;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.section-divider::before,
+.section-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #E5E7EB;
+}
+
+.section-divider span {
+  padding: 0 8px;
+}
+
+.demo-checkbox-wrap {
+  margin: 14px 0 18px;
+  padding: 12px 14px;
+  background: #F0FDF4;
+  border: 1.5px solid #BBF7D0;
+  border-radius: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.demo-checkbox-wrap input {
+  width: 18px;
+  height: 18px;
+  margin-top: 2px;
+  accent-color: #10B981;
+  cursor: pointer;
+}
+
+.demo-checkbox-wrap label {
+  font-size: 12px;
+  color: #374151;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.demo-checkbox-wrap b {
+  display: block;
+  color: #047857;
+  margin-bottom: 2px;
+}
+
+.auth-submit-btn {
+  width: 100%;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #10B981, #059669);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 16px;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(16, 185, 129, 0.3);
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.auth-submit-btn:active {
+  transform: scale(0.98);
+}
+
+.btn-arrow {
+  font-size: 16px;
+  transition: transform 0.18s ease;
+}
+
+.auth-submit-btn:hover .btn-arrow {
+  transform: translateX(4px);
+}
+
+.privacy-badge {
+  margin-top: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #6B7280;
+  font-size: 11px;
+}
+
+.auth-signup-box {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #F3F4F6;
+  font-size: 13px;
+  color: #6B7280;
+}
+
+.signup-link {
+  text-decoration: none;
+  font-weight: 800;
+}
+
+.signup-link.kid-link {
+  color: #059669;
+}
+</style>
 {% endblock %}

@@ -1,313 +1,569 @@
 {% extends 'base.html' %}
-{% block title %}LittleNet — AI-Protected Social Network{% endblock %}
+{% block title %}LittleNet — Safe Social Network for Kids{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="/static/css/instagram-auth.css">
+{% import '_icons.html' as ico %}
 
-<div class="ig-auth-wrapper">
-  <div class="ig-main-container">
+<div class="auth-shell">
+  <div class="auth-card">
     
-    <!-- LEFT COLUMN: Realistic Instagram Smartphone Showcase (Desktop & Tablet) -->
-    <div class="ig-phone-frame">
-      <div class="ig-phone-notch"></div>
-      <div class="ig-phone-screen">
-        <div class="ig-slide-container">
-          
-          <!-- Slide 1: Child Creative Post & Safe Social -->
-          <div class="ig-slide">
-            <div class="ig-mock-header">
-              <span class="ig-mock-badge">🛡️ AI Filter Active</span>
-              <small style="color:#94A3B8;font-size:11px;">Kids Mode</small>
-            </div>
-            <div class="ig-mock-post">
-              <div class="ig-mock-user">
-                <div class="ig-mock-avatar">🚀</div>
-                <div>
-                  <b style="color:#F8FAFC;font-size:13px;display:block;">Aarav (Age 10)</b>
-                  <small style="color:#94A3B8;font-size:10px;">STEM & Astronomy Club</small>
-                </div>
-              </div>
-              <svg class="ig-mock-img" viewBox="0 0 400 280" style="background:linear-gradient(135deg,#1E1B4B,#312E81,#4C1D95);width:100%;height:180px;">
-                <circle cx="200" cy="90" r="45" fill="#F59E0B" opacity="0.9"/>
-                <ellipse cx="200" cy="90" rx="75" ry="18" fill="none" stroke="#FDE68A" stroke-width="3" transform="rotate(-15 200 90)"/>
-                <circle cx="90" cy="50" r="12" fill="#38BDF8"/>
-                <circle cx="310" cy="130" r="8" fill="#F43F5E"/>
-                <text x="200" y="165" fill="#FFFFFF" font-size="13" font-weight="700" text-anchor="middle">Made a 3D Saturn model! 🪐✨</text>
-              </svg>
-              <div class="ig-mock-content">
-                <div class="ig-mock-actions">
-                  <span>❤️</span><span>💬</span><span>🚀</span>
-                </div>
-                <p style="color:#E2E8F0;font-size:11px;margin:0;line-height:1.4;">
-                  <b>Aarav:</b> Check out my weekend science project! #SpaceArt
-                </p>
-              </div>
-            </div>
-            <div class="ig-ai-shield-callout">
-              <span class="ig-ai-shield-icon">✨</span>
-              <div class="ig-ai-shield-text">
-                <b>Real-Time Multi-Modal AI</b>
-                <span>Zero adult content • Zero cyberbullying</span>
-              </div>
-            </div>
-          </div>
+    <!-- Brand Header -->
+    <div class="auth-brand-wrap">
+      <div class="auth-logo-badge">
+        <svg width="40" height="40" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M32 8 C44 8 52 13 54 18 C54 37 43 49 32 56 C21 49 10 37 10 18 C12 13 20 8 32 8 Z" fill="url(#ln-shield-grad)" stroke="#10B981" stroke-width="3"/>
+          <path d="M32 18 L34.8 26.6 L44 29.2 L34.8 31.8 L32 40.5 L29.2 31.8 L20 29.2 L29.2 26.6 Z" fill="#FFFFFF"/>
+          <defs>
+            <linearGradient id="ln-shield-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#34D399"/>
+              <stop offset="50%" stop-color="#38BDF8"/>
+              <stop offset="100%" stop-color="#818CF8"/>
+            </linearGradient>
+          </defs>
+        </svg>
+      </div>
+      <h1 class="brand auth-title">LittleNet</h1>
+      <p class="auth-subtitle" id="mode-subtitle">
+        {{ 'A safe, AI-guided social world for children' if mode!='parent' else 'Parent supervision, screen-time & safety controls' }}
+      </p>
+    </div>
 
-          <!-- Slide 2: STEM Challenge & Gamified Learning -->
-          <div class="ig-slide">
-            <div class="ig-mock-header">
-              <span class="ig-mock-badge" style="background:rgba(245,158,11,0.15);color:#FBBF24;border-color:rgba(245,158,11,0.3);">🏆 Daily Challenge</span>
-              <small style="color:#94A3B8;font-size:11px;">Level 4</small>
-            </div>
-            <div class="ig-mock-post" style="padding:18px;text-align:center;">
-              <div style="font-size:44px;margin-bottom:10px;">🧪</div>
-              <h3 style="color:#F8FAFC;margin:0 0 6px;font-size:16px;">Science & Robotics Quiz</h3>
-              <p style="color:#94A3B8;font-size:12px;margin:0 0 16px;">Solve 3 puzzles to unlock today's badge!</p>
-              <div style="background:#0F172A;border:1px solid #334155;border-radius:12px;padding:12px;text-align:left;margin-bottom:8px;">
-                <span style="color:#38BDF8;font-size:11px;font-weight:700;">Question 1 of 3:</span>
-                <p style="color:#FFFFFF;font-size:12px;margin:4px 0 0;">Which planet has the most visible rings?</p>
-              </div>
-              <div style="display:flex;justify-content:space-between;color:#34D399;font-weight:700;font-size:12px;margin-top:12px;">
-                <span>Points: +120 XP</span>
-                <span>Streak: 5 Days 🔥</span>
-              </div>
-            </div>
-            <div class="ig-ai-shield-callout" style="background:rgba(52,211,153,0.12);border-color:rgba(52,211,153,0.25);">
-              <span class="ig-ai-shield-icon">🔒</span>
-              <div class="ig-ai-shield-text">
-                <b style="color:#6EE7B7;">Parent-Approved Circle</b>
-                <span>No stranger direct messages allowed</span>
-              </div>
-            </div>
-          </div>
+    <!-- Mode Selector Pills (Kids Mode vs Parent Mode) -->
+    <div class="mode-pill-toggle" role="tablist" aria-label="Select login mode">
+      <button type="button" 
+              class="pill-btn {% if mode!='parent' %}active kid-active{% endif %}" 
+              id="tab-kids" 
+              role="tab" 
+              aria-selected="{{ 'true' if mode!='parent' else 'false' }}">
+        <span class="pill-emoji">🧒</span>
+        <span>Kids Mode</span>
+      </button>
+      <button type="button" 
+              class="pill-btn {% if mode=='parent' %}active parent-active{% endif %}" 
+              id="tab-parent" 
+              role="tab" 
+              aria-selected="{{ 'true' if mode=='parent' else 'false' }}">
+        <span class="pill-emoji">🛡️</span>
+        <span>Parent Mode</span>
+      </button>
+    </div>
 
-          <!-- Slide 3: Parental Peace of Mind -->
-          <div class="ig-slide">
-            <div class="ig-mock-header">
-              <span class="ig-mock-badge" style="background:rgba(168,85,247,0.15);color:#C084FC;border-color:rgba(168,85,247,0.3);">🛡️ Parent Oversight</span>
-              <small style="color:#94A3B8;font-size:11px;">Live Status</small>
-            </div>
-            <div class="ig-mock-post" style="padding:18px;">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
-                <span style="width:10px;height:10px;border-radius:50%;background:#22C55E;display:inline-block;box-shadow:0 0 8px #22C55E;"></span>
-                <b style="color:#F8FAFC;font-size:13px;">Child Safety Guardian</b>
-              </div>
-              <div style="background:#0F172A;border-radius:12px;padding:12px;margin-bottom:10px;">
-                <span style="color:#94A3B8;font-size:11px;">Screen Time Today</span>
-                <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:4px;">
-                  <b style="color:#F8FAFC;font-size:20px;">35 mins</b>
-                  <small style="color:#34D399;font-size:11px;">Daily limit: 60 mins</small>
-                </div>
-                <div style="height:6px;background:#334155;border-radius:999px;margin-top:8px;overflow:hidden;">
-                  <div style="width:58%;height:100%;background:linear-gradient(90deg,#38BDF8,#34D399);border-radius:999px;"></div>
-                </div>
-              </div>
-              <div style="background:#0F172A;border-radius:12px;padding:12px;">
-                <div style="display:flex;justify-content:space-between;font-size:11px;color:#94A3B8;">
-                  <span>Flagged Incidents</span>
-                  <b style="color:#34D399;">0 Detected (100% Clean)</b>
-                </div>
-              </div>
-            </div>
-            <div class="ig-ai-shield-callout" style="background:rgba(236,72,153,0.12);border-color:rgba(236,72,153,0.25);">
-              <span class="ig-ai-shield-icon">🌙</span>
-              <div class="ig-ai-shield-text">
-                <b style="color:#F472B6;">Quiet Hours Enforcement</b>
-                <span>Auto-locks at bedtime (9:00 PM - 7:00 AM)</span>
-              </div>
-            </div>
-          </div>
+    <!-- Error Alert -->
+    {% if error %}
+    <div class="auth-alert auth-alert-error" role="alert">
+      <span class="alert-icon">⚠️</span>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
 
+    <!-- Pending Approval Banner for Demo / Viva -->
+    {% if approval_token %}
+    <div class="auth-alert auth-alert-pending">
+      <div class="pending-title">⏳ Parent Approval Required</div>
+      <p class="pending-desc">This account is awaiting parent identity verification. For demo/viva testing, approve instantly:</p>
+      <a href="/approve/{{ approval_token }}/" class="btn primary pending-btn">
+        🛡️ Approve Account Now
+      </a>
+    </div>
+    {% endif %}
+
+    <!-- Login Form -->
+    <form method="post" action="/login/" id="auth-form" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="mode" id="auth-mode-input" value="{{ mode or 'kids' }}">
+
+      <div class="auth-field">
+        <label for="auth-identifier" class="field-label" id="label-identifier">
+          {{ 'Username or Child Email' if mode!='parent' else 'Parent Email Address' }}
+        </label>
+        <div class="input-wrap">
+          <span class="input-icon">👤</span>
+          <input type="text" 
+                 name="email" 
+                 id="auth-identifier" 
+                 class="auth-input" 
+                 placeholder="{{ 'Enter username or child email' if mode!='parent' else 'parent@example.com' }}" 
+                 required 
+                 autocomplete="username">
         </div>
+      </div>
+
+      <div class="auth-field">
+        <label for="auth-password" class="field-label">Password</label>
+        <div class="input-wrap">
+          <span class="input-icon">🔒</span>
+          <input type="password" 
+                 name="password" 
+                 id="auth-password" 
+                 class="auth-input" 
+                 placeholder="Enter your password" 
+                 required 
+                 minlength="6" 
+                 autocomplete="current-password">
+          <button type="button" 
+                  id="toggle-pwd-btn" 
+                  class="pwd-toggle-btn" 
+                  aria-label="Toggle password visibility">
+            👁️
+          </button>
+        </div>
+      </div>
+
+      <button type="submit" class="btn primary auth-submit-btn" id="auth-submit-btn">
+        <span>Log In</span>
+        <span class="btn-arrow">→</span>
+      </button>
+    </form>
+
+    <!-- Biometric Face ID Login (Kids Mode) -->
+    <div id="face-login-wrap" {% if mode=='parent' %}style="display:none;"{% endif %}>
+      <div class="auth-divider">
+        <span>OR</span>
+      </div>
+      <a href="/face-login/" class="face-login-btn">
+        <span class="face-icon">📸</span>
+        <span>Instant Face ID Login</span>
+      </a>
+    </div>
+
+    <!-- Sign-Up Links -->
+    <div class="auth-signup-box">
+      <span class="signup-text">New to LittleNet?</span>
+      <div class="signup-links">
+        <a href="/register-child/" class="signup-link kid-link">
+          <span class="link-bullet">✨</span> Sign up as Child
+        </a>
+        <span class="link-sep">•</span>
+        <a href="/register-parent/" class="signup-link parent-link">
+          <span class="link-bullet">🛡️</span> Parent Sign Up
+        </a>
       </div>
     </div>
 
-    <!-- RIGHT COLUMN: Instagram-Style Dark Login Card -->
-    <div class="ig-auth-column">
-      
-      <div class="ig-card">
-        <!-- Dark Brand Logo & Icon -->
-        <div class="ig-logo-wrap">
-          <div class="ig-logo-icon">
-            <svg width="34" height="34" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-              <path d="M32 10 C42 10 49 14 51 18 C51 35 41 47 32 54 C23 47 13 35 13 18 C15 14 22 10 32 10 Z" fill="none" stroke="url(#ig-star-grad)" stroke-width="4"/>
-              <path d="M32 20 L34.5 28.5 L43 31 L34.5 33.5 L32 42 L29.5 33.5 L21 31 L29.5 28.5 Z" fill="#FFFFFF"/>
-              <defs>
-                <linearGradient id="ig-star-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#8B5CF6"/>
-                  <stop offset="50%" stop-color="#EC4899"/>
-                  <stop offset="100%" stop-color="#F97316"/>
-                </linearGradient>
-              </defs>
-            </svg>
-          </div>
-          <h1 class="ig-logo-text">LittleNet</h1>
-          <p class="ig-logo-tagline" id="mode-tagline">
-            {{ 'A safe, AI-guided social space for children' if mode=='kids' else 'Parental monitoring, quiet hours & controls' }}
-          </p>
-        </div>
-
-        <!-- Segmented Instagram Pill Switcher (Kids Mode vs Parent Mode) -->
-        <div class="ig-mode-pills">
-          <button type="button" class="ig-pill-btn {% if mode!='parent' %}active{% endif %}" id="tab-kids">
-            <span>🧒</span> Kids Mode
-          </button>
-          <button type="button" class="ig-pill-btn {% if mode=='parent' %}active{% endif %}" id="tab-parent">
-            <span>🛡️</span> Parent Mode
-          </button>
-        </div>
-
-        <!-- Error & Pending Approval Banners -->
-        {% if error %}
-        <div class="ig-alert ig-alert-error">
-          <span>⚠️</span>
-          <span>{{ error }}</span>
-        </div>
-        {% endif %}
-
-        {% if approval_token %}
-        <div class="ig-alert ig-alert-pending">
-          <b style="font-size:13px;display:block;margin-bottom:4px;">Parent Approval Required</b>
-          <span style="font-size:12px;margin-bottom:10px;">For demo / viva testing, approve instantly:</span>
-          <a href="/approve/{{ approval_token }}/" class="ig-btn-primary" style="min-height:36px;font-size:12px;background:linear-gradient(135deg,#F59E0B,#D97706);box-shadow:none;">
-            🛡️ Approve This Account Now
-          </a>
-        </div>
-        {% endif %}
-
-        <!-- Login Form -->
-        <form method="post" action="/login/" id="login-form">
-          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-          <input type="hidden" name="mode" id="form-mode" value="{{ mode or 'kids' }}">
-
-          <div class="ig-field">
-            <input 
-              type="text" 
-              name="email" 
-              id="input-identifier"
-              class="ig-input" 
-              placeholder="{{ 'Username or child email' if mode!='parent' else 'Parent email address' }}" 
-              required 
-              autocomplete="username">
-          </div>
-
-          <div class="ig-field" style="position:relative;">
-            <input 
-              type="password" 
-              name="password" 
-              id="input-password"
-              class="ig-input" 
-              placeholder="Password" 
-              required 
-              minlength="6" 
-              autocomplete="current-password"
-              style="padding-right:44px;">
-            <button 
-              type="button" 
-              id="btn-toggle-pwd"
-              style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;color:#94A3B8;cursor:pointer;padding:6px;font-size:16px;">
-              👁️
-            </button>
-          </div>
-
-          <button type="submit" class="ig-btn-primary" id="btn-submit">
-            Log In
-          </button>
-        </form>
-
-        <div class="ig-divider">
-          <span>OR</span>
-        </div>
-
-        <!-- Biometric Face Login (for children) -->
-        <a href="/face-login/" class="ig-btn-alt" id="btn-face-login">
-          <span>📸</span> Instant Face ID Login
-        </a>
-
-        <!-- Moderator / Admin Portal Link -->
-        <div style="margin-top:16px;">
-          <a href="/admin-login/" style="color:#64748B;font-size:11px;text-decoration:none;font-weight:600;">
-            🛡️ Safety Moderator / Admin Login
-          </a>
-        </div>
-
-      </div>
-
-      <!-- Secondary Instagram Box: Sign Up Options -->
-      <div class="ig-subcard" id="signup-box">
-        Don't have an account? 
-        <a href="/register-child/" id="signup-link-kid" style="color:#EC4899;">Sign up for Kids</a>
-        <span style="color:#475569;margin:0 4px;">•</span>
-        <a href="/register-parent/" id="signup-link-parent" style="color:#38BDF8;">Create Parent Account</a>
-      </div>
-
+    <!-- Moderator / Admin Access -->
+    <div class="auth-admin-link">
+      <a href="/admin-login/">
+        <span>⚖️</span> Safety Moderator & Admin Portal
+      </a>
     </div>
 
   </div>
-
-  <!-- Academic Credentials & Helpline Footer -->
-  <footer class="ig-footer">
-    <div>
-      <b>Adichunchanagiri Institute of Technology, Chikkamagaluru</b> — Dept. of CS&E (Data Science)
-    </div>
-    <div>
-      Major Project Phase II • Group DSPG06 • Guided by <b>Prof. Harshitha HD</b>
-    </div>
-    <div style="margin-top:4px;">
-      National Child Helpline: <a href="tel:1098" style="color:#F43F5E;font-weight:700;">1098</a> • 
-      <a href="/static/favicon.svg" target="_blank">Brand Assets</a>
-    </div>
-  </footer>
 </div>
 
+<style>
+/* Clean, Kid-Safe Responsive Auth Styles */
+.auth-shell {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--ln-cream, #FFF7ED);
+  box-sizing: border-box;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: #FFFFFF;
+  border: 1px solid var(--ln-line, #F1E7DA);
+  border-radius: 28px;
+  box-shadow: 0 16px 40px rgba(88, 68, 45, 0.08);
+  padding: 32px 28px;
+  box-sizing: border-box;
+  text-align: center;
+  margin: auto;
+}
+
+.auth-brand-wrap {
+  margin-bottom: 22px;
+}
+
+.auth-logo-badge {
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 12px;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+  background: linear-gradient(135deg, #ECFDF5, #E0F2FE);
+  box-shadow: 0 8px 20px rgba(52, 211, 153, 0.18);
+}
+
+.auth-title {
+  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  font-size: 32px;
+  font-weight: 900;
+  color: var(--ln-ink, #1F2937);
+  margin: 0 0 6px;
+  letter-spacing: -0.5px;
+}
+
+.auth-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #6B7280;
+  line-height: 1.45;
+}
+
+/* Mode Selector Pills */
+.mode-pill-toggle {
+  display: flex;
+  gap: 8px;
+  padding: 5px;
+  background: #F3F4F6;
+  border-radius: 999px;
+  margin-bottom: 22px;
+}
+
+.pill-btn {
+  flex: 1;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border: none;
+  background: transparent;
+  color: #6B7280;
+  font-size: 13px;
+  font-weight: 800;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.pill-btn.active.kid-active {
+  background: #10B981;
+  color: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
+}
+
+.pill-btn.active.parent-active {
+  background: #1E293B;
+  color: #FFFFFF;
+  box-shadow: 0 4px 12px rgba(30, 41, 59, 0.25);
+}
+
+.pill-emoji {
+  font-size: 15px;
+}
+
+/* Alerts */
+.auth-alert {
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  margin-bottom: 18px;
+  text-align: left;
+}
+
+.auth-alert-error {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #B91C1C;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-alert-pending {
+  background: #FFFBEB;
+  border: 1.5px dashed #F59E0B;
+  color: #92400E;
+}
+
+.pending-title {
+  font-weight: 800;
+  color: #B45309;
+  margin-bottom: 4px;
+}
+
+.pending-desc {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pending-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100%;
+  padding: 10px;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+/* Form & Inputs */
+.auth-form {
+  text-align: left;
+}
+
+.auth-field {
+  margin-bottom: 16px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 750;
+  color: #374151;
+  margin-bottom: 6px;
+}
+
+.input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: 14px;
+  font-size: 16px;
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.auth-input {
+  width: 100%;
+  height: 48px;
+  background: #F9FAFB;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 16px;
+  padding: 0 42px 0 40px;
+  font-size: 14px;
+  color: #111827;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.auth-input:focus {
+  background: #FFFFFF;
+  border-color: #10B981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
+}
+
+.pwd-toggle-btn {
+  position: absolute;
+  right: 12px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 6px;
+  font-size: 15px;
+  opacity: 0.65;
+  transition: opacity 0.15s ease;
+}
+
+.pwd-toggle-btn:hover {
+  opacity: 1;
+}
+
+.auth-submit-btn {
+  width: 100%;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  background: linear-gradient(135deg, #10B981, #059669);
+  color: #FFFFFF;
+  border: none;
+  border-radius: 16px;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 8px 18px rgba(16, 185, 129, 0.3);
+  margin-top: 8px;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.auth-submit-btn:active {
+  transform: scale(0.98);
+}
+
+.btn-arrow {
+  font-size: 16px;
+  transition: transform 0.18s ease;
+}
+
+.auth-submit-btn:hover .btn-arrow {
+  transform: translateX(4px);
+}
+
+/* Divider */
+.auth-divider {
+  display: flex;
+  align-items: center;
+  margin: 18px 0;
+  color: #9CA3AF;
+  font-size: 11px;
+  font-weight: 750;
+  letter-spacing: 0.05em;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #E5E7EB;
+}
+
+.auth-divider span {
+  padding: 0 10px;
+}
+
+/* Face ID Button */
+.face-login-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  height: 48px;
+  background: #F0FDF4;
+  border: 1.5px solid #A7F3D0;
+  color: #065F46;
+  border-radius: 16px;
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+  box-sizing: border-box;
+  transition: all 0.16s ease;
+}
+
+.face-login-btn:hover {
+  background: #DCFCE7;
+  border-color: #6EE7B7;
+}
+
+/* Sign Up Box */
+.auth-signup-box {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #F3F4F6;
+  font-size: 13px;
+}
+
+.signup-text {
+  display: block;
+  color: #6B7280;
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.signup-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.signup-link {
+  text-decoration: none;
+  font-weight: 800;
+  font-size: 13px;
+}
+
+.signup-link.kid-link {
+  color: #059669;
+}
+
+.signup-link.parent-link {
+  color: #2563EB;
+}
+
+.link-bullet {
+  font-size: 12px;
+}
+
+.link-sep {
+  color: #D1D5DB;
+}
+
+/* Admin Link */
+.auth-admin-link {
+  margin-top: 18px;
+}
+
+.auth-admin-link a {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: #9CA3AF;
+  font-size: 11px;
+  font-weight: 600;
+  text-decoration: none;
+  transition: color 0.15s ease;
+}
+
+.auth-admin-link a:hover {
+  color: #4B5563;
+}
+</style>
+
 <script>
-document.body.classList.add('auth-page-body');
+document.addEventListener('DOMContentLoaded', () => {
+  const tabKids = document.getElementById('tab-kids');
+  const tabParent = document.getElementById('tab-parent');
+  const formMode = document.getElementById('auth-mode-input');
+  const subtitle = document.getElementById('mode-subtitle');
+  const labelIdent = document.getElementById('label-identifier');
+  const inputIdent = document.getElementById('auth-identifier');
+  const faceWrap = document.getElementById('face-login-wrap');
+  const pwdInput = document.getElementById('auth-password');
+  const toggleBtn = document.getElementById('toggle-pwd-btn');
+  const submitBtn = document.getElementById('auth-submit-btn');
 
-const formMode = document.getElementById('form-mode');
-const tabKids = document.getElementById('tab-kids');
-const tabParent = document.getElementById('tab-parent');
-const inputIdent = document.getElementById('input-identifier');
-const tagline = document.getElementById('mode-tagline');
-const faceBtn = document.getElementById('btn-face-login');
-const submitBtn = document.getElementById('btn-submit');
-const togglePwdBtn = document.getElementById('btn-toggle-pwd');
-
-function setAuthMode(mode) {
-  if (!formMode) return;
-  formMode.value = mode;
-
-  if (mode === 'kids') {
-    tabKids.classList.add('active');
-    tabParent.classList.remove('active');
-    inputIdent.placeholder = 'Username or child email';
-    tagline.textContent = 'A safe, AI-guided social space for children';
-    faceBtn.style.display = 'flex';
-    submitBtn.textContent = 'Log In to Kids Mode';
-    submitBtn.style.background = 'linear-gradient(45deg, #F09433 0%, #E6683C 25%, #DC2743 50%, #CC2366 75%, #BC1888 100%)';
-  } else {
-    tabParent.classList.add('active');
-    tabKids.classList.remove('active');
-    inputIdent.placeholder = 'Parent email address';
-    tagline.textContent = 'Parental monitoring, quiet hours & controls';
-    faceBtn.style.display = 'none';
-    submitBtn.textContent = 'Log In to Parent Mode';
-    submitBtn.style.background = 'linear-gradient(135deg, #3B82F6 0%, #6366F1 50%, #8B5CF6 100%)';
+  function setMode(mode) {
+    if (mode === 'parent') {
+      tabParent.classList.add('active', 'parent-active');
+      tabKids.classList.remove('active', 'kid-active');
+      tabParent.setAttribute('aria-selected', 'true');
+      tabKids.setAttribute('aria-selected', 'false');
+      formMode.value = 'parent';
+      subtitle.textContent = 'Parent supervision, screen-time & safety controls';
+      labelIdent.textContent = 'Parent Email Address';
+      inputIdent.placeholder = 'parent@example.com';
+      if (faceWrap) faceWrap.style.display = 'none';
+      if (submitBtn) {
+        submitBtn.style.background = 'linear-gradient(135deg, #1E293B, #0F172A)';
+        submitBtn.style.boxShadow = '0 8px 18px rgba(15, 23, 42, 0.25)';
+      }
+    } else {
+      tabKids.classList.add('active', 'kid-active');
+      tabParent.classList.remove('active', 'parent-active');
+      tabKids.setAttribute('aria-selected', 'true');
+      tabParent.setAttribute('aria-selected', 'false');
+      formMode.value = 'kids';
+      subtitle.textContent = 'A safe, AI-guided social world for children';
+      labelIdent.textContent = 'Username or Child Email';
+      inputIdent.placeholder = 'Enter username or child email';
+      if (faceWrap) faceWrap.style.display = 'block';
+      if (submitBtn) {
+        submitBtn.style.background = 'linear-gradient(135deg, #10B981, #059669)';
+        submitBtn.style.boxShadow = '0 8px 18px rgba(16, 185, 129, 0.3)';
+      }
+    }
   }
-}
 
-if (tabKids) {
-  tabKids.addEventListener('click', function() { setAuthMode('kids'); });
-}
-if (tabParent) {
-  tabParent.addEventListener('click', function() { setAuthMode('parent'); });
-}
-if (togglePwdBtn) {
-  togglePwdBtn.addEventListener('click', function() {
-    const pwd = document.getElementById('input-password');
-    pwd.type = pwd.type === 'password' ? 'text' : 'password';
-  });
-}
+  if (tabKids) tabKids.addEventListener('click', () => setMode('kids'));
+  if (tabParent) tabParent.addEventListener('click', () => setMode('parent'));
 
-const initialMode = "{{ mode or 'kids' }}";
-setAuthMode(initialMode);
+  if (toggleBtn && pwdInput) {
+    toggleBtn.addEventListener('click', () => {
+      const isPwd = pwdInput.type === 'password';
+      pwdInput.type = isPwd ? 'text' : 'password';
+      toggleBtn.textContent = isPwd ? '🙈' : '👁️';
+    });
+  }
+});
 </script>
 {% endblock %}

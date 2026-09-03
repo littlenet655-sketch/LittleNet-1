@@ -2,65 +2,290 @@
 {% block title %}Create Parent Account | LittleNet{% endblock %}
 
 {% block content %}
-<link rel="stylesheet" href="/static/css/instagram-auth.css">
-
-<div class="ig-auth-wrapper">
-  <div class="ig-auth-column" style="max-width:420px;">
+<div class="auth-shell">
+  <div class="auth-card">
     
-    <div class="ig-card">
-      <div class="ig-logo-wrap">
-        <div class="ig-logo-icon" style="background:linear-gradient(135deg, #1E293B 0%, #0F172A 100%);border-color:rgba(59,130,246,0.4);box-shadow:0 8px 24px -4px rgba(59,130,246,0.35);">
-          <span style="font-size:26px;">🛡️</span>
+    <!-- Brand Header -->
+    <div class="auth-brand-wrap">
+      <div class="auth-logo-badge" style="background: linear-gradient(135deg, #EFF6FF, #DBEAFE); box-shadow: 0 8px 20px rgba(59, 130, 246, 0.2);">
+        <span style="font-size: 32px;">🛡️</span>
+      </div>
+      <h1 class="brand auth-title">Parent Account</h1>
+      <p class="auth-subtitle">Monitor, guide and protect your child's digital world</p>
+    </div>
+
+    <!-- Error Alert -->
+    {% if error %}
+    <div class="auth-alert auth-alert-error" role="alert">
+      <span class="alert-icon">⚠️</span>
+      <span>{{ error }}</span>
+    </div>
+    {% endif %}
+
+    <!-- Registration Form -->
+    <form method="post" action="/register-parent/" class="auth-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <div class="auth-field">
+        <label class="field-label" for="parent-fullname">Parent Full Name</label>
+        <div class="input-wrap">
+          <span class="input-icon">👤</span>
+          <input type="text" 
+                 id="parent-fullname"
+                 name="full_name" 
+                 class="auth-input" 
+                 placeholder="e.g. Dr. Ramesh Kumar" 
+                 required 
+                 autocomplete="name">
         </div>
-        <h1 class="ig-logo-text">Parent Mode</h1>
-        <p class="ig-logo-tagline">Manage screen time, approvals & AI filters</p>
       </div>
 
-      {% if error %}
-      <div class="ig-alert ig-alert-error">
-        <span>⚠️</span>
-        <span>{{ error }}</span>
+      <div class="auth-field">
+        <label class="field-label" for="parent-username">Parent Username</label>
+        <div class="input-wrap">
+          <span class="input-icon">🏷️</span>
+          <input type="text" 
+                 id="parent-username"
+                 name="username" 
+                 class="auth-input" 
+                 placeholder="e.g. dad_ramesh" 
+                 required 
+                 pattern="[A-Za-z0-9_.]{3,30}"
+                 autocomplete="username">
+        </div>
       </div>
-      {% endif %}
 
-      <form method="post" action="/register-parent/">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-
-        <div class="ig-field">
-          <input type="text" name="full_name" class="ig-input" placeholder="Parent full name" required>
+      <div class="auth-field">
+        <label class="field-label" for="parent-email">Email Address</label>
+        <div class="input-wrap">
+          <span class="input-icon">✉️</span>
+          <input type="email" 
+                 id="parent-email"
+                 name="email" 
+                 class="auth-input" 
+                 placeholder="parent@example.com" 
+                 required 
+                 autocomplete="email">
         </div>
+      </div>
 
-        <div class="ig-field">
-          <input type="text" name="username" class="ig-input" placeholder="Parent username (e.g. dad_ramesh)" required pattern="[A-Za-z0-9_.]{3,30}">
+      <div class="auth-field">
+        <label class="field-label" for="parent-password">Password</label>
+        <div class="input-wrap">
+          <span class="input-icon">🔒</span>
+          <input type="password" 
+                 id="parent-password"
+                 name="password" 
+                 class="auth-input" 
+                 placeholder="Minimum 8 characters" 
+                 required 
+                 minlength="8" 
+                 autocomplete="new-password">
         </div>
+      </div>
 
-        <div class="ig-field">
-          <input type="email" name="email" class="ig-input" placeholder="Parent email address" required>
-        </div>
+      <button type="submit" class="btn primary auth-submit-btn" style="background: linear-gradient(135deg, #2563EB, #1D4ED8); box-shadow: 0 8px 18px rgba(37, 99, 235, 0.3);">
+        <span>Create Parent Account & Log In</span>
+        <span class="btn-arrow">→</span>
+      </button>
+    </form>
 
-        <div class="ig-field">
-          <input type="password" name="password" class="ig-input" placeholder="Password (min 8 characters)" required minlength="8">
-        </div>
-
-        <button type="submit" class="ig-btn-primary" style="background:linear-gradient(135deg, #3B82F6 0%, #6366F1 50%, #8B5CF6 100%);box-shadow:0 6px 20px rgba(59,130,246,0.35);margin-top:8px;">
-          Create Parent Account & Log In
-        </button>
-      </form>
-
-      <p style="color:#64748B;font-size:12px;margin:14px 0 0;line-height:1.4;">
-        After account creation, you will be automatically logged into your Parent Dashboard to configure child settings.
-      </p>
+    <div class="parent-info-card">
+      <span class="info-icon">ℹ️</span>
+      <span>After registration, you will be automatically logged into your Parent Command Center to review content and set screen limits.</span>
     </div>
 
     <!-- Sign In Option -->
-    <div class="ig-subcard">
-      Already registered as Parent? <a href="/login/?mode=parent" style="color:#38BDF8;">Log in here</a>
+    <div class="auth-signup-box">
+      Already registered? <a href="/login/?mode=parent" class="signup-link parent-link">Log in as Parent</a>
     </div>
 
   </div>
 </div>
 
-<script>
-document.body.classList.add('auth-page-body');
-</script>
+<style>
+.auth-shell {
+  min-height: 100vh;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--ln-cream, #FFF7ED);
+  box-sizing: border-box;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 440px;
+  background: #FFFFFF;
+  border: 1px solid var(--ln-line, #F1E7DA);
+  border-radius: 28px;
+  box-shadow: 0 16px 40px rgba(88, 68, 45, 0.08);
+  padding: 32px 28px;
+  box-sizing: border-box;
+  text-align: center;
+  margin: auto;
+}
+
+.auth-brand-wrap {
+  margin-bottom: 22px;
+}
+
+.auth-logo-badge {
+  width: 68px;
+  height: 68px;
+  margin: 0 auto 12px;
+  display: grid;
+  place-items: center;
+  border-radius: 22px;
+}
+
+.auth-title {
+  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
+  font-size: 28px;
+  font-weight: 900;
+  color: var(--ln-ink, #1F2937);
+  margin: 0 0 6px;
+  letter-spacing: -0.5px;
+}
+
+.auth-subtitle {
+  margin: 0;
+  font-size: 13px;
+  color: #6B7280;
+  line-height: 1.45;
+}
+
+.auth-alert {
+  padding: 12px 14px;
+  border-radius: 16px;
+  font-size: 13px;
+  margin-bottom: 18px;
+  text-align: left;
+}
+
+.auth-alert-error {
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #B91C1C;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.auth-form {
+  text-align: left;
+}
+
+.auth-field {
+  margin-bottom: 15px;
+}
+
+.field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 750;
+  color: #374151;
+  margin-bottom: 5px;
+}
+
+.input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.input-icon {
+  position: absolute;
+  left: 14px;
+  font-size: 15px;
+  pointer-events: none;
+  opacity: 0.65;
+}
+
+.auth-input {
+  width: 100%;
+  height: 46px;
+  background: #F9FAFB;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 16px;
+  padding: 0 16px 0 40px;
+  font-size: 14px;
+  color: #111827;
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
+}
+
+.auth-input:focus {
+  background: #FFFFFF;
+  border-color: #2563EB;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+
+.auth-submit-btn {
+  width: 100%;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #FFFFFF;
+  border: none;
+  border-radius: 16px;
+  font-size: 15px;
+  font-weight: 800;
+  cursor: pointer;
+  margin-top: 6px;
+  transition: transform 0.16s ease, box-shadow 0.16s ease;
+}
+
+.auth-submit-btn:active {
+  transform: scale(0.98);
+}
+
+.btn-arrow {
+  font-size: 16px;
+  transition: transform 0.18s ease;
+}
+
+.auth-submit-btn:hover .btn-arrow {
+  transform: translateX(4px);
+}
+
+.parent-info-card {
+  margin-top: 18px;
+  padding: 12px 14px;
+  background: #F8FAFC;
+  border: 1px solid #E2E8F0;
+  border-radius: 16px;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+  font-size: 12px;
+  color: #64748B;
+  line-height: 1.4;
+}
+
+.info-icon {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.auth-signup-box {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid #F3F4F6;
+  font-size: 13px;
+  color: #6B7280;
+}
+
+.signup-link.parent-link {
+  color: #2563EB;
+  text-decoration: none;
+  font-weight: 800;
+}
+</style>
 {% endblock %}
