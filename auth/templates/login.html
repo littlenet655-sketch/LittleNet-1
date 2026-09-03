@@ -30,22 +30,22 @@
 
     <!-- Mode Selector Pills (Kids Mode vs Parent Mode) -->
     <div class="mode-pill-toggle" role="tablist" aria-label="Select login mode">
-      <button type="button" 
-              class="pill-btn {% if mode!='parent' %}active kid-active{% endif %}" 
-              id="tab-kids" 
-              role="tab" 
-              aria-selected="{{ 'true' if mode!='parent' else 'false' }}">
+      <a href="/login/?mode=kids" 
+         class="pill-btn {% if mode!='parent' %}active kid-active{% endif %}" 
+         id="tab-kids" 
+         role="tab" 
+         aria-selected="{{ 'true' if mode!='parent' else 'false' }}">
         <span class="pill-emoji">🧒</span>
         <span>Kids Mode</span>
-      </button>
-      <button type="button" 
-              class="pill-btn {% if mode=='parent' %}active parent-active{% endif %}" 
-              id="tab-parent" 
-              role="tab" 
-              aria-selected="{{ 'true' if mode=='parent' else 'false' }}">
+      </a>
+      <a href="/login/?mode=parent" 
+         class="pill-btn {% if mode=='parent' %}active parent-active{% endif %}" 
+         id="tab-parent" 
+         role="tab" 
+         aria-selected="{{ 'true' if mode=='parent' else 'false' }}">
         <span class="pill-emoji">🛡️</span>
         <span>Parent Mode</span>
-      </button>
+      </a>
     </div>
 
     <!-- Error Alert -->
@@ -510,7 +510,8 @@
 </style>
 
 <script>
-document.addEventListener('DOMContentLoaded', () => {
+window.setAuthMode = function(mode, e) {
+  if (e && e.preventDefault) e.preventDefault();
   const tabKids = document.getElementById('tab-kids');
   const tabParent = document.getElementById('tab-parent');
   const formMode = document.getElementById('auth-mode-input');
@@ -518,51 +519,69 @@ document.addEventListener('DOMContentLoaded', () => {
   const labelIdent = document.getElementById('label-identifier');
   const inputIdent = document.getElementById('auth-identifier');
   const faceWrap = document.getElementById('face-login-wrap');
-  const pwdInput = document.getElementById('auth-password');
-  const toggleBtn = document.getElementById('toggle-pwd-btn');
   const submitBtn = document.getElementById('auth-submit-btn');
 
-  function setMode(mode) {
-    if (mode === 'parent') {
+  if (mode === 'parent') {
+    if (tabParent) {
       tabParent.classList.add('active', 'parent-active');
-      tabKids.classList.remove('active', 'kid-active');
       tabParent.setAttribute('aria-selected', 'true');
-      tabKids.setAttribute('aria-selected', 'false');
-      formMode.value = 'parent';
-      subtitle.textContent = 'Parent supervision, screen-time & safety controls';
-      labelIdent.textContent = 'Parent Email Address';
-      inputIdent.placeholder = 'parent@example.com';
-      if (faceWrap) faceWrap.style.display = 'none';
-      if (submitBtn) {
-        submitBtn.style.background = 'linear-gradient(135deg, #1E293B, #0F172A)';
-        submitBtn.style.boxShadow = '0 8px 18px rgba(15, 23, 42, 0.25)';
-      }
-    } else {
-      tabKids.classList.add('active', 'kid-active');
-      tabParent.classList.remove('active', 'parent-active');
-      tabKids.setAttribute('aria-selected', 'true');
-      tabParent.setAttribute('aria-selected', 'false');
-      formMode.value = 'kids';
-      subtitle.textContent = 'A safe, AI-guided social world for children';
-      labelIdent.textContent = 'Username or Child Email';
-      inputIdent.placeholder = 'Enter username or child email';
-      if (faceWrap) faceWrap.style.display = 'block';
-      if (submitBtn) {
-        submitBtn.style.background = 'linear-gradient(135deg, #10B981, #059669)';
-        submitBtn.style.boxShadow = '0 8px 18px rgba(16, 185, 129, 0.3)';
-      }
     }
+    if (tabKids) {
+      tabKids.classList.remove('active', 'kid-active');
+      tabKids.setAttribute('aria-selected', 'false');
+    }
+    if (formMode) formMode.value = 'parent';
+    if (subtitle) subtitle.textContent = 'Parent supervision, screen-time & safety controls';
+    if (labelIdent) labelIdent.textContent = 'Parent Email Address';
+    if (inputIdent) inputIdent.placeholder = 'parent@example.com';
+    if (faceWrap) faceWrap.style.display = 'none';
+    if (submitBtn) {
+      submitBtn.style.background = 'linear-gradient(135deg, #1E293B, #0F172A)';
+      submitBtn.style.boxShadow = '0 8px 18px rgba(15, 23, 42, 0.25)';
+    }
+    try { history.replaceState(null, '', '/login/?mode=parent'); } catch(err){}
+  } else {
+    if (tabKids) {
+      tabKids.classList.add('active', 'kid-active');
+      tabKids.setAttribute('aria-selected', 'true');
+    }
+    if (tabParent) {
+      tabParent.classList.remove('active', 'parent-active');
+      tabParent.setAttribute('aria-selected', 'false');
+    }
+    if (formMode) formMode.value = 'kids';
+    if (subtitle) subtitle.textContent = 'A safe, AI-guided social world for children';
+    if (labelIdent) labelIdent.textContent = 'Username or Child Email';
+    if (inputIdent) inputIdent.placeholder = 'Enter username or child email';
+    if (faceWrap) faceWrap.style.display = 'block';
+    if (submitBtn) {
+      submitBtn.style.background = 'linear-gradient(135deg, #10B981, #059669)';
+      submitBtn.style.boxShadow = '0 8px 18px rgba(16, 185, 129, 0.3)';
+    }
+    try { history.replaceState(null, '', '/login/?mode=kids'); } catch(err){}
   }
+};
 
-  if (tabKids) tabKids.addEventListener('click', () => setMode('kids'));
-  if (tabParent) tabParent.addEventListener('click', () => setMode('parent'));
+document.addEventListener('DOMContentLoaded', () => {
+  const tabKids = document.getElementById('tab-kids');
+  const tabParent = document.getElementById('tab-parent');
+  if (tabKids) tabKids.addEventListener('click', (e) => window.setAuthMode('kids', e));
+  if (tabParent) tabParent.addEventListener('click', (e) => window.setAuthMode('parent', e));
 
+  const pwdInput = document.getElementById('auth-password');
+  const toggleBtn = document.getElementById('toggle-pwd-btn');
   if (toggleBtn && pwdInput) {
     toggleBtn.addEventListener('click', () => {
       const isPwd = pwdInput.type === 'password';
       pwdInput.type = isPwd ? 'text' : 'password';
       toggleBtn.textContent = isPwd ? '🙈' : '👁️';
     });
+  }
+  
+  // Sync state if mode='parent' was passed in query or server
+  const formMode = document.getElementById('auth-mode-input');
+  if (formMode && formMode.value === 'parent') {
+    window.setAuthMode('parent');
   }
 });
 </script>

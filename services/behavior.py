@@ -84,12 +84,12 @@ def behavior_summary(child_id):
         reasons.append('No significant safety events in the last 7 days')
 
     daily = fetch_all('''
-        SELECT DATE(created_at) day,
+        SELECT DATE(created_at) AS "day",
                COUNT(*) FILTER (WHERE decision='BLOCK') blocked,
                COUNT(*) FILTER (WHERE decision='REVIEW') reviewed
         FROM moderation_events
         WHERE child_id=%s AND created_at>=CURRENT_DATE-INTERVAL '6 days'
-        GROUP BY DATE(created_at) ORDER BY day
+        GROUP BY DATE(created_at) ORDER BY "day"
     ''', (child_id,))
     return {
         'score': score,

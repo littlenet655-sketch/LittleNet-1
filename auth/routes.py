@@ -33,6 +33,8 @@ def _set_session(user, method='PASSWORD'):
     if user['role'] == 'CHILD':
         us = start_session(user['user_id'])
         session['usage_session_key'] = str(us['session_key'])
+    elif user['role'] == 'PARENT':
+        execute('UPDATE parent_child_map SET parent_id=%s, verified_parent_id=COALESCE(verified_parent_id,%s) WHERE LOWER(parent_email)=LOWER(%s) AND parent_id IS NULL', (user['user_id'], user['user_id'], user['email']))
 
 def _dest(user):
     if user['role'] == 'CHILD':
@@ -60,17 +62,31 @@ def login():
     if request.method == 'POST':
         ident = request.form.get('email', '') or request.form.get('username', '')
         user = login_user(ident, request.form.get('password', ''))
-        wanted = 'CHILD' if request.form.get('mode', 'kids') == 'kids' else 'PARENT'
-        if not user or user['role'] != wanted:
-            return render_template('login.html', mode=request.form.get('mode', 'kids'), error='Invalid username/email or password for this mode'), 401
+        req_mode = request.form.get('mode', 'kids')
+        if not user:
+            return render_template('login.html', mode=req_mode, error='Invalid username/email or password.'), 401
+        
+        # Parent login: always direct to Parent Dashboard
+        if user['role'] == 'PARENT':
+            if user['account_status'] != 'ACTIVE':
+                return render_template('login.html', mode='parent', error='Parent account is suspended or inactive.'), 403
+            _set_session(user)
+            return redirect('/parent/dashboard/')
+            
+        # Admin login
+        if user['role'] == 'ADMIN':
+            _set_session(user)
+            return redirect('/admin/')
+            
+        # Child login
         if user['account_status'] == 'PENDING_APPROVAL':
             mapping = fetch_one('SELECT approval_token, verification_token FROM parent_child_map WHERE child_id=%s', (user['user_id'],))
             tok = mapping['verification_token'] if mapping and mapping.get('verification_token') else (mapping['approval_token'] if mapping else None)
-            return render_template('login.html', mode=request.form.get('mode', 'kids'),
+            return render_template('login.html', mode='kids',
                                    error='This child account is waiting for parent identity verification & approval.',
                                    approval_token=tok), 403
         if user['account_status'] != 'ACTIVE':
-            return render_template('login.html', mode=request.form.get('mode', 'kids'), error='Account is suspended or inactive.'), 403
+            return render_template('login.html', mode='kids', error='Account is suspended or inactive.'), 403
         _set_session(user)
         return redirect(_dest(user))
     return render_template('login.html', mode=mode)
