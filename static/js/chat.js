@@ -4,4 +4,26 @@
  async function poll(){try{const r=await fetch(`/api/chat/${peer}/messages/`,{cache:'no-store'});if(!r.ok)return;const rows=await r.json();const ns=rows.map(x=>[x.child_message_id,x.moderation_status,x.is_seen,x.delivered_at].join(':')).join('|');if(ns!==sig){sig=ns;render(rows)}}catch{}}
  box.scrollTop=box.scrollHeight;poll();setInterval(poll,2500);
 })();
-;(()=>{const form=document.querySelector('form[data-media-form]');if(!form)return;const token=document.querySelector('meta[name="csrf-token"]')?.content||'';form.addEventListener('submit',async e=>{e.preventDefault();const btn=form.querySelector('button');btn.disabled=true;try{const r=await fetch(form.action,{method:'POST',headers:{'X-CSRFToken':token},body:new FormData(form)});const j=await r.json();if(!r.ok){alert(j.reason||j.error||'Attachment blocked or failed.');return}form.reset();}catch{alert('Attachment could not be sent.')}finally{btn.disabled=false}})})();
+;(()=>{
+  const form=document.querySelector('form[data-media-form]');
+  if(!form)return;
+  const cameraBtn=document.querySelector('[data-chat-camera]');
+  const fileInput=form.querySelector('[data-chat-file]');
+  if(cameraBtn&&fileInput){
+    cameraBtn.addEventListener('click',()=>fileInput.click());
+    fileInput.addEventListener('change',()=>{if(fileInput.files&&fileInput.files.length)form.requestSubmit();});
+  }
+  const token=document.querySelector('meta[name="csrf-token"]')?.content||'';
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const btn=form.querySelector('button');
+    if(btn)btn.disabled=true;
+    try{
+      const r=await fetch(form.action,{method:'POST',headers:{'X-CSRFToken':token},body:new FormData(form)});
+      const j=await r.json();
+      if(!r.ok){alert(j.reason||j.error||'Attachment blocked or failed.');return}
+      form.reset();
+    }catch{alert('Attachment could not be sent.')}
+    finally{if(btn)btn.disabled=false}
+  });
+})();

@@ -55,7 +55,7 @@ class Contracts(unittest.TestCase):
   self.assertIn('scroll-snap-type:x mandatory',self.text('static/css/littlenet.css'));self.assertIn('data-story-id',self.text('child/templates/stories_viewer.html'))
  def test_request_form_never_assigned(self):
   for p in ROOT.rglob('*.py'):
-   if '__pycache__' not in p.parts:self.assertNotRegex(p.read_text(),r'request\.form\s*=')
+   if '__pycache__' not in p.parts:self.assertNotRegex(p.read_text(encoding='utf-8'),r'request\.form\s*=')
  def test_unique_template_basenames(self):
   seen={}
   for p in ROOT.rglob('templates/*.html'):

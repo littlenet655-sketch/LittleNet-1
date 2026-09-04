@@ -1,2 +1,95 @@
-{% extends 'base.html' %}{% block content %}{% import '_icons.html' as ico %}
-<div class="form-card create-card"><div class="create-hero"><span class="create-hero-icon">{{ico.icon('plus',28)}}</span><div><span class="eyebrow">Create safely</span><h1>{{t('create_post')}}</h1></div></div><div id="uploadStatus" class="upload-status muted" role="status"></div><form method="post" enctype="multipart/form-data" data-safe-upload><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><div class="field"><label>{{t('post_type')}}</label><select name="kind" data-kind><option value="post">{{t('post')}}</option><option value="reel">Clip</option><option value="story">{{t('story')}}</option></select></div><div class="field"><label>{{t('media')}}</label><label class="upload-drop">{{ico.icon('camera',28)}}<b>Choose photo, video or audio</b><small>LittleNet checks it before anyone else can see it.</small><input name="media" type="file" accept="image/*,video/*,audio/*" multiple></label></div><div class="field" data-story-music><label>{{t('story_music')}}</label><input name="music_file" type="file" accept="audio/*"></div><div class="field"><label>{{t('caption')}}</label><textarea name="caption" maxlength="2200" placeholder="Say something kind..."></textarea></div><div class="field"><label>{{t('category')}}</label><select name="content_category">{% for cat in (child_effective_categories if child_controls else ['Other','Science','Math','Art','Sports','Music','Technology','Education','Nature','Books','Coding','General Knowledge']) %}<option>{{cat}}</option>{% endfor %}</select></div><div class="field"><label>{{t('age_group')}}</label><select name="audience_age_group"><option value="ALL">{{t('all_ages')}}</option><option>6-8</option><option>9-11</option><option>12-13</option><option>14-18</option></select></div><button class="btn primary big-btn" type="submit">{{ico.icon('shield',18)}} {{t('publish')}} safely</button></form><p class="moderation-note">{{ico.icon('check',16)}} {{t('moderation_note')}}</p></div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Create · LittleNet{% endblock %}
+{% block content %}
+{% import '_icons.html' as ico %}
+
+<div class="ig-create-shell">
+  <div class="form-card create-card ig-create-card">
+    
+    <!-- Instagram-style Creation Header -->
+    <div class="ig-create-topbar">
+      <a href="/child/dashboard/" class="ig-create-back" aria-label="Cancel">
+        {{ ico.icon('chevron-left', 22) }}
+      </a>
+      <h1 class="ig-create-title">{{ t('create_post') }}</h1>
+      <span class="ig-create-shield-badge">
+        {{ ico.icon('shield', 14) }} AI Checked
+      </span>
+    </div>
+
+    <div id="uploadStatus" class="upload-status muted" role="status"></div>
+
+    <form method="post" enctype="multipart/form-data" data-safe-upload class="ig-create-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+
+      <!-- Kind Selector: Post / Clip / Story -->
+      <div class="field ig-kind-field">
+        <label class="ig-field-label">{{ t('post_type') }}</label>
+        <div class="ig-kind-select-wrap">
+          <select name="kind" data-kind class="ig-kind-select">
+            <option value="post">{{ t('post') }} (Feed)</option>
+            <option value="reel">Clip (Reels)</option>
+            <option value="story">{{ t('story') }} (24h)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Media Drop & Select Zone -->
+      <div class="field ig-media-field">
+        <label class="ig-field-label">{{ t('media') }}</label>
+        <label class="upload-drop ig-upload-drop">
+          <div class="ig-drop-icon-circle">
+            {{ ico.icon('camera', 32) }}
+          </div>
+          <span class="ig-drop-main-text">Choose photo, video or audio</span>
+          <small class="ig-drop-sub-text">LittleNet AI verifies safety before sharing.</small>
+          <input name="media" id="media-input" type="file" accept="image/*,video/*,audio/*" multiple required>
+        </label>
+      </div>
+
+      <!-- Story Music (Optional for Stories) -->
+      <div class="field ig-music-field" data-story-music>
+        <label class="ig-field-label">{{ t('story_music') }} (Optional)</label>
+        <input name="music_file" type="file" accept="audio/*" class="ig-file-input">
+      </div>
+
+      <!-- Caption -->
+      <div class="field ig-caption-field">
+        <label class="ig-field-label">{{ t('caption') }}</label>
+        <textarea name="caption" class="ig-caption-textarea" maxlength="2200" placeholder="Write a kind caption..."></textarea>
+      </div>
+
+      <!-- Content Category -->
+      <div class="field ig-category-field">
+        <label class="ig-field-label">{{ t('category') }}</label>
+        <select name="content_category" class="ig-select-input">
+          {% for cat in (child_effective_categories if child_controls else ['Other','Science','Math','Art','Sports','Music','Technology','Education','Nature','Books','Coding','General Knowledge']) %}
+          <option>{{ cat }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <!-- Audience Age Group -->
+      <div class="field ig-age-field">
+        <label class="ig-field-label">{{ t('age_group') }}</label>
+        <select name="audience_age_group" class="ig-select-input">
+          <option value="ALL">{{ t('all_ages') }}</option>
+          <option>6-8</option>
+          <option>9-11</option>
+          <option>12-13</option>
+          <option>14-18</option>
+        </select>
+      </div>
+
+      <!-- Publish Action Button -->
+      <button class="btn primary big-btn ig-publish-btn" type="submit">
+        {{ ico.icon('shield', 18) }} {{ t('publish') }} safely
+      </button>
+    </form>
+
+    <p class="moderation-note ig-create-note">
+      {{ ico.icon('check', 15) }} {{ t('moderation_note') }}
+    </p>
+  </div>
+</div>
+{% endblock %}

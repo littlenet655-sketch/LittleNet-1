@@ -61,7 +61,7 @@ def register_child(form):
         return {"success": False, "error": "Self-approval is strictly prevented. Child email cannot be the same as parent email."}
 
     token = str(uuid.uuid4())
-    conn = get_db_connection()
+    conn=get_db_connection()
     try:
         cur = conn.cursor()
         # Check duplicate username or email
@@ -595,6 +595,8 @@ def login_user(identifier, password):
     val = (identifier or '').strip()
     row = fetch_one('SELECT * FROM users WHERE LOWER(email)=%s OR LOWER(username)=%s', (val.lower(), val.lower()))
     if not row or not check_password(password, row['password_hash']):
+        return None
+    if row['account_status']!='ACTIVE':
         return None
     return row
 

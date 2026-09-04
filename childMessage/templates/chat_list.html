@@ -1,1 +1,51 @@
-{% extends 'base.html' %}{% block content %}<div class="chat-list"><h2 style="padding:0 14px">{{t('messages')}}</h2>{% for c in conversations %}<a href="/chat/{{c.peer_id}}/"><div class="ring" style="width:48px;height:48px"><div class="ring-inner"></div></div><div><b>{{c.peer_name}}</b><div class="muted">{{t('approved_connection')}}</div></div></a>{% endfor %}</div>{% endblock %}
+{% extends 'base.html' %}
+{% block title %}Messages · LittleNet{% endblock %}
+{% block content %}
+{% import '_icons.html' as ico %}
+
+<div class="ig-chat-inbox">
+  <!-- Direct Header -->
+  <div class="ig-dm-header">
+    <a href="/child/dashboard/" class="ig-dm-back" aria-label="Back to feed">
+      {{ ico.icon('chevron-left', 24) }}
+    </a>
+    <div class="ig-dm-title-wrap">
+      <span class="ig-dm-username">{{ session.get('username') or session.get('full_name', 'Student') }}</span>
+      <span class="ig-dm-badge">{{ ico.icon('shield', 13) }} Safe Direct</span>
+    </div>
+    <a href="/discover/" class="ig-dm-action" aria-label="Find classmates">
+      {{ ico.icon('search', 22) }}
+    </a>
+  </div>
+
+  <!-- Messages List -->
+  <div class="chat-list ig-dm-list">
+    {% for c in conversations %}
+    <a href="/chat/{{ c.peer_id }}/" class="ig-dm-thread">
+      <div class="ig-dm-avatar-wrap">
+        <div class="ig-dm-avatar-initial">
+          {{ c.peer_name[:1] if c.peer_name else '?' }}
+        </div>
+        <span class="ig-dm-online-dot"></span>
+      </div>
+      <div class="ig-dm-info">
+        <b class="ig-dm-name">{{ c.peer_name }}</b>
+        <div class="muted ig-dm-status">Approved classmate · Active now</div>
+      </div>
+      <div class="ig-dm-camera-shortcut" aria-hidden="true">
+        {{ ico.icon('camera', 20) }}
+      </div>
+    </a>
+    {% else %}
+    <div class="ig-dm-empty">
+      <div class="ig-dm-empty-icon">
+        {{ ico.icon('send', 42) }}
+      </div>
+      <h3>Your Safe Messages</h3>
+      <p>Send messages, photos, and voice notes to your parent-approved classmates.</p>
+      <a class="btn primary ig-dm-explore-btn" href="/discover/">Find Classmates</a>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
