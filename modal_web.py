@@ -85,7 +85,7 @@ def web():
         # DB state is already durable in PostgreSQL. Only filesystem changes need
         # a Volume commit. One container is used so there are no competing web
         # writers to the same Volume in this college-project deployment.
-        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.files:
             try:
                 uploads.commit()
             except Exception:
