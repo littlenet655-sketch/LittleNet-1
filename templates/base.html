@@ -24,7 +24,10 @@
 <!-- Desktop Left Sidebar (Visible on Desktop >= 768px matching Images 2 & 3) -->
 <aside class="ig-desktop-sidebar" aria-label="Desktop Navigation">
   <div class="ig-desktop-top">
-    <a href="/child/dashboard/" class="ig-desktop-logo" aria-label="LittleNet Home">LittleNet</a>
+    <a href="/child/dashboard/" class="ig-desktop-logo" aria-label="LittleNet Home">
+      <img src="/static/icons/app_logo.png" alt="LittleNet Logo" class="ig-brand-logo-img">
+      <span>LittleNet</span>
+    </a>
     <nav class="ig-desktop-nav-menu" aria-label="Main Menu">
       <a href="/child/dashboard/" class="ig-desktop-nav-link {% if request.path == '/child/dashboard/' %}active{% endif %}">
         {{ ico.icon('home', 24) }}
@@ -93,7 +96,10 @@
 <div class="app">
   {% if session.get('role')=='CHILD' and request.path in ['/child/dashboard/', '/'] %}
   <header class="topbar ig-topbar">
-    <a href="/child/dashboard/" class="ig-brand" aria-label="LittleNet">LittleNet</a>
+    <a href="/child/dashboard/" class="ig-brand" aria-label="LittleNet">
+      <img src="/static/icons/app_logo.png" alt="LittleNet Logo" class="ig-brand-logo-img" style="width: 28px; height: 28px;">
+      <span>LittleNet</span>
+    </a>
     <div class="top-actions ig-top-actions">
       <a href="/notifications/" class="icon-btn ig-icon-btn" aria-label="Activity & Requests" style="position: relative;">
         {{ ico.icon('heart', 24) }}

@@ -1,36 +1,3 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs>
-    <!-- Multi-stop Instagram Sunset/Cyber Gradient -->
-    <linearGradient id="ig-shield" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#6366F1"/>
-      <stop offset="35%" stop-color="#A855F7"/>
-      <stop offset="70%" stop-color="#EC4899"/>
-      <stop offset="100%" stop-color="#F97316"/>
-    </linearGradient>
-    <linearGradient id="bg-dark" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1E1B4B"/>
-      <stop offset="100%" stop-color="#0B0F19"/>
-    </linearGradient>
-    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-      <feGaussianBlur stdDeviation="3" result="blur"/>
-      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-    </filter>
-  </defs>
-  
-  <!-- Dark squircle container with glossy edge -->
-  <rect width="64" height="64" rx="16" fill="url(#bg-dark)"/>
-  <rect width="62" height="62" x="1" y="1" rx="15" fill="none" stroke="rgba(255, 255, 255, 0.12)" stroke-width="1.5"/>
-  
-  <!-- Outer glowing shield outline -->
-  <path d="M32 10 C42 10 49 14 51 18 C51 35 41 47 32 54 C23 47 13 35 13 18 C15 14 22 10 32 10 Z" 
-        fill="none" stroke="url(#ig-shield)" stroke-width="3.5" stroke-linejoin="round" filter="url(#glow)"/>
-        
-  <!-- Inner cyber shield fill -->
-  <path d="M32 14 C40 14 45 17 47 20 C47 34 39 44 32 50 C25 44 17 34 17 20 C19 17 24 14 32 14 Z" 
-        fill="url(#ig-shield)" opacity="0.22"/>
-        
-  <!-- Center 4-point AI Star & Safety Sparkle -->
-  <path d="M32 20 L34.5 28.5 L43 31 L34.5 33.5 L32 42 L29.5 33.5 L21 31 L29.5 28.5 Z" 
-        fill="#FFFFFF"/>
-  <circle cx="32" cy="31" r="2.5" fill="#F43F5E"/>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <image href="data:image/png;base64,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" width="64" height="64" />
 </svg>
