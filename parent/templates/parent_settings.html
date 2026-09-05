@@ -2,6 +2,45 @@
 {% block content %}
 {% import '_icons.html' as ico %}
 
+<style>
+  .parent-pause-card {
+    background: #FFFFFF;
+    border: 1.5px solid #E2E8F0;
+    border-radius: 18px;
+    padding: 18px 20px;
+    margin-bottom: 20px;
+    transition: border-color 0.2s ease;
+  }
+  .parent-pause-card.is-suspended {
+    border-color: #F87171;
+  }
+  .parent-pause-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 750;
+    color: #0F172A;
+  }
+  .parent-pause-label.is-suspended {
+    color: #DC2626;
+  }
+  .safety-choice-card {
+    border: 1.5px solid #E2E8F0;
+    background: #FAFAFA;
+    border-radius: 12px;
+    padding: 12px;
+    cursor: pointer;
+    text-align: center;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .safety-choice-card.is-selected {
+    border-color: #0095F6;
+    background: #EFF6FF;
+  }
+</style>
+
 <div class="parent-settings-shell" style="max-width: 760px; margin: 0 auto; padding-bottom: 60px;">
   
   <!-- Header -->
@@ -67,7 +106,7 @@
     <input type="hidden" name="child_id" value="{{ child_id }}">
 
     <!-- 1. Emergency Account Lock / Freeze -->
-    <div class="parent-card" style="background: #FFFFFF; border: 1.5px solid {% if child.account_status == 'SUSPENDED' %}#F87171{% else %}#E2E8F0{% endif %}; border-radius: 18px; padding: 18px 20px; margin-bottom: 20px;">
+    <div class="parent-card parent-pause-card{% if child.account_status == 'SUSPENDED' %} is-suspended{% endif %}">
       <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
         <div>
           <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
@@ -78,7 +117,7 @@
             Instantly restrict child from logging in, viewing feed, or posting until you unpause.
           </p>
         </div>
-        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 750; color: {% if child.account_status == 'SUSPENDED' %}#DC2626{% else %}#0F172A{% endif %};">
+        <label class="parent-pause-label{% if child.account_status == 'SUSPENDED' %} is-suspended{% endif %}">
           <input type="checkbox" name="pause_account" {% if child.account_status == 'SUSPENDED' %}checked{% endif %} style="width: 20px; height: 20px; accent-color: #DC2626;">
           <span>Pause Account</span>
         </label>
@@ -96,19 +135,19 @@
       </p>
 
       <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
-        <label style="border: 1.5px solid {% if safety.safety_level == 'STANDARD' %}#0095F6{% else %}#E2E8F0{% endif %}; background: {% if safety.safety_level == 'STANDARD' %}#EFF6FF{% else %}#FAFAFA{% endif %}; border-radius: 12px; padding: 12px; cursor: pointer; text-align: center;">
+        <label class="safety-choice-card{% if safety.safety_level == 'STANDARD' %} is-selected{% endif %}">
           <input type="radio" name="safety_level" value="STANDARD" {% if safety.safety_level == 'STANDARD' %}checked{% endif %} style="accent-color: #0095F6;">
           <b style="display: block; font-size: 13px; color: #0F172A; margin-top: 4px;">Standard</b>
           <small style="font-size: 10px; color: #64748B;">Standard Filters</small>
         </label>
 
-        <label style="border: 1.5px solid {% if safety.safety_level == 'STRICT' %}#0095F6{% else %}#E2E8F0{% endif %}; background: {% if safety.safety_level == 'STRICT' %}#EFF6FF{% else %}#FAFAFA{% endif %}; border-radius: 12px; padding: 12px; cursor: pointer; text-align: center;">
+        <label class="safety-choice-card{% if safety.safety_level == 'STRICT' %} is-selected{% endif %}">
           <input type="radio" name="safety_level" value="STRICT" {% if safety.safety_level == 'STRICT' %}checked{% endif %} style="accent-color: #0095F6;">
           <b style="display: block; font-size: 13px; color: #0F172A; margin-top: 4px;">Strict (Recommended)</b>
           <small style="font-size: 10px; color: #64748B;">High Protection</small>
         </label>
 
-        <label style="border: 1.5px solid {% if safety.safety_level == 'VERY_STRICT' %}#0095F6{% else %}#E2E8F0{% endif %}; background: {% if safety.safety_level == 'VERY_STRICT' %}#EFF6FF{% else %}#FAFAFA{% endif %}; border-radius: 12px; padding: 12px; cursor: pointer; text-align: center;">
+        <label class="safety-choice-card{% if safety.safety_level == 'VERY_STRICT' %} is-selected{% endif %}">
           <input type="radio" name="safety_level" value="VERY_STRICT" {% if safety.safety_level == 'VERY_STRICT' %}checked{% endif %} style="accent-color: #0095F6;">
           <b style="display: block; font-size: 13px; color: #0F172A; margin-top: 4px;">Very Strict</b>
           <small style="font-size: 10px; color: #64748B;">Zero Tolerance</small>
