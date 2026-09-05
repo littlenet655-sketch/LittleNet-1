@@ -11,8 +11,13 @@
     <a href="/child/profile/" class="ig-settings-back" aria-label="Back to Profile">
       <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"></line><polyline points="12 19 5 12 12 5"></polyline></svg>
     </a>
-    <h1 class="ig-settings-title">Settings and activity</h1>
-    <span style="width: 24px;"></span>
+    <h1 class="ig-settings-title" style="display: inline-flex; align-items: center; gap: 8px;">
+      {{ ico.icon('settings', 22) }}
+      <span>Settings and activity</span>
+    </h1>
+    <span style="width: 24px; display: inline-flex; align-items: center; justify-content: flex-end; color: var(--ig-primary-text, #262626);">
+      {{ ico.icon('settings', 20) }}
+    </span>
   </header>
 
   <!-- Search Input matching Screenshot 4 -->
