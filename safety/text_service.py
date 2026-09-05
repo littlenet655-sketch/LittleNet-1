@@ -10,9 +10,24 @@ _DETOX=None;_HF_TEXT=None
 
 def _detox_scores(text):
     global _DETOX
+    try:
+        import torch
+        if hasattr(torch, 'serialization') and hasattr(torch.serialization, 'add_safe_globals'):
+            _orig_load = torch.load
+            def _safe_load(*args, **kwargs):
+                if 'weights_only' not in kwargs:
+                    kwargs['weights_only'] = False
+                return _orig_load(*args, **kwargs)
+            torch.load = _safe_load
+    except Exception:
+        pass
     from detoxify import Detoxify
-    model_name=os.getenv('LITTLENET_DETOXIFY_MODEL','multilingual').strip() or 'multilingual'
-    if _DETOX is None:_DETOX=Detoxify(model_name)
+    model_name=os.getenv('LITTLENET_DETOXIFY_MODEL','original').strip() or 'original'
+    if _DETOX is None:
+        try:
+            _DETOX=Detoxify(model_name)
+        except Exception:
+            _DETOX=Detoxify('original')
     return _DETOX.predict(text) if text else {}
 
 def _optional_hf_scores(text):
@@ -49,9 +64,9 @@ def check_text(text:str):
     if text:
         try:
             scores=timed_call('detoxify',lambda:_detox_scores(text),timeout_seconds('detoxify',90));ran+=1
-            toxicity=max([float(v) for v in scores.values()] or [toxicity],toxicity)
+            toxicity=max([toxicity]+[float(v) for v in scores.values()])
             sexual=max(float(scores.get('sexual_explicit',0) or 0),adult)
-            extras['detoxify_scores']=scores
+            extras['detoxify_scores']={k:float(v) for k,v in scores.items()}
         except Exception as exc:errors.append('detoxify_timeout' if 'timeout' in str(exc) else 'detoxify')
         if env_flag('LITTLENET_ENABLE_TEXT_CLASSIFIER'):
             try:

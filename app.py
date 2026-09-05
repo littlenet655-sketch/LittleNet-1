@@ -22,6 +22,14 @@ def create_app():
     # Railway/Modal terminate TLS before Flask. Honor the single trusted proxy
     # hop so request.is_secure, redirects and HSTS reflect the public HTTPS URL.
     app.wsgi_app=ProxyFix(app.wsgi_app,x_for=1,x_proto=1,x_host=1,x_port=1)
+    def _dynamic_cookie_secure(flask_app):
+        if not flask_app.config.get('SESSION_COOKIE_SECURE', False):
+            return False
+        from flask import has_request_context, request
+        if has_request_context() and request:
+            return request.is_secure
+        return flask_app.config.get('SESSION_COOKIE_SECURE', False)
+    app.session_interface.get_cookie_secure = _dynamic_cookie_secure
     if Config.BASE_URL.startswith('https://'):
         if Config.SECRET_KEY=='change-me-before-demo' or len(Config.SECRET_KEY)<32:
             raise RuntimeError('Production SECRET_KEY must be a random value of at least 32 characters')
@@ -65,15 +73,24 @@ def create_app():
         if quiz_due(session['user_id']):return redirect('/quiz/start/')
         return None
 
+    @app.route('/sw.js')
+    def service_worker():
+        # Served from the root so its default scope covers the whole app, not
+        # just /static/ -- required for the manifest's start_url to work.
+        response = send_from_directory('static', 'sw.js', mimetype='application/javascript')
+        response.headers['Service-Worker-Allowed'] = '/'
+        return response
+
     @app.route('/uploads/<path:filename>')
     def uploaded_file(filename):
+        import os
         uid=session.get('user_id');role=session.get('role')
         if not uid:return ('Unauthorized',401)
         stored='uploads/'+filename
         p=fetch_one('SELECT child_id,moderation_status,is_safe FROM posts WHERE media_path=%s OR story_music_path=%s',(stored,stored))
         if p:
             if role=='CHILD':
-                if p['moderation_status']!='ALLOWED' or not p['is_safe']:return ('Unavailable',404)
+                if (p['moderation_status']!='ALLOWED' or not p['is_safe']) and uid!=p['child_id']:return ('Unavailable',404)
                 hidden=fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(uid,p['child_id'],p['child_id'],uid))
                 if hidden:return ('Unavailable',404)
             elif role=='PARENT':
@@ -92,8 +109,14 @@ def create_app():
             hidden=fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(uid,f['child_id'],f['child_id'],uid))
             if hidden:return ('Unavailable',404)
         if f and role=='PARENT' and not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,f['child_id'])):return ('Forbidden',403)
-        if not any([p,m,f]):return ('Unavailable',404)
-        return send_from_directory('uploads',filename)
+        is_avatar=filename.startswith('profile_pictures/')
+        if not any([p,m,f]) and not is_avatar:return ('Unavailable',404)
+        target_dir='uploads'
+        if not os.path.exists(os.path.join('uploads',filename)):
+            demo_file=os.path.join('static','demo',filename)
+            if os.path.exists(demo_file):
+                target_dir=os.path.join('static','demo')
+        return send_from_directory(target_dir,filename)
 
     @app.route('/healthz')
     def healthz():
@@ -125,11 +148,17 @@ def create_app():
 
     @app.after_request
     def security_headers(response):
+        # Cache control for high-speed client rendering (reduces network load dramatically)
+        if request.path.startswith('/static/'):
+            response.headers['Cache-Control'] = 'public, max-age=604800, immutable'
+        elif request.path.startswith('/uploads/'):
+            response.headers['Cache-Control'] = 'public, max-age=86400'
+
         response.headers.setdefault('X-Content-Type-Options','nosniff')
         response.headers.setdefault('X-Frame-Options','DENY')
         response.headers.setdefault('Referrer-Policy','same-origin')
         response.headers.setdefault('Permissions-Policy','camera=(self), microphone=(self), geolocation=()')
-        response.headers.setdefault('Content-Security-Policy',"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+        response.headers.setdefault('Content-Security-Policy',"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
         if request.is_secure:response.headers.setdefault('Strict-Transport-Security','max-age=31536000; includeSubDomains')
         return response
 
@@ -137,12 +166,31 @@ def create_app():
     def ui_context():
         uid=session.get('user_id');lang=session.get('language') or (language_for_user(uid) if uid else 'EN')
         if uid:session['language']=lang
+        ctrls = session.get('_ctrls') if session.get('role') == 'CHILD' else None
+        if ctrls is None and uid and session.get('role') == 'CHILD':
+            ctrls = controls_for_child(uid)
+            session['_ctrls'] = ctrls
+        avatar = session.get('_avatar') if session.get('role') == 'CHILD' else None
+        if avatar is None and uid and session.get('role') == 'CHILD':
+            prow = fetch_one('SELECT profile_picture FROM child_profiles WHERE child_id=%s', (uid,))
+            avatar = (prow or {}).get('profile_picture') or 'uploads/profile_pictures/download.webp'
+            session['_avatar'] = avatar
+        activity_count = 0
+        if uid and session.get('role') == 'CHILD':
+            try:
+                pending_reqs = fetch_one('SELECT COUNT(*) n FROM followers WHERE following_child_id=%s AND approved=FALSE', (uid,))
+                unread_notifs = fetch_one('SELECT COUNT(*) n FROM notifications WHERE user_id=%s AND is_read=FALSE', (uid,))
+                activity_count = int((pending_reqs or {}).get('n', 0)) + int((unread_notifs or {}).get('n', 0))
+            except Exception:
+                activity_count = 0
         return {
             't':lambda key:tr(lang,key),
             'ui_language':lang,
             'ui_languages':LANGUAGES,
-            'child_controls':controls_for_child(uid) if uid and session.get('role')=='CHILD' else None,
+            'child_controls':ctrls,
             'child_effective_categories':effective_categories(uid) if uid and session.get('role')=='CHILD' else [],
+            'nav_avatar':avatar,
+            'unread_activity_count':activity_count,
         }
 
     @app.errorhandler(413)

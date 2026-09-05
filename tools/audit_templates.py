@@ -22,7 +22,7 @@ for p in R.rglob('templates/*.html'):
     if p.name in seen:errors.append(f'duplicate template basename: {p.name}: {seen[p.name]} / {p.relative_to(R)}')
     seen[p.name]=p.relative_to(R)
 # Social media should be lazy/preload-aware rather than eagerly loading entire feeds.
-css=(R/'static/css/littlenet.css').read_text();js=(R/'static/js/littlenet.js').read_text()
+css=(R/'static/css/littlenet.css').read_text(encoding='utf-8');js=(R/'static/js/littlenet.js').read_text(encoding='utf-8')
 if 'scroll-snap-type:y mandatory' not in css:errors.append('Reels vertical scroll snap missing')
 if 'IntersectionObserver' not in js:errors.append('visible-video observer missing')
 print('TEMPLATES',len(list(R.rglob('*.html'))),'ERRORS',len(errors));[print('-',e) for e in errors];sys.exit(bool(errors))

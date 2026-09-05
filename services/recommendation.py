@@ -49,7 +49,49 @@ def rank_candidates(cid,rows):
     return sorted(rows,key=lambda p:(ai_scores.get(int(p['post_id']),-2.0),_fallback_score(p,terms),p.get('created_at')),reverse=True)
 
 
+EDUCATIONAL_CATEGORIES = {'Science', 'Math', 'Technology', 'Education', 'Nature', 'Books', 'Coding', 'General Knowledge'}
+
+def apply_diversity_and_balance(ranked_posts, max_consecutive=2):
+    """
+    Enforces category diversity and guarantees educational balance in Kids feed.
+    Prevents single-category starvation and spaces out entertainment posts.
+    """
+    if not ranked_posts or len(ranked_posts) <= 2:
+        return ranked_posts
+
+    balanced = []
+    pool = list(ranked_posts)
+    last_cat = None
+    consecutive_count = 0
+
+    while pool:
+        selected_idx = None
+        # Try to find next post that doesn't violate consecutive category cap
+        for idx, p in enumerate(pool):
+            cat = p.get('content_category', 'Other')
+            if cat != last_cat or consecutive_count < max_consecutive:
+                selected_idx = idx
+                break
+        
+        # If all remaining items share the same category, take first
+        if selected_idx is None:
+            selected_idx = 0
+
+        post = pool.pop(selected_idx)
+        cat = post.get('content_category', 'Other')
+        if cat == last_cat:
+            consecutive_count += 1
+        else:
+            last_cat = cat
+            consecutive_count = 1
+
+        balanced.append(post)
+
+    return balanced
+
+
 def personalized_posts(cid,limit=30,offset=0):
     rows=candidates(cid,max(60,limit+offset+20))
     ranked=rank_candidates(cid,rows)
-    return ranked[offset:offset+limit]
+    balanced=apply_diversity_and_balance(ranked)
+    return balanced[offset:offset+limit]

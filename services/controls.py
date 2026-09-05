@@ -42,16 +42,27 @@ def _defaults(child_id=None):
         'allowed_categories':list(SAFE_CATEGORIES),
     }
 
+import time as _time
+_controls_cache = {}
+_controls_cache_ttl = 15.0
+
 
 def controls_for_child(child_id):
+    now = _time.time()
+    cached = _controls_cache.get(child_id)
+    if cached and (now - cached['time'] < _controls_cache_ttl):
+        return dict(cached['data'])
     row=fetch_one('SELECT * FROM parent_control_settings WHERE child_id=%s',(child_id,))
-    if not row:return _defaults(child_id)
-    out=_defaults(child_id);out.update(dict(row))
-    cats=out.get('allowed_categories') or list(SAFE_CATEGORIES)
-    out['allowed_categories']=[c for c in cats if c in SAFE_CATEGORIES] or list(SAFE_CATEGORIES)
-    out['quiet_start']=_clock(out.get('quiet_start'),'21:00')
-    out['quiet_end']=_clock(out.get('quiet_end'),'07:00')
-    return out
+    if not row:
+        out = _defaults(child_id)
+    else:
+        out=_defaults(child_id);out.update(dict(row))
+        cats=out.get('allowed_categories') or list(SAFE_CATEGORIES)
+        out['allowed_categories']=[c for c in cats if c in SAFE_CATEGORIES] or list(SAFE_CATEGORIES)
+        out['quiet_start']=_clock(out.get('quiet_start'),'21:00')
+        out['quiet_end']=_clock(out.get('quiet_end'),'07:00')
+    _controls_cache[child_id] = {'data': out, 'time': now}
+    return dict(out)
 
 
 def feature_allowed(child_id,feature):

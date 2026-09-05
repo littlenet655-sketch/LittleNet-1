@@ -9,13 +9,13 @@
     <div class="auth-brand-wrap">
       <div class="auth-logo-badge">
         <svg width="40" height="40" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path d="M32 8 C44 8 52 13 54 18 C54 37 43 49 32 56 C21 49 10 37 10 18 C12 13 20 8 32 8 Z" fill="url(#ln-shield-reg)" stroke="#10B981" stroke-width="3"/>
+          <path d="M32 8 C44 8 52 13 54 18 C54 37 43 49 32 56 C21 49 10 37 10 18 C12 13 20 8 32 8 Z" fill="url(#ln-shield-reg)" stroke="#0095F6" stroke-width="2.5"/>
           <path d="M32 18 L34.8 26.6 L44 29.2 L34.8 31.8 L32 40.5 L29.2 31.8 L20 29.2 L29.2 26.6 Z" fill="#FFFFFF"/>
           <defs>
             <linearGradient id="ln-shield-reg" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#34D399"/>
-              <stop offset="50%" stop-color="#38BDF8"/>
-              <stop offset="100%" stop-color="#818CF8"/>
+              <stop offset="0%" stop-color="#0095F6"/>
+              <stop offset="50%" stop-color="#6366F1"/>
+              <stop offset="100%" stop-color="#EC4899"/>
             </linearGradient>
           </defs>
         </svg>
@@ -97,7 +97,7 @@
       </div>
 
       <details style="margin: 8px 0 14px; font-size: 12px; color: #64748B;">
-        <summary style="cursor: pointer; padding: 4px 0; font-weight: 600; color: #0F766E;">+ Optional additional details (Full Name, Child Email)</summary>
+        <summary style="cursor: pointer; padding: 4px 0; font-weight: 600; color: #0095F6;">+ Optional additional details (Full Name, Child Email)</summary>
         <div style="margin-top: 8px; display: grid; gap: 10px;">
           <div class="auth-field" style="margin: 0;">
             <label class="field-label" for="reg-fullname">Full Name (Optional)</label>
@@ -151,239 +151,4 @@
   </div>
 </div>
 
-<style>
-.auth-shell {
-  min-height: 100vh;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 16px;
-  background: var(--ln-cream, #FFF7ED);
-  box-sizing: border-box;
-}
-
-.auth-card {
-  width: 100%;
-  max-width: 440px;
-  background: #FFFFFF;
-  border: 1px solid var(--ln-line, #F1E7DA);
-  border-radius: 28px;
-  box-shadow: 0 16px 40px rgba(88, 68, 45, 0.08);
-  padding: 32px 28px;
-  box-sizing: border-box;
-  text-align: center;
-  margin: auto;
-}
-
-.auth-brand-wrap {
-  margin-bottom: 22px;
-}
-
-.auth-logo-badge {
-  width: 68px;
-  height: 68px;
-  margin: 0 auto 12px;
-  display: grid;
-  place-items: center;
-  border-radius: 22px;
-  background: linear-gradient(135deg, #ECFDF5, #E0F2FE);
-  box-shadow: 0 8px 20px rgba(52, 211, 153, 0.18);
-}
-
-.auth-title {
-  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
-  font-size: 26px;
-  font-weight: 900;
-  color: var(--ln-ink, #1F2937);
-  margin: 0 0 6px;
-  letter-spacing: -0.5px;
-}
-
-.auth-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: #6B7280;
-  line-height: 1.45;
-}
-
-.auth-alert {
-  padding: 12px 14px;
-  border-radius: 16px;
-  font-size: 13px;
-  margin-bottom: 18px;
-  text-align: left;
-}
-
-.auth-alert-error {
-  background: #FEF2F2;
-  border: 1px solid #FECACA;
-  color: #B91C1C;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.auth-form {
-  text-align: left;
-}
-
-.auth-field {
-  margin-bottom: 14px;
-}
-
-.field-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 750;
-  color: #374151;
-  margin-bottom: 5px;
-}
-
-.input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-icon {
-  position: absolute;
-  left: 14px;
-  font-size: 15px;
-  pointer-events: none;
-  opacity: 0.65;
-}
-
-.auth-input {
-  width: 100%;
-  height: 46px;
-  background: #F9FAFB;
-  border: 1.5px solid #E5E7EB;
-  border-radius: 16px;
-  padding: 0 16px 0 40px;
-  font-size: 14px;
-  color: #111827;
-  box-sizing: border-box;
-  outline: none;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-}
-
-.auth-input:focus {
-  background: #FFFFFF;
-  border-color: #10B981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
-}
-
-.section-divider {
-  display: flex;
-  align-items: center;
-  margin: 18px 0 14px;
-  color: #059669;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.06em;
-}
-
-.section-divider::before,
-.section-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: #E5E7EB;
-}
-
-.section-divider span {
-  padding: 0 8px;
-}
-
-.demo-checkbox-wrap {
-  margin: 14px 0 18px;
-  padding: 12px 14px;
-  background: #F0FDF4;
-  border: 1.5px solid #BBF7D0;
-  border-radius: 16px;
-  display: flex;
-  align-items: flex-start;
-  gap: 10px;
-}
-
-.demo-checkbox-wrap input {
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
-  accent-color: #10B981;
-  cursor: pointer;
-}
-
-.demo-checkbox-wrap label {
-  font-size: 12px;
-  color: #374151;
-  cursor: pointer;
-  line-height: 1.4;
-}
-
-.demo-checkbox-wrap b {
-  display: block;
-  color: #047857;
-  margin-bottom: 2px;
-}
-
-.auth-submit-btn {
-  width: 100%;
-  height: 50px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: linear-gradient(135deg, #10B981, #059669);
-  color: #FFFFFF;
-  border: none;
-  border-radius: 16px;
-  font-size: 15px;
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow: 0 8px 18px rgba(16, 185, 129, 0.3);
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-
-.auth-submit-btn:active {
-  transform: scale(0.98);
-}
-
-.btn-arrow {
-  font-size: 16px;
-  transition: transform 0.18s ease;
-}
-
-.auth-submit-btn:hover .btn-arrow {
-  transform: translateX(4px);
-}
-
-.privacy-badge {
-  margin-top: 18px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  color: #6B7280;
-  font-size: 11px;
-}
-
-.auth-signup-box {
-  margin-top: 18px;
-  padding-top: 16px;
-  border-top: 1px solid #F3F4F6;
-  font-size: 13px;
-  color: #6B7280;
-}
-
-.signup-link {
-  text-decoration: none;
-  font-weight: 800;
-}
-
-.signup-link.kid-link {
-  color: #059669;
-}
-</style>
 {% endblock %}

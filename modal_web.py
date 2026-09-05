@@ -37,6 +37,7 @@ web_image = (
         {
             "COOKIE_SECURE": "1",
             "LITTLENET_DEVICE": "cpu",
+            "LITTLENET_DEPLOY_VERSION": "3",
         }
     )
     .add_local_dir(
@@ -59,17 +60,16 @@ web_image = (
 
 @app.function(
     image=web_image,
-    cpu=1.0,
-    memory=1536,
+    cpu=2.0,
+    memory=2048,
     secrets=[web_secret],
     volumes={"/root/littlenet/uploads": uploads},
     timeout=300,
     startup_timeout=120,
-    scaledown_window=300,
-    min_containers=0,
+    scaledown_window=600,
+    min_containers=1,
     max_containers=1,
 )
-@modal.concurrent(max_inputs=20, target_inputs=10)
 @modal.wsgi_app()
 def web():
     """Expose the complete LittleNet Flask app on Modal."""
@@ -104,6 +104,15 @@ def init_database():
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/init_db.py"], check=True)
     return {"ok": True}
+
+
+@app.function(image=web_image, secrets=[web_secret], timeout=120)
+def seed_quizzes():
+    """Seed 165+ curated quiz questions into the live DB. Safe to re-run."""
+    os.chdir("/root/littlenet")
+    subprocess.run(["python", "tools/seed_quizzes.py"], check=True)
+    return {"ok": True}
+
 
 
 @app.function(image=web_image, secrets=[web_secret], timeout=120)

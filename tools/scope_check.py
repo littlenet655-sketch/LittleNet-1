@@ -14,8 +14,11 @@ checks={
  'Stories':('child/routes.py','/stories/'),
  '18+ hard block':('safety/policy.py','18+ content hard blocked'),
  'NSFW visual moderation':('safety/visual_service.py','Falconsai/nsfw_image_detection'),
- 'YOLO weapon detection':('safety/visual_service.py','YOLO'),
- 'Whisper audio':('safety/audio_service.py','faster_whisper'),
+ 'Weapon detection (CLIP zero-shot)':('safety/visual_service.py','weapon gun knife dangerous object'),
+ # YOLO object detection and Whisper voice-to-text moderation were removed at the
+ # project owner's request (heavy models, not required); audio moderation now uses
+ # a safe-placeholder/remote-AI path instead of local transcription.
+ 'Audio moderation (no local transcription)':('safety/audio_service.py','def check_audio'),
  'Cyberbullying/toxic NLP':('safety/text_service.py','CYBERBULLYING'),
  'Risk ALLOW/REVIEW/BLOCK':('safety/policy.py',"Decision('REVIEW'"),
  'Parent review':('parent/routes.py','/parent/review/'),

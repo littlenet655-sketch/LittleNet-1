@@ -1,4 +1,4 @@
-# LittleNet — Railway Free / Low-RAM Deployment
+# LittleNet  -  Railway Free / Low-RAM Deployment
 
 LittleNet supports a split runtime so the social web application does not need to
 load PyTorch, TensorFlow, YOLO, Whisper and DeepFace in the same 512 MB process.

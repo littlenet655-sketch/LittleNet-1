@@ -1,65 +1,121 @@
 {% extends 'base.html' %}
+{% block title %}{{ profile.full_name if profile else session.get('username', 'Profile') }} (@{{ session.get('username') }}) · LittleNet{% endblock %}
+
 {% block content %}
 {% import '_icons.html' as ico %}
 
 <div class="ig-profile-page">
-  <!-- Profile Header -->
-  <header class="ig-profile-header">
+
+  <!-- Top Bar matching Screenshot 5 -->
+  <header class="ig-profile-top-bar">
+    <a href="/child/upload-post/" class="ig-profile-bar-btn" aria-label="Create Post" title="Create">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+    </a>
+
+    <div class="ig-profile-bar-center">
+      <span class="ig-profile-bar-user">{{ session.get('username') or (profile.username if profile else 'Explorer') }}</span>
+      <span class="ig-profile-bar-chevron">▾</span>
+      <span class="ig-profile-bar-dot"></span>
+    </div>
+
+    <div class="ig-profile-bar-right">
+      <span class="ig-profile-shield-badge" title="LittleNet Safe Network">
+        {{ ico.icon('shield', 15) }}
+      </span>
+      <a href="/child/settings/" class="ig-profile-bar-btn" aria-label="Settings" title="Settings">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+      </a>
+    </div>
+  </header>
+
+  <!-- Profile Info Header matching Screenshot 5 -->
+  <div class="ig-profile-header">
     <div class="ig-profile-top-row">
-      <div class="ig-profile-avatar-container">
-        <img class="ig-profile-avatar-img" src="/{{ profile.profile_picture if profile and profile.profile_picture else 'uploads/profile_pictures/download.webp' }}" data-hide-error alt="{{ profile.full_name }}">
-        <span class="ig-profile-safety-badge" title="LittleNet AI Protected">{{ ico.icon('shield', 13) }}</span>
-      </div>
-
-      <div class="ig-profile-stats">
-        <div class="ig-stat-col">
-          <b>{{ counts.posts }}</b>
-          <span>posts</span>
+      <!-- Avatar with Thought Bubble ("Today's vibe...") & Add Badge -->
+      <div class="ig-profile-avatar-column">
+        <div class="ig-profile-bubble-wrap">
+          <div class="ig-profile-vibe-bubble">
+            <span>Today's vibe...</span>
+          </div>
+          <div class="ig-profile-avatar-box">
+            <img class="ig-profile-avatar-img" src="/{{ profile.profile_picture if profile and profile.profile_picture else 'uploads/profile_pictures/download.webp' }}" data-hide-error alt="{{ profile.full_name }}">
+            <a href="/child/upload-post/" class="ig-profile-add-badge" title="Add Story">+</a>
+          </div>
         </div>
-        <a href="/followers/" class="ig-stat-col" style="text-decoration: none; color: inherit;">
-          <b>{{ counts.followers }}</b>
-          <span>followers</span>
-        </a>
-        <a href="/following/" class="ig-stat-col" style="text-decoration: none; color: inherit;">
-          <b>{{ counts.following }}</b>
-          <span>following</span>
-        </a>
+      </div>
+
+      <!-- Stats & Name Column -->
+      <div class="ig-profile-stats-column">
+        <h2 class="ig-profile-name-text">{{ profile.full_name if profile else session.get('username') }}</h2>
+        
+        <div class="ig-profile-stats-row">
+          <div class="ig-stat-box">
+            <b>{{ counts.posts }}</b>
+            <span>posts</span>
+          </div>
+          <a href="/followers/" class="ig-stat-box" style="text-decoration: none; color: inherit;">
+            <b>{{ counts.followers }}</b>
+            <span>followers</span>
+          </a>
+          <a href="/following/" class="ig-stat-box" style="text-decoration: none; color: inherit;">
+            <b>{{ counts.following }}</b>
+            <span>following</span>
+          </a>
+        </div>
       </div>
     </div>
 
-    <!-- Bio Section -->
-    <div class="ig-profile-bio">
-      <h2 class="ig-bio-name">{{ profile.full_name if profile else session.get('username') }}</h2>
-      <p class="ig-bio-text">{{ profile.bio if profile and profile.bio else '🌟 Sharing, learning and staying safe on LittleNet.' }}</p>
+    <!-- Bio & Username Row matching Screenshot 5 -->
+    <div class="ig-profile-bio-wrap">
+      <div class="ig-profile-handle-pill">
+        <span class="ig-handle-symbol">@</span>
+        <span class="ig-handle-name">{{ session.get('username') or 'explorer' }}</span>
+        <a href="/child/create-profile/" class="ig-handle-add-btn">+ Add</a>
+      </div>
+      <p class="ig-profile-bio-text">{{ profile.bio if profile and profile.bio else '🌟 Sharing safe moments, learning and exploring on LittleNet.' }}</p>
     </div>
 
-    <!-- Action Buttons -->
-    <div class="ig-profile-actions">
+    <!-- "Your dashboard" Card matching Screenshot 5 -->
+    <a href="/learning/" class="ig-profile-dashboard-card" style="text-decoration: none;">
+      <b class="ig-dashboard-title">Your dashboard</b>
+      <span class="ig-dashboard-sub">↗ Safe Explorer score: 98% &bull; Level 4 Explorer</span>
+    </a>
+
+    <!-- Action Buttons Row matching Screenshot 5: Edit profile, Share profile, Add friend -->
+    <div class="ig-profile-actions-row">
+      <a href="/child/create-profile/" class="ig-btn-pill">
+        Edit profile
+      </a>
       <form class="profile-photo-form" method="post" action="/child/upload-profile-picture/" enctype="multipart/form-data" data-profile-photo style="margin: 0; flex: 1;">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <label class="ig-btn ig-btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer; width: 100%;">
-          {{ ico.icon('camera', 16) }} Change Photo
+        <label class="ig-btn-pill" style="cursor: pointer; width: 100%; display: flex; align-items: center; justify-content: center; gap: 4px;">
+          Photo
           <input type="file" name="photo" accept="image/*" capture="user" style="display: none;">
         </label>
       </form>
-      <a href="/saved/" class="ig-btn ig-btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none;">
-        {{ ico.icon('bookmark', 16) }} Saved
+      <button type="button" class="ig-btn-pill" data-share-post="0" id="share-profile-btn">
+        Share profile
+      </button>
+      <a href="/discover/" class="ig-btn-square" aria-label="Find Classmates" title="Find Friends">
+        {{ ico.icon('user', 17) }}+
       </a>
     </div>
 
-    <!-- Quick Highlights Bar -->
+    <!-- Quick Highlights Tray matching Screenshot 5: + New circle and categories -->
     <div class="ig-highlights-tray">
+      <a href="/child/upload-post/" class="ig-highlight-item">
+        <div class="ig-highlight-circle ig-new-circle">
+          <span style="font-size: 24px; font-weight: 300;">+</span>
+        </div>
+        <span>New</span>
+      </a>
       <a href="/learning/" class="ig-highlight-item">
         <div class="ig-highlight-circle">{{ ico.icon('book', 20) }}</div>
-        <span>Learning</span>
+        <span>Brain Boost</span>
       </a>
       <a href="/face/enroll/" class="ig-highlight-item">
         <div class="ig-highlight-circle">{{ ico.icon('camera', 20) }}</div>
         <span>Face ID</span>
-      </a>
-      <a href="/recommended/" class="ig-highlight-item">
-        <div class="ig-highlight-circle">{{ ico.icon('sparkles', 20) }}</div>
-        <span>For You</span>
       </a>
       <a href="/live-safety/" class="ig-highlight-item">
         <div class="ig-highlight-circle">{{ ico.icon('shield', 20) }}</div>
@@ -67,28 +123,25 @@
       </a>
     </div>
 
-    <form method="post" action="/switch-mode/" style="margin-top: 10px;">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="ig-btn ig-btn-outline" style="width: 100%; display: flex; align-items: center; justify-content: center; gap: 6px;">
-        {{ ico.icon('lock', 15) }} Switch Mode
-      </button>
-    </form>
-  </header>
+  </div>
 
-  <!-- Profile Grid Tabs -->
+  <!-- Profile Grid Tabs matching Screenshot 5 -->
   <div class="ig-grid-tabs">
-    <div class="ig-tab active">
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
-    </div>
-    <a href="/reels/" class="ig-tab" style="color: inherit; text-decoration: none;">
-      {{ ico.icon('clips', 20) }}
+    <button type="button" class="ig-tab active" data-grid-tab="posts" aria-label="Posts">
+      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
+    </button>
+    <a href="/reels/" class="ig-tab" aria-label="Reels" style="color: inherit; text-decoration: none;">
+      {{ ico.icon('clips', 22) }}
     </a>
-    <a href="/saved/" class="ig-tab" style="color: inherit; text-decoration: none;">
-      {{ ico.icon('bookmark', 20) }}
+    <a href="/quiz/start/" class="ig-tab" aria-label="Quiz & Boost" style="color: inherit; text-decoration: none;">
+      🧠
+    </a>
+    <a href="/saved/" class="ig-tab" aria-label="Saved" style="color: inherit; text-decoration: none;">
+      {{ ico.icon('bookmark', 22) }}
     </a>
   </div>
 
-  <!-- 3-Column Instagram Post Grid -->
+  <!-- 3-Column Instagram Post Grid matching Screenshot 5 -->
   <div class="ig-post-grid">
     {% for p in posts %}
     <a class="ig-grid-tile" href="/post/{{ p.post_id }}/">
@@ -112,5 +165,6 @@
     </div>
     {% endfor %}
   </div>
+
 </div>
 {% endblock %}

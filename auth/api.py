@@ -8,7 +8,7 @@ api_bp=Blueprint('api',__name__)
 @limiter.limit('10 per minute')
 def api_login():
     d=request.get_json(silent=True) or {}; u=login_user(d.get('email',''),d.get('password',''))
-    if not u:return jsonify(success=False,message='Invalid credentials'),401
+    if not u or u.get('account_status') != 'ACTIVE': return jsonify(success=False,message='Invalid credentials or account not active'),401
     session.clear(); session['user_id']=u['user_id'];session['role']=u['role'];session['full_name']=u['full_name']
     if u['role']=='CHILD': session['usage_session_key']=str(start_session(u['user_id'])['session_key'])
     return jsonify(success=True,role=u['role'],user_id=u['user_id'],full_name=u['full_name'],has_profile=profile_exists(u['user_id']) if u['role']=='CHILD' else True)

@@ -12,8 +12,6 @@ def main():
     ap=argparse.ArgumentParser();ap.add_argument('--face-image');ap.add_argument('--image');ap.add_argument('--audio');args=ap.parse_args()
     results=[]
     results.append(check('Detoxify',lambda: __import__('detoxify').Detoxify('original')))
-    device='cuda' if os.getenv('LITTLENET_DEVICE','auto').lower()=='cuda' else 'cpu'
-    results.append(check('Faster-Whisper',lambda: __import__('faster_whisper').WhisperModel('tiny',device=device,compute_type='float16' if device=='cuda' else 'int8')))
     results.append(check('NudeNet',lambda: __import__('nudenet').NudeDetector()))
     def clip():
         from transformers import CLIPModel,CLIPProcessor
@@ -23,10 +21,6 @@ def main():
         from transformers import pipeline
         pipeline('image-classification',model='Falconsai/nsfw_image_detection')
     results.append(check('Falconsai NSFW',nsfw))
-    def yolo():
-        from ultralytics import YOLO
-        YOLO('yolov8n.pt')
-    results.append(check('YOLO',yolo))
     def deepface():
         from deepface import DeepFace
         if args.face_image:DeepFace.extract_faces(img_path=args.face_image,anti_spoofing=True,enforce_detection=True)

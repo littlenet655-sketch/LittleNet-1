@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS parent_child_map (
  parent_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
  parent_name VARCHAR(100) NOT NULL, parent_email VARCHAR(150) NOT NULL,
  approval_token UUID UNIQUE, approved BOOLEAN NOT NULL DEFAULT FALSE, approved_at TIMESTAMP,
+ rejection_reason TEXT,
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
  UNIQUE(child_id,parent_email)
 );
@@ -223,6 +224,23 @@ CREATE INDEX IF NOT EXISTS idx_parent_notifications ON parent_notifications(pare
 CREATE INDEX IF NOT EXISTS idx_moderation_review ON moderation_events(decision,status,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_usage_child_date ON child_usage_logs(child_id,usage_date);
 
+-- Feed-performance indexes: visible_posts()/active_stories() run several
+-- correlated subqueries per row (like/comment counts, follow/block/mute
+-- checks, skill/interest/ambition matches). With an empty demo DB these are
+-- fast regardless of indexing, but they degrade badly once real content is
+-- loaded (~1000+ posts) without these.
+CREATE INDEX IF NOT EXISTS idx_likes_post ON likes(post_id);
+CREATE INDEX IF NOT EXISTS idx_comments_post ON comments(post_id) WHERE moderation_status='ALLOWED';
+CREATE INDEX IF NOT EXISTS idx_followers_child_approved ON followers(child_id,following_child_id) WHERE approved=TRUE;
+CREATE INDEX IF NOT EXISTS idx_blocked_blocker ON blocked_users(blocker_id);
+CREATE INDEX IF NOT EXISTS idx_blocked_blocked ON blocked_users(blocked_id);
+CREATE INDEX IF NOT EXISTS idx_muted_muter ON muted_users(muter_id);
+CREATE INDEX IF NOT EXISTS idx_child_skills_child_approved ON child_skills(child_id) WHERE approved=TRUE;
+CREATE INDEX IF NOT EXISTS idx_child_interests_child_approved ON child_interests(child_id) WHERE approved=TRUE;
+CREATE INDEX IF NOT EXISTS idx_child_ambitions_child_approved ON child_ambitions(child_id) WHERE approved=TRUE;
+CREATE INDEX IF NOT EXISTS idx_saved_posts_child ON saved_posts(child_id);
+CREATE INDEX IF NOT EXISTS idx_story_views_post_child ON story_views(post_id,child_id);
+
 
 CREATE TABLE IF NOT EXISTS admin_audit_logs (
  audit_id BIGSERIAL PRIMARY KEY,
@@ -236,3 +254,39 @@ CREATE TABLE IF NOT EXISTS admin_audit_logs (
 CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_quizzes_question_age_unique ON quizzes(question,age_group);
+
+-- AI & Personalized Learning Tables
+CREATE TABLE IF NOT EXISTS child_personalized_quiz_pool (
+  pool_id SERIAL PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  quiz_id INTEGER NOT NULL REFERENCES quizzes(quiz_id) ON DELETE CASCADE,
+  reason_for_selection VARCHAR(100),
+  served BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(child_id, quiz_id)
+);
+CREATE INDEX IF NOT EXISTS idx_child_pool_unserved ON child_personalized_quiz_pool(child_id) WHERE served=FALSE;
+
+CREATE TABLE IF NOT EXISTS child_vocabulary_progress (
+  progress_id SERIAL PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  word VARCHAR(100) NOT NULL,
+  language VARCHAR(20) NOT NULL,
+  times_seen INTEGER DEFAULT 1,
+  times_correct INTEGER DEFAULT 0,
+  last_tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  next_review_due TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  mastery_level VARCHAR(20) DEFAULT 'LEARNING',
+  UNIQUE(child_id, word, language)
+);
+
+CREATE TABLE IF NOT EXISTS parent_weekly_digests (
+  digest_id SERIAL PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  parent_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
+  week_start_date DATE NOT NULL,
+  headline VARCHAR(255),
+  digest_data JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_parent_digests_child ON parent_weekly_digests(child_id, week_start_date DESC);

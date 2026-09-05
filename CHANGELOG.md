@@ -1,6 +1,6 @@
 # LittleNet Completion Changelog
 
-## Final completion pass — September 2026
+## Final completion pass  -  September 2026
 
 ### Kids Mode UI
 - Reworked the existing Jinja/CSS interface into a child-native mobile UI with larger tap targets, bright high-contrast tokens, rounded cards, labeled five-item bottom navigation, candy Story rings, empty states and reduced-motion support.

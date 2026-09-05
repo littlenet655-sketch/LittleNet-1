@@ -1,0 +1,246 @@
+{% extends 'parent_base.html' %}
+{% block content %}
+{% import '_icons.html' as ico %}
+
+<div class="parent-settings-shell" style="max-width: 760px; margin: 0 auto; padding-bottom: 60px;">
+  
+  <!-- Header -->
+  <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 24px;">
+    <div>
+      <span class="parent-kicker" style="color: #0095F6; font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.06em;">Control Center</span>
+      <h1 style="font-size: 26px; font-weight: 800; color: #0F172A; margin: 4px 0 2px;">Parent Settings & Controls</h1>
+      <p style="font-size: 13px; color: #64748B; margin: 0;">Configure child safety policies, time limits, and feature access.</p>
+    </div>
+    
+    <!-- Child Selector (if multiple) -->
+    {% if children|length > 1 %}
+    <div style="background: #FFFFFF; border: 1px solid #CBD5E1; border-radius: 12px; padding: 4px 8px;">
+      <label style="font-size: 11px; font-weight: 700; color: #64748B; display: block;">Supervising:</label>
+      <select id="child-switcher" style="border: none; background: transparent; font-size: 13px; font-weight: 750; color: #0F172A; outline: none;">
+        {% for k in children %}
+        <option value="{{ k.user_id }}" {% if k.user_id == child_id %}selected{% endif %}>{{ k.full_name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+  </div>
+
+  <!-- Success / Error Feedback -->
+  {% if success %}
+  <div style="background: #EFF6FF; border: 1px solid #BFDBFE; color: #1D4ED8; padding: 12px 16px; border-radius: 14px; font-size: 13px; font-weight: 750; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+    <span style="font-size: 18px;">✓</span>
+    <span>{{ success }}</span>
+  </div>
+  {% endif %}
+
+  {% if error %}
+  <div style="background: #FEF2F2; border: 1px solid #FECACA; color: #DC2626; padding: 12px 16px; border-radius: 14px; font-size: 13px; font-weight: 750; margin-bottom: 20px; display: flex; align-items: center; gap: 10px;">
+    <span style="font-size: 18px;">⚠️</span>
+    <span>{{ error }}</span>
+  </div>
+  {% endif %}
+
+  <!-- Active Child Banner -->
+  <div style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 16px; padding: 16px 20px; margin-bottom: 24px; display: flex; align-items: center; justify-content: space-between; gap: 16px; box-shadow: 0 2px 8px rgba(15,23,42,0.03);">
+    <div style="display: flex; align-items: center; gap: 14px;">
+      <div style="width: 46px; height: 46px; border-radius: 50%; background: #EFF6FF; color: #0095F6; display: grid; place-items: center; font-size: 20px; font-weight: 800;">
+        {{ child.full_name[:1] }}
+      </div>
+      <div>
+        <b style="font-size: 16px; color: #0F172A; display: block;">{{ child.full_name }}</b>
+        <span style="font-size: 12px; color: #64748B;">@{{ child.username }} · Status: 
+          {% if child.account_status == 'SUSPENDED' %}
+            <span style="color: #DC2626; font-weight: 800;">⏸️ Paused</span>
+          {% else %}
+            <span style="color: #0095F6; font-weight: 800;">Active & Protected</span>
+          {% endif %}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <form method="post" action="/parent/settings/?child_id={{ child_id }}">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="child_id" value="{{ child_id }}">
+
+    <!-- 1. Emergency Account Lock / Freeze -->
+    <div class="parent-card" style="background: #FFFFFF; border: 1.5px solid {% if child.account_status == 'SUSPENDED' %}#F87171{% else %}#E2E8F0{% endif %}; border-radius: 18px; padding: 18px 20px; margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px;">
+        <div>
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
+            <span style="font-size: 18px;">⏸️</span>
+            <b style="font-size: 15px; color: #0F172A;">Emergency Account Pause</b>
+          </div>
+          <p style="font-size: 12px; color: #64748B; margin: 0; line-height: 1.4;">
+            Instantly restrict child from logging in, viewing feed, or posting until you unpause.
+          </p>
+        </div>
+        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 750; color: {% if child.account_status == 'SUSPENDED' %}#DC2626{% else %}#0F172A{% endif %};">
+          <input type="checkbox" name="pause_account" {% if child.account_status == 'SUSPENDED' %}checked{% endif %} style="width: 20px; height: 20px; accent-color: #DC2626;">
+          <span>Pause Account</span>
+        </label>
+      </div>
+    </div>
+
+    <!-- 2. AI Safety Sensitivity Level -->
+    <div class="parent-card" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 18px; padding: 18px 20px; margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+        <span style="font-size: 18px;">🛡️</span>
+        <b style="font-size: 15px; color: #0F172A;">AI Moderation Sensitivity</b>
+      </div>
+      <p style="font-size: 12px; color: #64748B; margin: 0 0 14px; line-height: 1.4;">
+        Controls the thresholds for EVT-CLIP and Google Gemini safety filters on visual and text content.
+      </p>
+
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;">
+        <label style="border: 1.5px solid {% if safety.safety_level == 'STANDARD' %}#0095F6{% else %}#E2E8F0{% endif %}; background: {% if safety.safety_level == 'STANDARD' %}#EFF6FF{% else %}#FAFAFA{% endif %}; border-radius: 12px; padding: 12px; cursor: pointer; text-align: center;">
+          <input type="radio" name="safety_level" value="STANDARD" {% if safety.safety_level == 'STANDARD' %}checked{% endif %} style="accent-color: #0095F6;">
+          <b style="display: block; font-size: 13px; color: #0F172A; margin-top: 4px;">Standard</b>
+          <small style="font-size: 10px; color: #64748B;">Standard Filters</small>
+        </label>
+
+        <label style="border: 1.5px solid {% if safety.safety_level == 'STRICT' %}#0095F6{% else %}#E2E8F0{% endif %}; background: {% if safety.safety_level == 'STRICT' %}#EFF6FF{% else %}#FAFAFA{% endif %}; border-radius: 12px; padding: 12px; cursor: pointer; text-align: center;">
+          <input type="radio" name="safety_level" value="STRICT" {% if safety.safety_level == 'STRICT' %}checked{% endif %} style="accent-color: #0095F6;">
+          <b style="display: block; font-size: 13px; color: #0F172A; margin-top: 4px;">Strict (Recommended)</b>
+          <small style="font-size: 10px; color: #64748B;">High Protection</small>
+        </label>
+
+        <label style="border: 1.5px solid {% if safety.safety_level == 'VERY_STRICT' %}#0095F6{% else %}#E2E8F0{% endif %}; background: {% if safety.safety_level == 'VERY_STRICT' %}#EFF6FF{% else %}#FAFAFA{% endif %}; border-radius: 12px; padding: 12px; cursor: pointer; text-align: center;">
+          <input type="radio" name="safety_level" value="VERY_STRICT" {% if safety.safety_level == 'VERY_STRICT' %}checked{% endif %} style="accent-color: #0095F6;">
+          <b style="display: block; font-size: 13px; color: #0F172A; margin-top: 4px;">Very Strict</b>
+          <small style="font-size: 10px; color: #64748B;">Zero Tolerance</small>
+        </label>
+      </div>
+    </div>
+
+    <!-- 3. Screen Time Limits & Quiet Hours -->
+    <div class="parent-card" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 18px; padding: 18px 20px; margin-bottom: 20px;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+        <span style="font-size: 18px;">⏱️</span>
+        <b style="font-size: 15px; color: #0F172A;">Screen Time & Curfew</b>
+      </div>
+      <p style="font-size: 12px; color: #64748B; margin: 0 0 16px;">
+        Set daily maximum usage minutes and night-time blackout hours.
+      </p>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        <div>
+          <label style="font-size: 12px; font-weight: 750; color: #334155; display: block; margin-bottom: 6px;">
+            Daily Usage Limit (minutes)
+          </label>
+          <input type="number" 
+                 name="daily_limit" 
+                 min="15" 
+                 max="1440" 
+                 value="{{ limit.daily_limit_minutes if limit else 60 }}" 
+                 style="width: 100%; min-height: 44px; border: 1px solid #CBD5E1; border-radius: 10px; padding: 8px 12px; font-size: 14px; color: #0F172A; background: #FAFAFA;">
+        </div>
+
+        <div style="display: flex; align-items: center; padding-top: 24px;">
+          <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 700; color: #0F172A; cursor: pointer;">
+            <input type="checkbox" name="strict_mode" {% if limit and limit.strict_mode %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+            <span>Enforce Hard Lockout</span>
+          </label>
+        </div>
+      </div>
+
+      <!-- Quiet Hours Bedtime -->
+      <div style="border-top: 1px solid #F1F5F9; padding-top: 16px;">
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 750; color: #0F172A; margin-bottom: 12px; cursor: pointer;">
+          <input type="checkbox" name="quiet_hours_enabled" {% if controls.quiet_hours_enabled %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+          <span>Enable Night Quiet Hours (Bedtime Curfew)</span>
+        </label>
+
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;">
+          <div>
+            <label style="font-size: 11px; font-weight: 700; color: #64748B; display: block; margin-bottom: 4px;">Curfew Starts (e.g. 21:00)</label>
+            <input type="time" name="quiet_start" value="{{ controls.quiet_start }}" style="width: 100%; min-height: 40px; border: 1px solid #CBD5E1; border-radius: 10px; padding: 6px 10px; font-size: 13px; background: #FAFAFA;">
+          </div>
+          <div>
+            <label style="font-size: 11px; font-weight: 700; color: #64748B; display: block; margin-bottom: 4px;">Curfew Ends (e.g. 07:00)</label>
+            <input type="time" name="quiet_end" value="{{ controls.quiet_end }}" style="width: 100%; min-height: 40px; border: 1px solid #CBD5E1; border-radius: 10px; padding: 6px 10px; font-size: 13px; background: #FAFAFA;">
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. Feature Toggles -->
+    <div class="parent-card" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 18px; padding: 18px 20px; margin-bottom: 24px;">
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
+        <span style="font-size: 18px;">🎛️</span>
+        <b style="font-size: 15px; color: #0F172A;">Feature Access Permissions</b>
+      </div>
+      <p style="font-size: 12px; color: #64748B; margin: 0 0 16px;">
+        Choose which sections of LittleNet are unlocked for this child.
+      </p>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+        <label class="toggle-row" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1px solid #E2E8F0; border-radius: 12px; background: #FAFAFA; cursor: pointer;">
+          <div>
+            <b style="display: block; font-size: 13px; color: #0F172A;">Reels</b>
+            <span style="font-size: 10px; color: #64748B;">Short video feed</span>
+          </div>
+          <input type="checkbox" name="allow_reels" {% if controls.allow_reels %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+        </label>
+
+        <label class="toggle-row" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1px solid #E2E8F0; border-radius: 12px; background: #FAFAFA; cursor: pointer;">
+          <div>
+            <b style="display: block; font-size: 13px; color: #0F172A;">Stories</b>
+            <span style="font-size: 10px; color: #64748B;">24-hour visual stories</span>
+          </div>
+          <input type="checkbox" name="allow_stories" {% if controls.allow_stories %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+        </label>
+
+        <label class="toggle-row" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1px solid #E2E8F0; border-radius: 12px; background: #FAFAFA; cursor: pointer;">
+          <div>
+            <b style="display: block; font-size: 13px; color: #0F172A;">Direct Messages</b>
+            <span style="font-size: 10px; color: #64748B;">Approved 1-on-1 chat</span>
+          </div>
+          <input type="checkbox" name="allow_messaging" {% if controls.allow_messaging %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+        </label>
+
+        <label class="toggle-row" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1px solid #E2E8F0; border-radius: 12px; background: #FAFAFA; cursor: pointer;">
+          <div>
+            <b style="display: block; font-size: 13px; color: #0F172A;">Publish Posts</b>
+            <span style="font-size: 10px; color: #64748B;">Post photos & captions</span>
+          </div>
+          <input type="checkbox" name="allow_posting" {% if controls.allow_posting %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+        </label>
+
+        <label class="toggle-row" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1px solid #E2E8F0; border-radius: 12px; background: #FAFAFA; cursor: pointer;">
+          <div>
+            <b style="display: block; font-size: 13px; color: #0F172A;">Search & Discover</b>
+            <span style="font-size: 10px; color: #64748B;">Explore community posts</span>
+          </div>
+          <input type="checkbox" name="allow_discover" {% if controls.allow_discover %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+        </label>
+
+        <label class="toggle-row" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border: 1px solid #E2E8F0; border-radius: 12px; background: #FAFAFA; cursor: pointer;">
+          <div>
+            <b style="display: block; font-size: 13px; color: #0F172A;">Education Only Feed</b>
+            <span style="font-size: 10px; color: #64748B;">Science/Math only</span>
+          </div>
+          <input type="checkbox" name="educational_only_feed" {% if controls.educational_only_feed %}checked{% endif %} style="width: 18px; height: 18px; accent-color: #0095F6;">
+        </label>
+      </div>
+    </div>
+
+    <!-- Submit Button -->
+    <button type="submit" style="width: 100%; min-height: 50px; background: linear-gradient(135deg, #0095F6, #1D4ED8); color: #FFFFFF; border: none; border-radius: 14px; font-size: 15px; font-weight: 800; cursor: pointer; box-shadow: 0 4px 14px rgba(0, 149, 246, 0.35); transition: transform 0.15s ease;">
+      Save Settings & Enforce Policy →
+    </button>
+  </form>
+
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+  const switcher = document.getElementById('child-switcher');
+  if (switcher) {
+    switcher.addEventListener('change', function() {
+      window.location.href = '/parent/settings/?child_id=' + this.value;
+    });
+  }
+});
+</script>
+{% endblock %}

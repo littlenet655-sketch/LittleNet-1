@@ -1,6 +1,6 @@
-# LittleNet — deploy to live, then build the APK
+# LittleNet  -  deploy to live, then build the APK
 
-Follow this in order. Each phase blocks the next — don't skip ahead.
+Follow this in order. Each phase blocks the next  -  don't skip ahead.
 
 Two safety decisions are already built into this copy of the repo:
 - Face login always has a working "Use password login instead" link, and
@@ -8,12 +8,12 @@ Two safety decisions are already built into this copy of the repo:
   instead of a dead end (see `auth/routes.py` `/face-login/` and
   `auth/templates/face_login.html`).
 - `modal_ai.py` ships with `min_containers=0` (cost-safe idle). Use
-  `tools/demo_warm.sh` before a demo and `tools/demo_cooldown.sh` after —
+  `tools/demo_warm.sh` before a demo and `tools/demo_cooldown.sh` after  - 
   see Phase 6.
 
 ---
 
-## Phase 1 — Database
+## Phase 1  -  Database
 
 Provision Postgres on Railway, Neon, or Supabase (not a Modal Volume).
 
@@ -22,12 +22,12 @@ psql "$DATABASE_URL" -f database/schema.sql
 psql "$DATABASE_URL" -f database/upgrade.sql
 ```
 
-Keep the connection string — it's `DATABASE_URL` in Phase 2.
+Keep the connection string  -  it's `DATABASE_URL` in Phase 2.
 
-## Phase 2 — Web service (Railway)
+## Phase 2  -  Web service (Railway)
 
 Deploy `Dockerfile.web`. This installs `requirements-core.txt` +
-`requirements-text.txt` only — the heavy vision/audio/face stack stays
+`requirements-text.txt` only  -  the heavy vision/audio/face stack stays
 out of this service on purpose (see the comment at the top of
 `requirements-text.txt`).
 
@@ -43,9 +43,9 @@ MAIL_PASSWORD=<app password>
 ```
 
 Deploy, then confirm `https://<your-railway-domain>/healthz` returns OK.
-This URL is what the APK will point at in Phase 5 — don't lose it.
+This URL is what the APK will point at in Phase 5  -  don't lose it.
 
-## Phase 3 — Modal AI service
+## Phase 3  -  Modal AI service
 
 ```bash
 python -m pip install -r requirements-modal.txt
@@ -64,7 +64,7 @@ AI_SERVICE_URL=https://<your-modal-url>
 AI_SHARED_SECRET=<same value as the Modal secret above>
 ```
 
-## Phase 4 — Verify against the live services, don't assume
+## Phase 4  -  Verify against the live services, don't assume
 
 ```bash
 python tools/preflight.py
@@ -72,11 +72,11 @@ python tools/readiness.py
 python -m pytest tests/ -v
 ```
 
-This is the first point where the test suite means anything — it needs
+This is the first point where the test suite means anything  -  it needs
 the live DB from Phase 1. Expect some failures on first run against real
 infrastructure; fix them here, not on submission day.
 
-## Phase 5 — Build the APK
+## Phase 5  -  Build the APK
 
 Only after Phase 2's URL is stable and tested.
 
@@ -89,13 +89,13 @@ Then trigger `.github/workflows/build-apk.yml` (GitHub Actions →
 Download the signed APK from the workflow's artifacts.
 
 Install it on a real Android device and test, in this order:
-1. Password login (must always work — this is your guaranteed path)
+1. Password login (must always work  -  this is your guaranteed path)
 2. Upload flow: image, video, text, audio moderation
 3. Camera/mic permission prompts
 4. Face enroll + face login, including the "Use password login instead"
    fallback link when you deliberately give it a bad photo
 
-## Phase 6 — Before the actual demo/viva
+## Phase 6  -  Before the actual demo/viva
 
 Run this 15-20 minutes before you present, not the night before:
 
@@ -110,10 +110,10 @@ This pins the Modal container warm so the first upload doesn't eat a
 ./tools/demo_cooldown.sh
 ```
 
-A warm GPU container costs money for every minute it's up — don't leave
+A warm GPU container costs money for every minute it's up  -  don't leave
 it running.
 
-## Phase 7 — Content QA
+## Phase 7  -  Content QA
 
 Upload real safe and unsafe samples (image/video/audio/text) against the
 live pipeline and confirm the moderation decisions match what you'd
@@ -127,8 +127,8 @@ help spot gaps, but they don't replace actually looking at the results.
 - **Modal/network flaky, not enough time to debug:** run the AI models
   directly inside the Flask service instead of Modal (heavier per-request,
   but one less network hop). Revert to Modal after submission if you want.
-- **Face login unreliable:** leave it in place — it already falls back to
-  password login on any failure — but don't lead the demo with it. Show
+- **Face login unreliable:** leave it in place  -  it already falls back to
+  password login on any failure  -  but don't lead the demo with it. Show
   the app working end to end on password login first, then show face
   login as a bonus if it's behaving.
 - **Record a backup demo video once everything works end to end.**

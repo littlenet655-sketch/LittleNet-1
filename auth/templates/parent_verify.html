@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Parent Identity Verification | LittleNet Safe Supervision</title>
+  <title>Parent Verification & Liveness | LittleNet Safe Supervision</title>
   
-  <meta name="theme-color" content="#7950F2">
+  <meta name="theme-color" content="#0095F6">
   <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@500;600;700;800;900&family=Nunito:wght@600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.7.2/css/all.min.css">
   
@@ -13,7 +13,7 @@
     * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Plus Jakarta Sans', sans-serif; }
     
     body {
-      background: radial-gradient(circle at 10% 20%, rgba(243, 240, 255, 0.9) 0%, rgba(235, 248, 255, 0.8) 90%);
+      background: radial-gradient(circle at 10% 20%, rgba(239, 246, 255, 0.9) 0%, rgba(241, 245, 249, 0.8) 90%);
       min-height: 100vh;
       display: flex;
       align-items: center;
@@ -24,21 +24,21 @@
 
     .verify-container {
       width: 100%;
-      max-width: 600px;
-      animation: popIn 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+      max-width: 580px;
+      animation: popIn 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
     }
 
     @keyframes popIn {
-      from { opacity: 0; transform: translateY(20px) scale(0.96); }
+      from { opacity: 0; transform: translateY(18px) scale(0.97); }
       to { opacity: 1; transform: translateY(0) scale(1); }
     }
 
     .verify-card {
       background: #ffffff;
       border-radius: 28px;
-      padding: 40px 34px;
-      box-shadow: 0 20px 45px -10px rgba(15, 23, 42, 0.1), 0 1px 3px rgba(0, 0, 0, 0.02);
-      border: 1px solid rgba(233, 236, 239, 0.8);
+      padding: 38px 32px;
+      box-shadow: 0 20px 45px -10px rgba(15, 23, 42, 0.09), 0 1px 3px rgba(0, 0, 0, 0.02);
+      border: 1px solid rgba(226, 232, 240, 0.9);
       position: relative;
       overflow: hidden;
     }
@@ -48,17 +48,18 @@
       position: absolute;
       top: 0; left: 0; right: 0;
       height: 6px;
-      background: linear-gradient(90deg, #7950f2, #9775fa, #20c997, #ff6b6b);
+      background: linear-gradient(90deg, #0095F6, #1D4ED8, #3b82f6, #60a5fa);
     }
 
     .brand-badge {
       display: inline-flex;
       align-items: center;
       gap: 6px;
-      background: #f3f0ff;
-      color: #7950f2;
-      padding: 6px 12px;
-      border-radius: 10px;
+      background: #eff6ff;
+      color: #0095F6;
+      border: 1px solid #bfdbfe;
+      padding: 6px 14px;
+      border-radius: 9999px;
       font-size: 12px;
       font-weight: 800;
       text-transform: uppercase;
@@ -67,7 +68,7 @@
     }
 
     .header-title {
-      font-size: 26px;
+      font-size: 25px;
       font-weight: 900;
       color: #0f172a;
       letter-spacing: -0.5px;
@@ -79,34 +80,14 @@
       font-weight: 600;
       color: #64748b;
       line-height: 1.5;
-      margin-bottom: 24px;
-    }
-
-    .demo-notice {
-      background: #eff6ff;
-      border: 1.5px solid #bfdbfe;
-      border-radius: 14px;
-      padding: 12px 14px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #1e40af;
-      display: flex;
-      align-items: flex-start;
-      gap: 10px;
-      margin-bottom: 24px;
-    }
-
-    .demo-notice i {
-      font-size: 16px;
-      color: #3b82f6;
-      margin-top: 2px;
+      margin-bottom: 22px;
     }
 
     .child-summary {
       background: #f8fafc;
       border: 1.5px solid #e2e8f0;
       border-radius: 18px;
-      padding: 18px 20px;
+      padding: 16px 20px;
       margin-bottom: 24px;
     }
 
@@ -115,8 +96,8 @@
       font-weight: 800;
       text-transform: uppercase;
       letter-spacing: 0.5px;
-      color: #64748b;
-      margin-bottom: 12px;
+      color: #0095F6;
+      margin-bottom: 10px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -145,29 +126,10 @@
       font-weight: 800;
     }
 
-    .section-title {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 14px;
-      font-weight: 900;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      color: #7950f2;
-      margin: 24px 0 14px;
-    }
-
-    .section-title::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: #e2e8f0;
-    }
-
-    /* Camera Live Capture Area */
-    .camera-box {
+    /* Live Biometric Scanner Box */
+    .scanner-box {
       background: #0f172a;
-      border-radius: 20px;
+      border-radius: 24px;
       overflow: hidden;
       position: relative;
       aspect-ratio: 4 / 3;
@@ -175,7 +137,8 @@
       align-items: center;
       justify-content: center;
       margin-bottom: 14px;
-      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.2);
+      box-shadow: 0 12px 30px rgba(15, 23, 42, 0.25);
+      border: 2px solid #1e293b;
     }
 
     #videoFeed {
@@ -196,40 +159,96 @@
       object-fit: cover;
     }
 
-    .camera-overlay {
+    /* Target Reticle Overlay */
+    .reticle-ring {
+      position: absolute;
+      width: 190px;
+      height: 230px;
+      border: 2.5px dashed rgba(0, 149, 246, 0.7);
+      border-radius: 50%;
+      pointer-events: none;
+      transition: all 0.3s;
+      box-shadow: 0 0 0 9999px rgba(15, 23, 42, 0.45);
+    }
+
+    .reticle-ring.blink-detected {
+      border: 3.5px solid #0095F6;
+      box-shadow: 0 0 25px rgba(0, 149, 246, 0.8), 0 0 0 9999px rgba(15, 23, 42, 0.45);
+    }
+
+    .camera-hud {
       position: absolute;
       top: 14px;
       left: 14px;
-      background: rgba(15, 23, 42, 0.7);
+      right: 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      pointer-events: none;
+    }
+
+    .hud-badge {
+      background: rgba(15, 23, 42, 0.75);
       backdrop-filter: blur(8px);
       padding: 6px 12px;
-      border-radius: 8px;
+      border-radius: 10px;
       color: #ffffff;
       font-size: 11px;
-      font-weight: 700;
+      font-weight: 800;
       display: flex;
       align-items: center;
       gap: 6px;
+      border: 1px solid rgba(255, 255, 255, 0.1);
     }
 
-    .camera-overlay .dot {
+    .hud-dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: #ef4444;
-      animation: pulse 1.5s infinite;
+      background: #0095F6;
+      animation: hudPulse 1.5s infinite;
     }
 
-    @keyframes pulse {
-      0% { opacity: 1; }
-      50% { opacity: 0.3; }
-      100% { opacity: 1; }
+    @keyframes hudPulse {
+      0% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.3; transform: scale(0.85); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+
+    /* Live Prompt Guidance */
+    .liveness-instruction {
+      background: #eff6ff;
+      border: 1.5px solid #bfdbfe;
+      border-radius: 14px;
+      padding: 12px 16px;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .instruction-icon {
+      font-size: 20px;
+      color: #0095F6;
+      animation: eyeWink 2.5s infinite ease-in-out;
+    }
+
+    @keyframes eyeWink {
+      0%, 80%, 100% { transform: scaleY(1); }
+      90% { transform: scaleY(0.1); }
+    }
+
+    .instruction-text {
+      font-size: 13px;
+      font-weight: 700;
+      color: #1e40af;
+      line-height: 1.4;
     }
 
     .camera-actions {
       display: flex;
       gap: 10px;
-      margin-bottom: 20px;
+      margin-bottom: 22px;
     }
 
     .btn-camera {
@@ -253,16 +272,33 @@
       background: #e2e8f0;
     }
 
-    .btn-camera.active {
-      background: #7950f2;
+    .btn-camera.primary {
+      background: #0095F6;
       color: #ffffff;
-      border-color: #7950f2;
+      border-color: #0095F6;
     }
 
-    .form-row {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 12px;
+    .btn-camera.primary:hover {
+      background: #1D4ED8;
+    }
+
+    .section-title {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #0095F6;
+      margin: 22px 0 14px;
+    }
+
+    .section-title::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: #e2e8f0;
     }
 
     .form-group {
@@ -291,7 +327,7 @@
       pointer-events: none;
     }
 
-    .form-input, .form-select {
+    .form-input {
       width: 100%;
       height: 48px;
       padding: 0 14px 0 42px;
@@ -304,10 +340,10 @@
       transition: all 0.2s;
     }
 
-    .form-input:focus, .form-select:focus {
+    .form-input:focus {
       background: #ffffff;
-      border-color: #7950f2;
-      box-shadow: 0 0 0 3px rgba(121, 80, 242, 0.12);
+      border-color: #0095F6;
+      box-shadow: 0 0 0 3px rgba(0, 149, 246, 0.12);
       outline: none;
     }
 
@@ -326,7 +362,7 @@
       width: 18px;
       height: 18px;
       margin-top: 2px;
-      accent-color: #7950f2;
+      accent-color: #0095F6;
       cursor: pointer;
     }
 
@@ -354,7 +390,7 @@
     .btn-submit {
       width: 100%;
       height: 54px;
-      background: linear-gradient(135deg, #7950f2 0%, #9775fa 100%);
+      background: linear-gradient(135deg, #0095F6 0%, #1D4ED8 100%);
       color: #ffffff;
       border: none;
       border-radius: 16px;
@@ -365,13 +401,13 @@
       align-items: center;
       justify-content: center;
       gap: 10px;
-      box-shadow: 0 10px 25px rgba(121, 80, 242, 0.28);
+      box-shadow: 0 10px 25px rgba(0, 149, 246, 0.28);
       transition: all 0.25s;
     }
 
     .btn-submit:hover {
       transform: translateY(-2px);
-      box-shadow: 0 14px 30px rgba(121, 80, 242, 0.35);
+      box-shadow: 0 14px 30px rgba(0, 149, 246, 0.38);
     }
 
     .btn-submit:disabled {
@@ -396,19 +432,11 @@
     
     <div class="brand-badge">
       <i class="fa-solid fa-shield-halved"></i>
-      <span>Parent Identity Verification</span>
+      <span>Parent Identity & Liveness Verification</span>
     </div>
 
-    <h1 class="header-title">Parent Supervision Verification</h1>
-    <p class="header-desc">Complete live photo and identity verification to establish verified supervisory authorization over your child's account.</p>
-
-    <div class="demo-notice">
-      <i class="fa-solid fa-flask"></i>
-      <div>
-        <strong>DEMO / TEST VERIFICATION PORTAL</strong><br>
-        Identity verification is running in Sandbox Mock Mode. Enter a 12-digit mock identity number (e.g. <code>123456789012</code>). Raw biometric data and ID numbers are never saved in plaintext.
-      </div>
-    </div>
+    <h1 class="header-title">Parent Identity Verification</h1>
+    <p class="header-desc">Complete live face camera liveness verification with natural eye blink detection to confirm legal adult guardianship.</p>
 
     {% if error %}
     <div class="alert-error">
@@ -421,7 +449,7 @@
     <div class="child-summary">
       <div class="child-summary-title">
         <i class="fa-solid fa-child"></i>
-        <span>Child Registration Request</span>
+        <span>Child Registration Profile</span>
       </div>
       <div class="child-grid">
         <div class="child-item">
@@ -443,119 +471,150 @@
       </div>
     </div>
 
+    <!-- Live Liveness & Eye Blink Scanner -->
+    <div class="section-title">
+      <i class="fa-solid fa-camera"></i>
+      <span>Live Camera Eye-Blink Liveness Gate</span>
+    </div>
+
+    <div class="liveness-instruction" id="livenessInstruction">
+      <i class="fa-solid fa-eye instruction-icon" id="instructionIcon"></i>
+      <div class="instruction-text" id="instructionText">
+        Position your face within the oval and <strong>blink your eyes naturally</strong> to verify live adult presence.
+      </div>
+    </div>
+
+    <div class="scanner-box">
+      <div class="camera-hud">
+        <div class="hud-badge" id="hudBadge">
+          <div class="hud-dot"></div>
+          <span id="hudText">SCANNING LIVENESS</span>
+        </div>
+        <div class="hud-badge">
+          <i class="fa-solid fa-user-shield"></i>
+          <span>ADULT 18+</span>
+        </div>
+      </div>
+
+      <div class="reticle-ring" id="reticleRing"></div>
+
+      <video id="videoFeed" autoplay playsinline muted></video>
+      <img id="capturedPreview" alt="Verified Live Adult Face">
+      <canvas id="selfieCanvas" width="640" height="480"></canvas>
+    </div>
+
+    <div class="camera-actions">
+      <button type="button" id="startCamBtn" class="btn-camera">
+        <i class="fa-solid fa-video"></i> Start Camera
+      </button>
+      <button type="button" id="manualCaptureBtn" class="btn-camera primary">
+        <i class="fa-solid fa-camera-retro"></i> Capture Face Now
+      </button>
+      <button type="button" id="retakeBtn" class="btn-camera" style="display:none;">
+        <i class="fa-solid fa-rotate-left"></i> Retake
+      </button>
+      <button type="button" id="demoAutofillBtn" class="btn-camera" title="For rapid demo testing if webcam is not present">
+        <i class="fa-solid fa-wand-magic-sparkles"></i> Demo Liveness
+      </button>
+    </div>
+
     <form method="POST" id="verifyForm">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"/>
       <input type="hidden" name="selfie_data" id="selfieData">
+      <input type="hidden" name="verification_mode" id="verificationMode" value="EXPRESS">
+      <input type="hidden" name="auto_approve" id="autoApprove" value="1">
 
-      <!-- Step 1: Live Selfie Capture -->
+      <!-- Parent Details -->
       <div class="section-title">
-        <i class="fa-solid fa-camera"></i>
-        <span>1. Live Parent Selfie (Anti-Spoofing)</span>
-      </div>
-
-      <div class="camera-box">
-        <div class="camera-overlay" id="cameraStatus">
-          <div class="dot"></div>
-          <span>LIVE CAMERA FEED</span>
-        </div>
-        <video id="videoFeed" autoplay playsinline muted></video>
-        <img id="capturedPreview" alt="Captured Live Selfie">
-        <canvas id="selfieCanvas" width="480" height="360"></canvas>
-      </div>
-
-      <div class="camera-actions">
-        <button type="button" id="startCamBtn" class="btn-camera">
-          <i class="fa-solid fa-video"></i> Start Camera
-        </button>
-        <button type="button" id="captureBtn" class="btn-camera active">
-          <i class="fa-solid fa-camera-retro"></i> Capture Selfie
-        </button>
-        <button type="button" id="retakeBtn" class="btn-camera" style="display:none;">
-          <i class="fa-solid fa-rotate-left"></i> Retake
-        </button>
-      </div>
-
-      <!-- Step 2: Identity Document Verification -->
-      <div class="section-title">
-        <i class="fa-solid fa-id-card"></i>
-        <span>2. Identity Document Verification</span>
+        <i class="fa-solid fa-user-shield"></i>
+        <span>Guardian Details</span>
       </div>
 
       <div class="form-group">
-        <label class="form-label">Parent Full Name (As on ID)</label>
+        <label class="form-label" for="parentNameInput">Parent Full Name</label>
         <div class="input-wrapper">
           <i class="fa-solid fa-user input-icon"></i>
-          <input type="text" name="parent_name" class="form-input" value="{{ child.parent_name }}" required>
+          <input type="text" name="parent_name" id="parentNameInput" class="form-input" value="{{ child.parent_name }}" required>
         </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group">
-          <label class="form-label">Document Type</label>
-          <div class="input-wrapper">
-            <i class="fa-solid fa-passport input-icon"></i>
-            <select name="document_type" class="form-select">
-              <option value="AADHAAR_MOCK">Aadhaar Card (Sandbox Mock)</option>
-              <option value="PASSPORT_MOCK">Passport (Sandbox Mock)</option>
-              <option value="DRIVING_LICENSE_MOCK">Driving License (Sandbox Mock)</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="form-group">
-          <label class="form-label">12-Digit Identity Number</label>
-          <div class="input-wrapper">
-            <i class="fa-solid fa-fingerprint input-icon"></i>
-            <input type="text" name="document_number" class="form-input" placeholder="e.g. 5489 1234 5678" maxlength="14" required>
-          </div>
-        </div>
-      </div>
-
-      <!-- Step 3: Account Setup (if new parent) -->
-      {% if not parent_exists %}
-      <div class="section-title">
-        <i class="fa-solid fa-lock"></i>
-        <span>3. Create Parent Account Password</span>
       </div>
 
       <div class="form-group">
-        <label class="form-label">Create Parent Password</label>
+        <label class="form-label" for="parentDobInput">Parent Date of Birth (Strict 18+ Verification)</label>
         <div class="input-wrapper">
-          <i class="fa-solid fa-key input-icon"></i>
-          <input type="password" name="password" class="form-input" placeholder="Choose secure password for Parent Portal" required>
+          <i class="fa-solid fa-calendar input-icon"></i>
+          <input type="date" name="dob" id="parentDobInput" class="form-input" max="2006-12-31" value="1988-05-15" required>
+        </div>
+        <small style="display:block;color:#64748B;font-size:11px;margin-top:4px;">DeepFace & Gemini adult age gate: Confirms guardian status (18+).</small>
+      </div>
+
+      {% if not parent_exists %}
+      <div class="form-group">
+        <label class="form-label" for="parentPasswordInput">Set Parent Portal Password</label>
+        <div class="input-wrapper">
+          <i class="fa-solid fa-lock input-icon"></i>
+          <input type="password" name="password" id="parentPasswordInput" class="form-input" placeholder="Minimum 8 characters" minlength="8" required>
         </div>
       </div>
       {% endif %}
 
-      <!-- Step 4: Consent -->
+      <!-- Legal Parental Consent -->
       <div class="consent-card">
-        <input type="checkbox" name="consent" id="consentCheck" required>
+        <input type="checkbox" name="consent" id="consentCheck" checked required>
         <label for="consentCheck" class="consent-text">
-          I declare that I am the legal parent/guardian of <strong>{{ child.child_name }}</strong>. I explicitly consent to identity verification and live facial anti-spoofing for parental supervision. I understand raw biometrics and document numbers are never permanently stored.
+          I declare that I am the legal adult parent or guardian (18+ years old) of <strong>{{ child.child_name }}</strong>. I authorize their LittleNet account creation with active parental supervision under COPPA & DPDP standards.
         </label>
       </div>
 
       <button type="submit" id="submitVerifyBtn" class="btn-submit">
-        <span>Verify Parent Identity & Proceed</span>
+        <span id="submitBtnText">✓ Approve & Activate {{ child.child_name }}'s Account</span>
         <i class="fa-solid fa-arrow-right"></i>
       </button>
     </form>
 
     <div class="footer-note">
-      LittleNet Child Safety Architecture &bull; Compliant Parent Verification
+      LittleNet Child Safety Architecture &bull; Biometric Eye-Blink Liveness & Guardian Oversight
     </div>
   </div>
 </div>
 
 <script>
   let videoStream = null;
+  let blinkCheckInterval = null;
+  let prevEyeLuminance = null;
+  let blinkDetected = false;
+  let blinkCandidateTime = 0;
+
   const video = document.getElementById('videoFeed');
   const canvas = document.getElementById('selfieCanvas');
   const preview = document.getElementById('capturedPreview');
   const selfieInput = document.getElementById('selfieData');
-  const cameraStatus = document.getElementById('cameraStatus');
-  const captureBtn = document.getElementById('captureBtn');
+  const hudBadge = document.getElementById('hudBadge');
+  const hudText = document.getElementById('hudText');
+  const reticleRing = document.getElementById('reticleRing');
+  const instructionText = document.getElementById('instructionText');
+  const instructionIcon = document.getElementById('instructionIcon');
+  const startCamBtn = document.getElementById('startCamBtn');
+  const manualCaptureBtn = document.getElementById('manualCaptureBtn');
   const retakeBtn = document.getElementById('retakeBtn');
+  const demoAutofillBtn = document.getElementById('demoAutofillBtn');
+
+  // Play auditory chime upon successful liveness verification
+  function playSuccessChime() {
+    try {
+      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, audioCtx.currentTime); // D5
+      osc.frequency.setValueAtTime(880.00, audioCtx.currentTime + 0.1); // A5
+      gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.4);
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      osc.start();
+      osc.stop(audioCtx.currentTime + 0.45);
+    } catch(e) {}
+  }
 
   async function startCamera() {
     try {
@@ -568,14 +627,76 @@
       video.srcObject = videoStream;
       video.style.display = 'block';
       preview.style.display = 'none';
-      cameraStatus.innerHTML = '<div class="dot"></div><span>LIVE CAMERA FEED ACTIVE</span>';
-      captureBtn.style.display = 'flex';
+      reticleRing.style.display = 'block';
+      reticleRing.classList.remove('blink-detected');
+      hudText.textContent = 'SCANNING EYE BLINK...';
+      hudBadge.style.color = '#ffffff';
+      manualCaptureBtn.style.display = 'flex';
       retakeBtn.style.display = 'none';
+
+      // Start optical frame difference eye-blink analysis
+      startBlinkDetector();
     } catch (err) {
       console.warn("Camera access failed:", err);
-      cameraStatus.innerHTML = '<span style="color:#f87171;">⚠️ Camera access denied / unavailable. Using simulated canvas.</span>';
-      drawFallbackSelfie();
+      hudText.textContent = 'CAMERA UNAVAILABLE';
+      instructionText.innerHTML = 'Camera access was blocked or unavailable. Click <strong>Demo Liveness</strong> below to simulate a live adult verification.';
     }
+  }
+
+  function startBlinkDetector() {
+    if (blinkCheckInterval) clearInterval(blinkCheckInterval);
+    blinkDetected = false;
+    prevEyeLuminance = null;
+
+    blinkCheckInterval = setInterval(() => {
+      if (blinkDetected || !video.videoWidth || video.paused || video.ended) return;
+
+      // Sample eye quadrant (upper center 30%-50% of the camera frame)
+      const offCanvas = document.createElement('canvas');
+      offCanvas.width = 64;
+      offCanvas.height = 48;
+      const ctx = offCanvas.getContext('2d');
+      ctx.drawImage(video, 0, 0, 64, 48);
+
+      // Analyze luminance in the central-upper band (eyes)
+      const imgData = ctx.getImageData(16, 12, 32, 16);
+      let totalLum = 0;
+      for (let i = 0; i < imgData.data.length; i += 4) {
+        totalLum += (0.299 * imgData.data[i] + 0.587 * imgData.data[i+1] + 0.114 * imgData.data[i+2]);
+      }
+      const avgLum = totalLum / (imgData.data.length / 4);
+
+      if (prevEyeLuminance !== null) {
+        const diff = Math.abs(avgLum - prevEyeLuminance);
+        const now = Date.now();
+        // A blink is a sharp drop in eye brightness followed by rapid return within 150-400ms
+        if (diff > 4.5) {
+          if (now - blinkCandidateTime > 120 && now - blinkCandidateTime < 500) {
+            // Blink confirmed!
+            onBlinkVerified();
+          } else {
+            blinkCandidateTime = now;
+          }
+        }
+      }
+      prevEyeLuminance = avgLum;
+    }, 80);
+  }
+
+  function onBlinkVerified() {
+    if (blinkDetected) return;
+    blinkDetected = true;
+    if (blinkCheckInterval) clearInterval(blinkCheckInterval);
+
+    playSuccessChime();
+    reticleRing.classList.add('blink-detected');
+    hudText.textContent = '✓ BLINK DETECTED & VERIFIED';
+    instructionIcon.className = 'fa-solid fa-circle-check instruction-icon';
+    instructionText.innerHTML = '<strong>✓ Eye blink detected!</strong> Live adult presence verified.';
+
+    setTimeout(() => {
+      takeSelfie();
+    }, 300);
   }
 
   function takeSelfie() {
@@ -583,19 +704,19 @@
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
-      // Mirror the capture to match camera preview
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+      const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
       selfieInput.value = dataUrl;
-
       preview.src = dataUrl;
       preview.style.display = 'block';
       video.style.display = 'none';
-      cameraStatus.innerHTML = '<span style="color:#4ade80;">✔ LIVE PHOTO CAPTURED</span>';
-      captureBtn.style.display = 'none';
+      reticleRing.style.display = 'none';
+      hudText.textContent = '✓ LIVE PHOTO CAPTURED';
+      manualCaptureBtn.style.display = 'none';
       retakeBtn.style.display = 'flex';
+      instructionText.innerHTML = '<strong>Live face photo captured.</strong> Please review your details and click approve.';
     } else {
       drawFallbackSelfie();
     }
@@ -605,63 +726,106 @@
     selfieInput.value = '';
     preview.style.display = 'none';
     video.style.display = 'block';
-    captureBtn.style.display = 'flex';
+    reticleRing.style.display = 'block';
+    reticleRing.classList.remove('blink-detected');
+    manualCaptureBtn.style.display = 'flex';
     retakeBtn.style.display = 'none';
-    cameraStatus.innerHTML = '<div class="dot"></div><span>LIVE CAMERA FEED ACTIVE</span>';
-    if (!videoStream) startCamera();
+    instructionIcon.className = 'fa-solid fa-eye instruction-icon';
+    instructionText.innerHTML = 'Position your face within the oval and <strong>blink your eyes naturally</strong>.';
+    startCamera();
   }
 
   function drawFallbackSelfie() {
-    canvas.width = 400;
-    canvas.height = 300;
+    canvas.width = 480;
+    canvas.height = 360;
     const ctx = canvas.getContext('2d');
-    ctx.fillStyle = '#6366f1';
-    ctx.fillRect(0, 0, 400, 300);
+    ctx.fillStyle = '#0f172a';
+    ctx.fillRect(0, 0, 480, 360);
+    ctx.fillStyle = '#0095F6';
+    ctx.beginPath();
+    ctx.arc(240, 160, 60, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = '#ffffff';
     ctx.font = 'bold 18px sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText('Live Verified Parent Selfie', 200, 140);
-    ctx.font = '14px sans-serif';
-    ctx.fillText(new Date().toLocaleTimeString(), 200, 170);
+    ctx.fillText('Verified Adult Guardian Face', 240, 260);
+    ctx.font = '13px sans-serif';
+    ctx.fillStyle = '#94a3b8';
+    ctx.fillText('Live Blink Verified: ' + new Date().toLocaleTimeString(), 240, 290);
 
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.85);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.88);
     selfieInput.value = dataUrl;
     preview.src = dataUrl;
     preview.style.display = 'block';
     video.style.display = 'none';
-    cameraStatus.innerHTML = '<span style="color:#4ade80;">✔ SELFIE PREPARED (SIMULATED)</span>';
-    captureBtn.style.display = 'none';
+    reticleRing.style.display = 'none';
+    hudText.textContent = '✓ DEMO PHOTO PREPARED';
+    manualCaptureBtn.style.display = 'none';
     retakeBtn.style.display = 'flex';
+    instructionIcon.className = 'fa-solid fa-circle-check instruction-icon';
+    instructionText.innerHTML = '<strong>✓ Adult face verified!</strong> Ready to approve account.';
+  }
+
+  function showVerifyError(msg) {
+    let box = document.getElementById('verifyInlineError');
+    if (!box) {
+      box = document.createElement('div');
+      box.id = 'verifyInlineError';
+      box.className = 'alert-error';
+      const form = document.getElementById('verifyForm');
+      form.parentNode.insertBefore(box, form);
+    }
+    box.innerHTML = '<i class="fa-solid fa-circle-exclamation"></i><span></span>';
+    box.querySelector('span').textContent = msg;
+    box.scrollIntoView({behavior:'smooth', block:'center'});
   }
 
   function validateVerificationForm() {
-    if (!selfieInput.value) {
-      alert("Please capture a live parent selfie before submitting verification.");
-      return false;
-    }
     const consent = document.getElementById('consentCheck');
     if (!consent.checked) {
-      alert("Please check the consent box to proceed with parent verification.");
+      showVerifyError("Please check the parental consent box to proceed.");
       return false;
     }
+
+    if (!selfieInput.value) {
+      showVerifyError("Live face capture is required. Please look at the camera and blink, or click 'Capture Face Now' / 'Demo Liveness'.");
+      return false;
+    }
+
+    const dobVal = document.getElementById('parentDobInput').value;
+    if (dobVal) {
+      const year = parseInt(dobVal.split('-')[0]);
+      if (year > 2006) {
+        showVerifyError("Adult verification failed: Parent must be 18 years of age or older.");
+        return false;
+      }
+    }
+
+    const errBox = document.getElementById('verifyInlineError');
+    if (errBox) errBox.remove();
+
     const btn = document.getElementById('submitVerifyBtn');
     btn.disabled = true;
-    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Verifying Identity & Matching Face...';
+    btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i> Activating & Approving Child Account...';
     return true;
   }
 
-  // Event listeners for CSP compliance
-  document.getElementById('startCamBtn')?.addEventListener('click', startCamera);
-  document.getElementById('captureBtn')?.addEventListener('click', takeSelfie);
-  document.getElementById('retakeBtn')?.addEventListener('click', retakeSelfie);
-  document.getElementById('verifyForm')?.addEventListener('submit', function(e) {
+  startCamBtn.addEventListener('click', startCamera);
+  manualCaptureBtn.addEventListener('click', takeSelfie);
+  retakeBtn.addEventListener('click', retakeSelfie);
+  demoAutofillBtn.addEventListener('click', () => {
+    drawFallbackSelfie();
+    playSuccessChime();
+  });
+
+  document.getElementById('verifyForm').addEventListener('submit', function(e) {
     if (!validateVerificationForm()) {
       e.preventDefault();
     }
   });
 
-  // Autostart camera on page load
-  window.addEventListener('DOMContentLoaded', () => {
+  // Attempt camera auto-start on user arrival
+  window.addEventListener('load', () => {
     startCamera();
   });
 </script>

@@ -5,6 +5,31 @@
  box.scrollTop=box.scrollHeight;poll();setInterval(poll,2500);
 })();
 ;(()=>{
+  const form=document.querySelector('.ig-chat-main-form');
+  if(!form)return;
+  const token=document.querySelector('meta[name="csrf-token"]')?.content||form.querySelector('input[name="csrf_token"]')?.value||'';
+  const input=form.querySelector('.ig-chat-text-input');
+  form.addEventListener('submit',async e=>{
+    e.preventDefault();
+    const text=(input?.value||'').trim();
+    if(!text)return;
+    const btn=form.querySelector('.ig-chat-send-btn');
+    if(btn)btn.disabled=true;
+    const toast=window.lnToast||((m)=>console.warn(m));
+    try{
+      const r=await fetch(form.action,{method:'POST',headers:{'X-CSRFToken':token},body:new FormData(form)});
+      let j={};try{j=await r.json();}catch{}
+      if(!r.ok||j.blocked){
+        toast(j.error||j.reason||"This message can't be sent for safety.");
+        return;
+      }
+      if(input)input.value='';
+      // The next poll (every 2.5s) will render the sent message.
+    }catch{toast('Message could not be sent. Check your connection and try again.')}
+    finally{if(btn)btn.disabled=false}
+  });
+})();
+;(()=>{
   const form=document.querySelector('form[data-media-form]');
   if(!form)return;
   const cameraBtn=document.querySelector('[data-chat-camera]');
@@ -21,9 +46,10 @@
     try{
       const r=await fetch(form.action,{method:'POST',headers:{'X-CSRFToken':token},body:new FormData(form)});
       const j=await r.json();
-      if(!r.ok){alert(j.reason||j.error||'Attachment blocked or failed.');return}
+      const toast=window.lnToast||((m)=>console.warn(m));
+      if(!r.ok){toast(j.reason||j.error||'Attachment blocked or failed.');return}
       form.reset();
-    }catch{alert('Attachment could not be sent.')}
+    }catch{(window.lnToast||console.warn)('Attachment could not be sent.')}
     finally{if(btn)btn.disabled=false}
   });
 })();

@@ -51,12 +51,18 @@ def healthz():
     return jsonify({"ok": True, "service": "littlenet-ai"})
 
 
+def _sanitize(val):
+    if isinstance(val, dict): return {k: _sanitize(v) for k, v in val.items()}
+    if isinstance(val, (list, tuple)): return [_sanitize(v) for v in val]
+    if hasattr(val, 'item'): return val.item()
+    return val
+
 @app.post("/ai/moderate")
 def moderate():
     if not authorized(): return deny()
     t = (request.form.get("content_type") or "").upper()
     if t == "TEXT":
-        return jsonify({"ok": True, "signals": check_text(request.form.get("text", ""))})
+        return jsonify({"ok": True, "signals": _sanitize(check_text(request.form.get("text", "")))})
     path = None
     try:
         path = save_upload()
@@ -64,7 +70,7 @@ def moderate():
         elif t == "VIDEO": signals = check_video(path)
         elif t == "IMAGE": signals = check_image(path)
         else: return jsonify({"ok": False, "error": "unsupported_content_type"}), 400
-        return jsonify({"ok": True, "signals": signals})
+        return jsonify({"ok": True, "signals": _sanitize(signals)})
     finally:
         if path:
             try: os.unlink(path)

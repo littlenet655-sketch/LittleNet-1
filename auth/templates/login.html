@@ -6,53 +6,57 @@
 
 <div class="auth-shell">
   <div class="auth-card">
-    
+
     <!-- Brand Header -->
     <div class="auth-brand-wrap">
       <div class="auth-logo-badge">
-        <svg width="40" height="40" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-          <path d="M32 8 C44 8 52 13 54 18 C54 37 43 49 32 56 C21 49 10 37 10 18 C12 13 20 8 32 8 Z" fill="url(#ln-shield-grad)" stroke="#10B981" stroke-width="3"/>
+        <svg width="38" height="38" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <path d="M32 8 C44 8 52 13 54 18 C54 37 43 49 32 56 C21 49 10 37 10 18 C12 13 20 8 32 8 Z" fill="url(#ln-shield-grad)" stroke="#0095F6" stroke-width="2.5"/>
           <path d="M32 18 L34.8 26.6 L44 29.2 L34.8 31.8 L32 40.5 L29.2 31.8 L20 29.2 L29.2 26.6 Z" fill="#FFFFFF"/>
           <defs>
             <linearGradient id="ln-shield-grad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#34D399"/>
-              <stop offset="50%" stop-color="#38BDF8"/>
-              <stop offset="100%" stop-color="#818CF8"/>
+              <stop offset="0%" stop-color="#0095F6"/>
+              <stop offset="50%" stop-color="#6366F1"/>
+              <stop offset="100%" stop-color="#EC4899"/>
             </linearGradient>
           </defs>
         </svg>
       </div>
       <h1 class="brand auth-title">LittleNet</h1>
       <p class="auth-subtitle" id="mode-subtitle">
-        {{ 'A safe, AI-guided social world for children' if mode!='parent' else 'Parent supervision, screen-time & safety controls' }}
+        {% if mode=='parent' %}Parent supervision, screen-time & safety controls
+        {%- elif mode=='admin' %}Safety moderator & platform admin sign-in
+        {%- else %}A safe, AI-guided social world for children{% endif %}
       </p>
     </div>
 
     <!-- Mode Selector Pills (Kids Mode vs Parent Mode) -->
+    {% if mode!='admin' %}
     <div class="mode-pill-toggle" role="tablist" aria-label="Select login mode">
-      <a href="/login/?mode=kids" 
-         class="pill-btn {% if mode!='parent' %}active kid-active{% endif %}" 
-         id="tab-kids" 
-         role="tab" 
+      <a href="/login/?mode=kids"
+         class="pill-btn {% if mode!='parent' %}active kid-active{% endif %}"
+         id="tab-kids"
+         role="tab"
          aria-selected="{{ 'true' if mode!='parent' else 'false' }}">
-        <span class="pill-emoji">🧒</span>
+        {{ico.icon('user',16,'pill-icon')}}
         <span>Kids Mode</span>
       </a>
-      <a href="/login/?mode=parent" 
-         class="pill-btn {% if mode=='parent' %}active parent-active{% endif %}" 
-         id="tab-parent" 
-         role="tab" 
+      <a href="/login/?mode=parent"
+         class="pill-btn {% if mode=='parent' %}active parent-active{% endif %}"
+         id="tab-parent"
+         role="tab"
          aria-selected="{{ 'true' if mode=='parent' else 'false' }}">
-        <span class="pill-emoji">🛡️</span>
+        {{ico.icon('shield',16,'pill-icon')}}
         <span>Parent Mode</span>
       </a>
     </div>
+    {% endif %}
 
     <!-- Error Alert -->
     {% set display_error = error or request.args.get('error') %}
     {% if display_error %}
     <div class="auth-alert auth-alert-error" role="alert">
-      <span class="alert-icon">⚠️</span>
+      <svg class="alert-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
       <span>{{ display_error }}</span>
     </div>
     {% endif %}
@@ -60,10 +64,10 @@
     <!-- Pending Approval Banner for Demo / Viva -->
     {% if approval_token %}
     <div class="auth-alert auth-alert-pending">
-      <div class="pending-title">⏳ Parent Approval Required</div>
+      <div class="pending-title">{{ico.icon('clock',15)}} Parent Approval Required</div>
       <p class="pending-desc">This account is awaiting parent identity verification. For demo/viva testing, approve instantly:</p>
       <a href="/approve/{{ approval_token }}/" class="btn primary pending-btn">
-        🛡️ Approve Account Now
+        {{ico.icon('shield',15)}} Approve Account Now
       </a>
     </div>
     {% endif %}
@@ -75,16 +79,19 @@
 
       <div class="auth-field">
         <label for="auth-identifier" class="field-label" id="label-identifier">
-          {{ 'Username or Child Email' if mode!='parent' else 'Parent Email Address' }}
+          {% if mode=='parent' %}Parent Email Address{% elif mode=='admin' %}Admin Email Address{% else %}Username or Child Email{% endif %}
         </label>
         <div class="input-wrap">
-          <span class="input-icon">👤</span>
-          <input type="text" 
-                 name="email" 
-                 id="auth-identifier" 
-                 class="auth-input" 
-                 placeholder="{{ 'Enter username or child email' if mode!='parent' else 'parent@example.com' }}" 
-                 required 
+          <span class="input-icon">{{ico.icon('user',17)}}</span>
+          <input type="text"
+                 name="email"
+                 id="auth-identifier"
+                 class="auth-input"
+                 placeholder="{% if mode=='parent' %}parent@example.com{% elif mode=='admin' %}admin@example.com{% else %}Enter username or child email{% endif %}"
+                 required
+                 autocapitalize="none"
+                 autocorrect="off"
+                 spellcheck="false"
                  autocomplete="username">
         </div>
       </div>
@@ -92,498 +99,125 @@
       <div class="auth-field">
         <label for="auth-password" class="field-label">Password</label>
         <div class="input-wrap">
-          <span class="input-icon">🔒</span>
-          <input type="password" 
-                 name="password" 
-                 id="auth-password" 
-                 class="auth-input" 
-                 placeholder="Enter your password" 
-                 required 
-                 minlength="6" 
+          <span class="input-icon">{{ico.icon('lock',17)}}</span>
+          <input type="password"
+                 name="password"
+                 id="auth-password"
+                 class="auth-input"
+                 placeholder="Enter your password"
+                 required
+                 minlength="6"
+                 autocapitalize="none"
+                 autocorrect="off"
+                 spellcheck="false"
                  autocomplete="current-password">
-          <button type="button" 
-                  id="toggle-pwd-btn" 
-                  class="pwd-toggle-btn" 
+          <button type="button"
+                  id="toggle-pwd-btn"
+                  class="pwd-toggle-btn"
                   aria-label="Toggle password visibility">
-            👁️
+            <span class="pwd-icon-show">{{ico.icon('eye',17)}}</span>
+            <span class="pwd-icon-hide" hidden>{{ico.icon('eye-off',17)}}</span>
           </button>
         </div>
       </div>
 
       <button type="submit" class="btn primary auth-submit-btn" id="auth-submit-btn">
         <span>Log In</span>
-        <span class="btn-arrow">→</span>
+        <span class="btn-arrow">&rarr;</span>
       </button>
     </form>
 
     <!-- Biometric Face ID Login (Kids Mode) -->
-    <div id="face-login-wrap" {% if mode=='parent' %}style="display:none;"{% endif %}>
+    <div id="face-login-wrap" {% if mode=='parent' or mode=='admin' %}style="display:none;"{% endif %}>
       <div class="auth-divider">
         <span>OR</span>
       </div>
       <a href="/face-login/" class="face-login-btn">
-        <span class="face-icon">📸</span>
+        {{ico.icon('camera',17)}}
         <span>Instant Face ID Login</span>
       </a>
     </div>
 
     <!-- Sign-Up Links -->
+    {% if mode=='admin' %}
     <div class="auth-signup-box">
-      <span class="signup-text">New to LittleNet?</span>
+      <span class="signup-text">Admin & moderator accounts are provisioned directly by the platform team &mdash; there is no self sign-up here.</span>
+    </div>
+    {% else %}
+    <div class="auth-signup-box">
+      {% if mode=='kids' %}
+      <span class="signup-text">New to LittleNet? Ask your parent to set up your account.</span>
       <div class="signup-links">
-        <a href="/register-child/" class="signup-link kid-link">
-          <span class="link-bullet">✨</span> Sign up as Child
-        </a>
-        <span class="link-sep">•</span>
         <a href="/register-parent/" class="signup-link parent-link">
-          <span class="link-bullet">🛡️</span> Parent Sign Up
+          {{ico.icon('shield',13,'link-bullet')}} I'm a parent &mdash; sign up
         </a>
       </div>
+      {% else %}
+      <span class="signup-text">New to LittleNet?</span>
+      <div class="signup-links">
+        <a href="/register-parent/" class="signup-link parent-link">
+          {{ico.icon('shield',13,'link-bullet')}} Parent Sign Up
+        </a>
+      </div>
+      <p class="signup-hint">Children never create their own account. Add your child from the Parent Mode dashboard after you sign up.</p>
+      {% endif %}
     </div>
+    {% endif %}
 
+    <!-- Demo Test Logins (collapsed by default so the real login stays the focus) -->
+    {% if mode!='admin' %}
+    <details class="demo-quick-box">
+      <summary class="demo-quick-summary">
+        <span class="demo-quick-badge">Demo logins</span>
+        <span class="demo-quick-sub">for testing &amp; review</span>
+        <svg class="demo-quick-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
+      </summary>
+      <div class="demo-quick-grid">
+        <button type="button" class="demo-chip demo-chip-kid" data-fill-demo-id="Akshu" data-fill-demo-pwd="Akshu@123" data-fill-demo-mode="kids" title="Child: Akshu">
+          <span class="chip-avatar">{{ico.icon('user',16)}}</span>
+          <div class="chip-info">
+            <span class="chip-title">Akshu</span>
+            <span class="chip-role">Kids Feed</span>
+          </div>
+        </button>
+        <button type="button" class="demo-chip demo-chip-parent" data-fill-demo-id="akshaykammar31@gmail.com" data-fill-demo-pwd="Parent@123" data-fill-demo-mode="parent" title="Parent: Akshay">
+          <span class="chip-avatar">{{ico.icon('shield',16)}}</span>
+          <div class="chip-info">
+            <span class="chip-title">Akshay</span>
+            <span class="chip-role">Parent Controls</span>
+          </div>
+        </button>
+        <button type="button" class="demo-chip demo-chip-kid" data-fill-demo-id="ait_star_student" data-fill-demo-pwd="Child@123" data-fill-demo-mode="kids" title="Child: Star Student">
+          <span class="chip-avatar">{{ico.icon('sparkles',16)}}</span>
+          <div class="chip-info">
+            <span class="chip-title">Star Student</span>
+            <span class="chip-role">Kids Feed</span>
+          </div>
+        </button>
+        <button type="button" class="demo-chip demo-chip-parent" data-fill-demo-id="mentor_parent@ait.edu" data-fill-demo-pwd="Parent@123" data-fill-demo-mode="parent" title="Parent: Mentor">
+          <span class="chip-avatar">{{ico.icon('book',16)}}</span>
+          <div class="chip-info">
+            <span class="chip-title">Mentor Parent</span>
+            <span class="chip-role">Parent Dashboard</span>
+          </div>
+        </button>
+      </div>
+    </details>
+    {% endif %}
+
+    {% if mode!='admin' %}
     <!-- Moderator / Admin Access -->
     <div class="auth-admin-link">
       <a href="/admin-login/">
-        <span>⚖️</span> Safety Moderator & Admin Portal
+        {{ico.icon('lock',13)}} Safety Moderator &amp; Admin Portal
       </a>
     </div>
+    {% else %}
+    <div class="auth-admin-link">
+      <a href="/login/">{{ico.icon('user',13)}} Back to regular sign-in</a>
+    </div>
+    {% endif %}
 
   </div>
 </div>
-
-<style>
-/* Clean, Kid-Safe Responsive Auth Styles */
-.auth-shell {
-  min-height: 100vh;
-  width: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24px 16px;
-  background: var(--ln-cream, #FFF7ED);
-  box-sizing: border-box;
-}
-
-.auth-card {
-  width: 100%;
-  max-width: 440px;
-  background: #FFFFFF;
-  border: 1px solid var(--ln-line, #F1E7DA);
-  border-radius: 28px;
-  box-shadow: 0 16px 40px rgba(88, 68, 45, 0.08);
-  padding: 32px 28px;
-  box-sizing: border-box;
-  text-align: center;
-  margin: auto;
-}
-
-.auth-brand-wrap {
-  margin-bottom: 22px;
-}
-
-.auth-logo-badge {
-  width: 68px;
-  height: 68px;
-  margin: 0 auto 12px;
-  display: grid;
-  place-items: center;
-  border-radius: 22px;
-  background: linear-gradient(135deg, #ECFDF5, #E0F2FE);
-  box-shadow: 0 8px 20px rgba(52, 211, 153, 0.18);
-}
-
-.auth-title {
-  font-family: ui-rounded, "Arial Rounded MT Bold", "Trebuchet MS", sans-serif;
-  font-size: 32px;
-  font-weight: 900;
-  color: var(--ln-ink, #1F2937);
-  margin: 0 0 6px;
-  letter-spacing: -0.5px;
-}
-
-.auth-subtitle {
-  margin: 0;
-  font-size: 13px;
-  color: #6B7280;
-  line-height: 1.45;
-}
-
-/* Mode Selector Pills */
-.mode-pill-toggle {
-  display: flex;
-  gap: 8px;
-  padding: 5px;
-  background: #F3F4F6;
-  border-radius: 999px;
-  margin-bottom: 22px;
-}
-
-.pill-btn {
-  flex: 1;
-  min-height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  border: none;
-  background: transparent;
-  color: #6B7280;
-  font-size: 13px;
-  font-weight: 800;
-  border-radius: 999px;
-  cursor: pointer;
-  transition: all 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-
-.pill-btn.active.kid-active {
-  background: #10B981;
-  color: #FFFFFF;
-  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.35);
-}
-
-.pill-btn.active.parent-active {
-  background: #1E293B;
-  color: #FFFFFF;
-  box-shadow: 0 4px 12px rgba(30, 41, 59, 0.25);
-}
-
-.pill-emoji {
-  font-size: 15px;
-}
-
-/* Alerts */
-.auth-alert {
-  padding: 12px 14px;
-  border-radius: 16px;
-  font-size: 13px;
-  margin-bottom: 18px;
-  text-align: left;
-}
-
-.auth-alert-error {
-  background: #FEF2F2;
-  border: 1px solid #FECACA;
-  color: #B91C1C;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.auth-alert-pending {
-  background: #FFFBEB;
-  border: 1.5px dashed #F59E0B;
-  color: #92400E;
-}
-
-.pending-title {
-  font-weight: 800;
-  color: #B45309;
-  margin-bottom: 4px;
-}
-
-.pending-desc {
-  margin: 0 0 10px;
-  font-size: 12px;
-  line-height: 1.4;
-}
-
-.pending-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  width: 100%;
-  padding: 10px;
-  font-size: 12px;
-  text-decoration: none;
-}
-
-/* Form & Inputs */
-.auth-form {
-  text-align: left;
-}
-
-.auth-field {
-  margin-bottom: 16px;
-}
-
-.field-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 750;
-  color: #374151;
-  margin-bottom: 6px;
-}
-
-.input-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-
-.input-icon {
-  position: absolute;
-  left: 14px;
-  font-size: 16px;
-  pointer-events: none;
-  opacity: 0.65;
-}
-
-.auth-input {
-  width: 100%;
-  height: 48px;
-  background: #F9FAFB;
-  border: 1.5px solid #E5E7EB;
-  border-radius: 16px;
-  padding: 0 42px 0 40px;
-  font-size: 14px;
-  color: #111827;
-  box-sizing: border-box;
-  outline: none;
-  transition: border-color 0.18s ease, box-shadow 0.18s ease, background 0.18s ease;
-}
-
-.auth-input:focus {
-  background: #FFFFFF;
-  border-color: #10B981;
-  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.12);
-}
-
-.pwd-toggle-btn {
-  position: absolute;
-  right: 12px;
-  background: transparent;
-  border: none;
-  cursor: pointer;
-  padding: 6px;
-  font-size: 15px;
-  opacity: 0.65;
-  transition: opacity 0.15s ease;
-}
-
-.pwd-toggle-btn:hover {
-  opacity: 1;
-}
-
-.auth-submit-btn {
-  width: 100%;
-  height: 50px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  background: linear-gradient(135deg, #10B981, #059669);
-  color: #FFFFFF;
-  border: none;
-  border-radius: 16px;
-  font-size: 15px;
-  font-weight: 800;
-  cursor: pointer;
-  box-shadow: 0 8px 18px rgba(16, 185, 129, 0.3);
-  margin-top: 8px;
-  transition: transform 0.16s ease, box-shadow 0.16s ease;
-}
-
-.auth-submit-btn:active {
-  transform: scale(0.98);
-}
-
-.btn-arrow {
-  font-size: 16px;
-  transition: transform 0.18s ease;
-}
-
-.auth-submit-btn:hover .btn-arrow {
-  transform: translateX(4px);
-}
-
-/* Divider */
-.auth-divider {
-  display: flex;
-  align-items: center;
-  margin: 18px 0;
-  color: #9CA3AF;
-  font-size: 11px;
-  font-weight: 750;
-  letter-spacing: 0.05em;
-}
-
-.auth-divider::before,
-.auth-divider::after {
-  content: "";
-  flex: 1;
-  height: 1px;
-  background: #E5E7EB;
-}
-
-.auth-divider span {
-  padding: 0 10px;
-}
-
-/* Face ID Button */
-.face-login-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  height: 48px;
-  background: #F0FDF4;
-  border: 1.5px solid #A7F3D0;
-  color: #065F46;
-  border-radius: 16px;
-  font-size: 13px;
-  font-weight: 800;
-  text-decoration: none;
-  box-sizing: border-box;
-  transition: all 0.16s ease;
-}
-
-.face-login-btn:hover {
-  background: #DCFCE7;
-  border-color: #6EE7B7;
-}
-
-/* Sign Up Box */
-.auth-signup-box {
-  margin-top: 22px;
-  padding-top: 18px;
-  border-top: 1px solid #F3F4F6;
-  font-size: 13px;
-}
-
-.signup-text {
-  display: block;
-  color: #6B7280;
-  margin-bottom: 6px;
-  font-size: 12px;
-}
-
-.signup-links {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.signup-link {
-  text-decoration: none;
-  font-weight: 800;
-  font-size: 13px;
-}
-
-.signup-link.kid-link {
-  color: #059669;
-}
-
-.signup-link.parent-link {
-  color: #2563EB;
-}
-
-.link-bullet {
-  font-size: 12px;
-}
-
-.link-sep {
-  color: #D1D5DB;
-}
-
-/* Admin Link */
-.auth-admin-link {
-  margin-top: 18px;
-}
-
-.auth-admin-link a {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: #9CA3AF;
-  font-size: 11px;
-  font-weight: 600;
-  text-decoration: none;
-  transition: color 0.15s ease;
-}
-
-.auth-admin-link a:hover {
-  color: #4B5563;
-}
-</style>
-
-<script>
-window.setAuthMode = function(mode, e) {
-  if (e && e.preventDefault) e.preventDefault();
-  const tabKids = document.getElementById('tab-kids');
-  const tabParent = document.getElementById('tab-parent');
-  const formMode = document.getElementById('auth-mode-input');
-  const subtitle = document.getElementById('mode-subtitle');
-  const labelIdent = document.getElementById('label-identifier');
-  const inputIdent = document.getElementById('auth-identifier');
-  const faceWrap = document.getElementById('face-login-wrap');
-  const submitBtn = document.getElementById('auth-submit-btn');
-
-  if (mode === 'parent') {
-    if (tabParent) {
-      tabParent.classList.add('active', 'parent-active');
-      tabParent.setAttribute('aria-selected', 'true');
-    }
-    if (tabKids) {
-      tabKids.classList.remove('active', 'kid-active');
-      tabKids.setAttribute('aria-selected', 'false');
-    }
-    if (formMode) formMode.value = 'parent';
-    if (subtitle) subtitle.textContent = 'Parent supervision, screen-time & safety controls';
-    if (labelIdent) labelIdent.textContent = 'Parent Email Address';
-    if (inputIdent) inputIdent.placeholder = 'parent@example.com';
-    if (faceWrap) faceWrap.style.display = 'none';
-    if (submitBtn) {
-      submitBtn.style.background = 'linear-gradient(135deg, #1E293B, #0F172A)';
-      submitBtn.style.boxShadow = '0 8px 18px rgba(15, 23, 42, 0.25)';
-    }
-    try { history.replaceState(null, '', '/login/?mode=parent'); } catch(err){}
-  } else {
-    if (tabKids) {
-      tabKids.classList.add('active', 'kid-active');
-      tabKids.setAttribute('aria-selected', 'true');
-    }
-    if (tabParent) {
-      tabParent.classList.remove('active', 'parent-active');
-      tabParent.setAttribute('aria-selected', 'false');
-    }
-    if (formMode) formMode.value = 'kids';
-    if (subtitle) subtitle.textContent = 'A safe, AI-guided social world for children';
-    if (labelIdent) labelIdent.textContent = 'Username or Child Email';
-    if (inputIdent) inputIdent.placeholder = 'Enter username or child email';
-    if (faceWrap) faceWrap.style.display = 'block';
-    if (submitBtn) {
-      submitBtn.style.background = 'linear-gradient(135deg, #10B981, #059669)';
-      submitBtn.style.boxShadow = '0 8px 18px rgba(16, 185, 129, 0.3)';
-    }
-    try { history.replaceState(null, '', '/login/?mode=kids'); } catch(err){}
-  }
-};
-
-document.addEventListener('DOMContentLoaded', () => {
-  const tabKids = document.getElementById('tab-kids');
-  const tabParent = document.getElementById('tab-parent');
-  if (tabKids) tabKids.addEventListener('click', (e) => window.setAuthMode('kids', e));
-  if (tabParent) tabParent.addEventListener('click', (e) => window.setAuthMode('parent', e));
-
-  const pwdInput = document.getElementById('auth-password');
-  const toggleBtn = document.getElementById('toggle-pwd-btn');
-  if (toggleBtn && pwdInput) {
-    toggleBtn.addEventListener('click', () => {
-      const isPwd = pwdInput.type === 'password';
-      pwdInput.type = isPwd ? 'text' : 'password';
-      toggleBtn.textContent = isPwd ? '🙈' : '👁️';
-    });
-  }
-  
-  // Sync state if mode='parent' was passed in query or server
-  const formMode = document.getElementById('auth-mode-input');
-  if (formMode && formMode.value === 'parent') {
-    window.setAuthMode('parent');
-  }
-});
-</script>
 {% endblock %}

@@ -3,38 +3,85 @@
 {% import '_icons.html' as ico %}
 
 <div class="dashboard-title">
-  <div>
-    <span class="eyebrow" style="color: #0F766E; font-weight: 700; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em;">AI Digital Guardian</span>
-    <h2 style="font-size: 24px; font-weight: 700; margin: 4px 0;">{{ t('children') }} Oversight</h2>
-    <p style="color: #64748B; font-size: 13px;">Real-time multimodal AI safety protection, emotional sentiment, and screen-time controls.</p>
+  <div class="parent-title-group">
+    <span class="eyebrow parent-eyebrow">AI Digital Guardian</span>
+    <h2>{{ t('children') }} Oversight</h2>
+    <p class="text-muted">Real-time multimodal AI safety protection, emotional sentiment, and screen-time controls.</p>
   </div>
-  {% if children %}
-  <a class="btn primary nowrap-btn" href="/parent/create-child/" style="background: #0F766E; color: #fff; display: flex; align-items: center; gap: 6px;">
-    {{ ico.icon('plus', 17) }} {{ t('create_child') }}
-  </a>
-  {% endif %}
+  <div style="display: flex; gap: 8px; align-items: center;">
+    {% if children %}
+    <a class="btn primary nowrap-btn" href="/parent/create-child/">
+      {{ ico.icon('plus', 17) }} {{ t('create_child') }}
+    </a>
+    {% endif %}
+    <a class="btn outline nowrap-btn" href="/parent/settings/" title="Parent Settings" aria-label="Parent Settings">
+      {{ ico.icon('sliders', 17) }} Settings
+    </a>
+  </div>
 </div>
 
 <!-- LittleNet AI Standout Shield Banner -->
-<div style="background: linear-gradient(135deg, #0F766E 0%, #064E3B 100%); color: #FFFFFF; border-radius: 16px; padding: 16px 20px; margin-bottom: 20px; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 14px; box-shadow: 0 4px 16px rgba(15, 118, 110, 0.15);">
+<div class="parent-guardian-banner">
   <div style="display: flex; align-items: center; gap: 14px;">
-    <div style="width: 44px; height: 44px; border-radius: 12px; background: rgba(255, 255, 255, 0.18); display: grid; place-items: center;">
+    <div class="parent-guardian-badge-icon">
       {{ ico.icon('shield', 24) }}
     </div>
     <div>
       <b style="display: block; font-size: 15px; letter-spacing: -0.2px;">Zero-Trust Child Guardian Active</b>
-      <small style="color: #CCFBF1; font-size: 12px;">In-flight AI filtering (YOLOv8 + NudeNet + Detoxify) • Zero-Stranger Discovery Enforced</small>
+      <small style="color: #BFDBFE; font-size: 12px;">In-flight AI filtering (YOLOv8 + NudeNet + Detoxify) • Zero-Stranger Discovery Enforced</small>
     </div>
   </div>
   <div style="display: flex; gap: 12px; flex-wrap: wrap;">
-    <div style="background: rgba(255, 255, 255, 0.12); border-radius: 10px; padding: 6px 12px; font-size: 12px;">
-      <span style="color: #A7F3D0;">● Pre-Filter Status:</span> <b>100% Fail-Closed</b>
+    <div class="parent-guardian-pill">
+      <span style="color: #93C5FD;">● Pre-Filter Status:</span> <b>100% Fail-Closed</b>
     </div>
-    <div style="background: rgba(255, 255, 255, 0.12); border-radius: 10px; padding: 6px 12px; font-size: 12px;">
-      <span style="color: #A7F3D0;">● Circle:</span> <b>Mutual Parent Verified</b>
+    <div class="parent-guardian-pill">
+      <span style="color: #93C5FD;">● Circle:</span> <b>Mutual Parent Verified</b>
     </div>
   </div>
 </div>
+
+{% if pending_children %}
+<div class="pending-approval-container" style="margin-bottom: 16px;">
+  {% for pc in pending_children %}
+  <div class="parent-pending-card">
+    <div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 16px;">👶</span>
+        <b style="font-size: 14px; color: #1E40AF;">Account Request: {{ pc.full_name }} (@{{ pc.username }})</b>
+      </div>
+      <p style="margin: 3px 0 0; font-size: 12px; color: #3B82F6;">Your child created an account and is waiting for your 1-tap parental approval.</p>
+    </div>
+    <form method="post" action="/parent/quick-approve-child/" style="margin: 0; display: flex; gap: 8px;">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="child_id" value="{{ pc.child_id }}">
+      <button type="submit" name="action" value="approve" class="parent-quick-approve-btn">
+        ✓ Approve with 1-Tap
+      </button>
+      <button type="submit" name="action" value="reject" class="parent-decline-btn">
+        ✕ Decline
+      </button>
+    </form>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if awaiting_email_confirmation %}
+<div class="pending-approval-container" style="margin-bottom: 16px;">
+  {% for pc in awaiting_email_confirmation %}
+  <div class="parent-pending-card">
+    <div>
+      <div style="display: flex; align-items: center; gap: 6px;">
+        <span style="font-size: 16px;">📧</span>
+        <b style="font-size: 14px; color: #1E40AF;">Confirm account: {{ pc.full_name }} (@{{ pc.username }})</b>
+      </div>
+      <p style="margin: 3px 0 0; font-size: 12px; color: #3B82F6;">Check your email inbox and tap "Confirm &amp; activate account" to finish setting this account up. It cannot log in until you confirm.</p>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
 
 {% if unread %}
 <a class="parent-alert-strip" href="/parent/notifications/">
@@ -46,11 +93,11 @@
 
 <div class="parent-child-grid">
   {% for c in children %}
-  <article class="parent-card child-summary" style="background: #FFFFFF; border: 1px solid #E2E8F0; border-radius: 18px; padding: 18px; box-shadow: 0 4px 12px rgba(15, 23, 42, 0.04);">
+  <article class="parent-card child-summary">
     <div class="child-summary-top" style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 12px;">
       <div>
         <div class="presence-line" style="display: flex; align-items: center; gap: 6px; font-size: 12px; color: #64748B; margin-bottom: 4px;">
-          <span class="online-dot {% if not c.presence.online %}offline{% endif %}" aria-hidden="true" style="width: 8px; height: 8px; border-radius: 50%; background: {{ '#10B981' if c.presence.online else '#94A3B8' }};"></span>
+          <span class="online-dot {% if not c.presence.online %}offline{% endif %}" aria-hidden="true"></span>
           <span class="presence-text" style="font-weight: 600;">{{ 'Online now' if c.presence.online else 'Offline' }}</span>
         </div>
         <h3 style="margin: 0; font-size: 18px; font-weight: 700; color: #0F172A;">{{ c.full_name }}</h3>
@@ -60,24 +107,24 @@
       </div>
 
       {% if c.open_reviews %}
-      <a class="decision-chip review" href="/parent/safety/" style="background: #FEF3C7; color: #92400E; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 999px; text-decoration: none;">
+      <a class="decision-chip review" href="/parent/safety/">
         {{ c.open_reviews }} pending
       </a>
       {% else %}
-      <span class="decision-chip allow" style="background: #DCFCE7; color: #166534; font-weight: 700; font-size: 11px; padding: 4px 10px; border-radius: 999px;">
+      <span class="decision-chip allow">
         ✓ Safe
       </span>
       {% endif %}
     </div>
 
     <!-- Child Emotional & Toxicity Thermometer (Standout Differentiator) -->
-    <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 12px; padding: 10px 14px; margin-bottom: 12px;">
+    <div class="parent-index-card">
       <div style="display: flex; justify-content: space-between; align-items: center; font-size: 11px; font-weight: 700; margin-bottom: 4px;">
         <span style="color: #475569;">Safety & Well-being Index</span>
-        <span style="color: #10B981;">98% Healthy</span>
+        <span style="color: #0095F6;">98% Healthy</span>
       </div>
-      <div style="height: 6px; background: #E2E8F0; border-radius: 999px; overflow: hidden;">
-        <div style="width: 98%; height: 100%; background: linear-gradient(90deg, #10B981, #06B6D4); border-radius: 999px;"></div>
+      <div class="parent-index-bar">
+        <div class="parent-index-fill"></div>
       </div>
       <div style="display: flex; justify-content: space-between; font-size: 10px; color: #64748B; margin-top: 6px;">
         <span>🛡️ 0 Bullying Detected</span>
@@ -87,21 +134,21 @@
 
     <!-- Quick Metrics -->
     <div class="quick-metrics parent-home-metrics" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 14px;">
-      <div style="background: #F8FAFC; padding: 8px; border-radius: 10px; text-align: center;">
-        <span style="display: block; font-size: 10px; color: #64748B;">Screen time</span>
-        <b style="font-size: 13px; color: #0F172A;">{{ c.minutes_today }}m</b>
+      <div class="parent-metric-cell">
+        <span class="parent-metric-label">Screen time</span>
+        <b class="parent-metric-value">{{ c.minutes_today }}m</b>
       </div>
-      <div style="background: #F8FAFC; padding: 8px; border-radius: 10px; text-align: center;">
-        <span style="display: block; font-size: 10px; color: #64748B;">Reviews</span>
-        <b style="font-size: 13px; color: #0F172A;">{{ c.open_reviews }}</b>
+      <div class="parent-metric-cell">
+        <span class="parent-metric-label">Reviews</span>
+        <b class="parent-metric-value">{{ c.open_reviews }}</b>
       </div>
-      <div style="background: #F8FAFC; padding: 8px; border-radius: 10px; text-align: center;">
-        <span style="display: block; font-size: 10px; color: #64748B;">7-day behaviour</span>
-        <b class="risk-text {{ c.behavior.level|lower }}" style="font-size: 13px; color: {{ '#166534' if c.behavior.level == 'LOW' else '#B45309' }};">{{ c.behavior.level }}</b>
+      <div class="parent-metric-cell">
+        <span class="parent-metric-label">7-day behaviour</span>
+        <b class="risk-text {{ c.behavior.level|lower }} parent-metric-value">{{ c.behavior.level }}</b>
       </div>
-      <div style="background: #F8FAFC; padding: 8px; border-radius: 10px; text-align: center;">
-        <span style="display: block; font-size: 10px; color: #64748B;">Quiz 7d</span>
-        <b style="font-size: 13px; color: #0F172A;">
+      <div class="parent-metric-cell">
+        <span class="parent-metric-label">Quiz 7d</span>
+        <b class="parent-metric-value">
           {% if c.quiz_7d.attempted %}{{ c.quiz_7d.accuracy }}%{% else %}100%{% endif %}
         </b>
       </div>
@@ -114,16 +161,16 @@
     {% endif %}
 
     <div class="parent-actions-grid" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-bottom: 12px;">
-      <a href="/parent/time-limit/?child_id={{ c.user_id }}" style="display: flex; align-items: center; gap: 6px; background: #F8FAFC; border: 1px solid #E2E8F0; padding: 8px 10px; border-radius: 8px; color: #334155; text-decoration: none; font-size: 11px; font-weight: 600;">
+      <a href="/parent/time-limit/?child_id={{ c.user_id }}" class="parent-action-tile">
         {{ ico.icon('clock', 16) }} {{ t('screen_time') }}
       </a>
-      <a href="/parent/safety/" style="display: flex; align-items: center; gap: 6px; background: #F8FAFC; border: 1px solid #E2E8F0; padding: 8px 10px; border-radius: 8px; color: #334155; text-decoration: none; font-size: 11px; font-weight: 600;">
+      <a href="/parent/safety/" class="parent-action-tile">
         {{ ico.icon('shield', 16) }} Safety Queue
       </a>
-      <a href="/parent/learning-report/?child_id={{ c.user_id }}" style="display: flex; align-items: center; gap: 6px; background: #F8FAFC; border: 1px solid #E2E8F0; padding: 8px 10px; border-radius: 8px; color: #334155; text-decoration: none; font-size: 11px; font-weight: 600;">
+      <a href="/parent/learning-report/?child_id={{ c.user_id }}" class="parent-action-tile">
         {{ ico.icon('book', 16) }} {{ t('learning_report') }}
       </a>
-      <a href="/parent/behavior/?child_id={{ c.user_id }}" style="display: flex; align-items: center; gap: 6px; background: #F8FAFC; border: 1px solid #E2E8F0; padding: 8px 10px; border-radius: 8px; color: #334155; text-decoration: none; font-size: 11px; font-weight: 600;">
+      <a href="/parent/behavior/?child_id={{ c.user_id }}" class="parent-action-tile">
         {{ ico.icon('sparkles', 16) }} {{ t('behaviour') }}
       </a>
     </div>
@@ -146,13 +193,13 @@
     </form>
   </article>
   {% else %}
-  <div class="parent-empty" style="text-align: center; padding: 48px 20px; background: #FFFFFF; border: 1px dashed #CBD5E1; border-radius: 18px;">
-    <div style="width: 58px; height: 58px; margin: 0 auto 12px; border-radius: 16px; background: #ECFDF5; color: #047857; display: grid; place-items: center;">
+  <div class="parent-empty parent-empty-box">
+    <div class="parent-empty-icon">
       {{ ico.icon('user', 32) }}
     </div>
     <h3 style="font-size: 18px; margin: 0 0 6px;">{{ t('no_children') }}</h3>
     <p style="color: #64748B; font-size: 13px; margin: 0 0 16px;">Link or create a child account to enable real-time AI safety monitoring.</p>
-    <a class="btn primary" href="/parent/create-child/" style="background: #0F766E; color: #fff;">Create Child Account</a>
+    <a class="btn primary" href="/parent/create-child/">Create Child Account</a>
   </div>
   {% endfor %}
 </div>

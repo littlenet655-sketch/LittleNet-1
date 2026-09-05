@@ -1,11 +1,11 @@
-# LittleNet — Phase II Major Project Submission Package
+# LittleNet  -  Phase II Major Project Submission Package
 **Department of Computer Science & Engineering (Data Science)**  
-**Adichunchanagiri Institute of Technology, Chikkamagaluru – 577102**
+**Adichunchanagiri Institute of Technology, Chikkamagaluru  -  577102**
 
 ---
 
 ### 👥 Project Credentials & Team Info
-* **Project Title**: LittleNet – Child Centric Social Platform with AI-based Content Filtering
+* **Project Title**: LittleNet  -  Child Centric Social Platform with AI-based Content Filtering
 * **Group Number**: `DSPG06`
 * **Team Members**:
   - ATHMIYA D (`4AI23CD004`)

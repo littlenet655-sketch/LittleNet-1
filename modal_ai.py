@@ -35,9 +35,7 @@ image = (
         "torchvision>=0.17,<0.23",
         "transformers>=4.45,<5",
         "detoxify==0.5.2",
-        "ultralytics>=8.3,<9",
         "nudenet>=3.4,<4",
-        "faster-whisper>=1.1,<2",
         "deepface>=0.0.93,<0.1",
         "tensorflow>=2.16,<2.19",
         "tf-keras>=2.16,<2.19",
@@ -59,7 +57,7 @@ image = (
             "TRANSFORMERS_CACHE": "/cache/huggingface/transformers",
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
-            "YOLO_CONFIG_DIR": "/cache/ultralytics",
+            "LITTLENET_DEPLOY_VERSION": "3",
         }
     )
     .add_local_dir(
@@ -130,12 +128,6 @@ def warm_models():
             results[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
     run("detoxify", lambda: __import__("detoxify").Detoxify("original"))
-
-    def whisper():
-        from faster_whisper import WhisperModel
-        WhisperModel("tiny", device="cuda", compute_type="float16")
-
-    run("faster_whisper", whisper)
     run("nudenet", lambda: __import__("nudenet").NudeDetector())
 
     def clip():
@@ -150,12 +142,6 @@ def warm_models():
         pipeline("image-classification", model="Falconsai/nsfw_image_detection", device=0)
 
     run("falconsai_nsfw", falconsai)
-
-    def yolo():
-        from ultralytics import YOLO
-        YOLO("yolov8n.pt")
-
-    run("yolo", yolo)
 
     def face():
         from deepface import DeepFace

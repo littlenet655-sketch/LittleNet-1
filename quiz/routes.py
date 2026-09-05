@@ -1,15 +1,17 @@
-from flask import Blueprint,render_template,request,redirect,session
+from flask import Blueprint,render_template,request,redirect,session,jsonify
+from extensions import limiter
 from decorators import child_required,parent_required
-from quiz.service import quizzes,reset,learning_challenges,learning_points
+from quiz.service import quizzes,reset,learning_challenges,learning_points,next_feed_quiz,record_feed_answer
 from parent.service import owns,children
 from database.connection import fetch_one,fetch_all,execute
 
 quiz_bp=Blueprint('quiz',__name__,template_folder='templates')
 
 @quiz_bp.route('/quiz/start/')
+@limiter.limit('45 per minute')
 @child_required
 def start():
-    qs=quizzes(session['user_id'],5)
+    qs=quizzes(session['user_id'],2)
     if not qs:return render_template('quiz_result.html',error='No age-group questions available yet.')
     session['quiz_ids']=[q['quiz_id'] for q in qs];session['quiz_index']=0;session['quiz_score']=0
     return render_template('quiz_card.html',quiz=qs[0],question_number=1,total_questions=len(qs))
@@ -56,6 +58,84 @@ def report():
 @parent_required
 def save_settings_alias():return settings()
 
+# ── Feed Quiz API ─────────────────────────────────────────────────────────────
+
+@quiz_bp.route('/api/feed-quiz/')
+@limiter.limit('45 per minute')
+@child_required
+def api_feed_quiz():
+    """Return ONE unseen quiz question for the feed quiz card."""
+    q = next_feed_quiz(session['user_id'])
+    if not q:
+        return jsonify(available=False)
+    return jsonify(
+        available=True,
+        quiz_id=q['quiz_id'],
+        category=q.get('category',''),
+        question=q['question'],
+        options=[q['option_a'],q['option_b'],q['option_c'],q['option_d']],
+    )
+
+@quiz_bp.route('/api/feed-quiz/answer/',methods=['POST'])
+@limiter.limit('45 per minute')
+@child_required
+def api_feed_quiz_answer():
+    """Submit answer for an inline feed quiz. Returns correctness + XP."""
+    data = request.get_json(silent=True) or {}
+    try: quiz_id = int(data.get('quiz_id',0))
+    except: return jsonify(error='invalid quiz_id'),400
+    answer = str(data.get('answer','')).strip()
+    if not answer: return jsonify(error='answer required'),400
+    res = record_feed_answer(session['user_id'], quiz_id, answer)
+    is_correct = res[0]
+    correct_answer = res[1]
+    xp = res[2]
+    explanation = res[3] if len(res) > 3 else ""
+    # Streak: count consecutive correct feed answers in session
+    streak = session.get('quiz_streak', 0)
+    if is_correct:
+        streak += 1
+        bonus_xp = 50 if streak > 0 and streak % 3 == 0 else 0
+    else:
+        streak = 0
+        bonus_xp = 0
+    session['quiz_streak'] = streak
+    if bonus_xp:
+        from database.connection import execute as db_exec
+        db_exec(
+            '''INSERT INTO child_xp(child_id,xp) VALUES(%s,%s)
+               ON CONFLICT(child_id) DO UPDATE SET xp=child_xp.xp+EXCLUDED.xp,updated_at=NOW()''',
+            (session['user_id'], bonus_xp)
+        )
+    return jsonify(
+        correct=is_correct,
+        correct_answer=correct_answer,
+        xp=xp,
+        bonus_xp=bonus_xp,
+        streak=streak,
+        explanation=explanation,
+    )
+
+@quiz_bp.route('/api/feed-quiz/explain/<int:quiz_id>/', methods=['POST', 'GET'])
+@limiter.limit('45 per minute')
+@child_required
+def api_feed_quiz_explain(quiz_id):
+    """Provides kid-friendly explanation for an incorrect answer."""
+    selected = (request.args.get('selected') or (request.get_json(silent=True) or {}).get('selected') or '').strip()
+    q = fetch_one('SELECT * FROM quizzes WHERE quiz_id=%s', (quiz_id,))
+    if not q:
+        return jsonify(error='quiz not found'), 404
+    from services.ai import get_ai_client
+    client = get_ai_client()
+    from quiz.service import age_group
+    g = age_group(session['user_id'])
+    res = client.explain_quiz_mistake(q['question'], selected or 'Selected option', q['correct_answer'], g)
+    return jsonify(
+        explanation=res.kid_friendly_explanation,
+        encouragement=res.encouragement,
+        fun_fact=res.fun_fact
+    )
+
 @quiz_bp.route('/learning/')
 @child_required
 def learning():
@@ -64,17 +144,38 @@ def learning():
 @quiz_bp.route('/learning/challenge/<int:challenge_id>/',methods=['POST'])
 @child_required
 def complete_challenge(challenge_id):
+    is_ajax = request.is_json or request.headers.get('X-Requested-With') == 'XMLHttpRequest' or 'application/json' in request.headers.get('Accept', '')
     q=fetch_one('SELECT * FROM learning_challenges WHERE challenge_id=%s AND active=TRUE',(challenge_id,))
-    if not q:return ('Challenge not found',404)
+    if not q:
+        return (jsonify(error='Challenge not found'), 404) if is_ajax else ('Challenge not found',404)
     allowed={x['challenge_id'] for x in learning_challenges(session['user_id'])}
-    if challenge_id not in allowed:return ('Challenge not available for this age group',403)
-    response=(request.form.get('response') or '').strip();expected=(q.get('expected_answer') or '').strip()
+    if challenge_id not in allowed:
+        return (jsonify(error='Challenge not available for this age group'), 403) if is_ajax else ('Challenge not available for this age group',403)
+    data = request.get_json(silent=True) or request.form
+    response=(data.get('response') or '').strip();expected=(q.get('expected_answer') or '').strip()
     correct=True if not expected else response.casefold()==expected.casefold()
     points=q['points'] if correct else 0
-    execute('''INSERT INTO learning_challenge_attempts(child_id,challenge_id,response,completed,points_awarded)
-      VALUES(%s,%s,%s,TRUE,%s)
-      ON CONFLICT(child_id,challenge_id) DO UPDATE SET response=EXCLUDED.response,completed=TRUE,points_awarded=EXCLUDED.points_awarded,completed_at=NOW()''',
-      (session['user_id'],challenge_id,response,points))
+    if correct:
+        execute('''INSERT INTO learning_challenge_attempts(child_id,challenge_id,response,completed,points_awarded)
+          VALUES(%s,%s,%s,TRUE,%s)
+          ON CONFLICT(child_id,challenge_id) DO UPDATE SET response=EXCLUDED.response,completed=TRUE,points_awarded=EXCLUDED.points_awarded,completed_at=NOW()''',
+          (session['user_id'],challenge_id,response,points))
+    else:
+        execute('''INSERT INTO learning_challenge_attempts(child_id,challenge_id,response,completed,points_awarded)
+          VALUES(%s,%s,%s,FALSE,0)
+          ON CONFLICT(child_id,challenge_id) DO UPDATE SET response=EXCLUDED.response,completed=FALSE,points_awarded=0,completed_at=NOW()''',
+          (session['user_id'],challenge_id,response))
+    new_total = learning_points(session['user_id'])
+    if is_ajax:
+        return jsonify({
+            'ok': True,
+            'correct': correct,
+            'points_awarded': points,
+            'new_total_points': new_total,
+            'challenge_id': challenge_id,
+            'title': q['title'],
+            'message': f"Well done! You earned +{points} pts!" if correct else "Incorrect answer. Check the prompt and try again!"
+        })
     return redirect('/learning/')
 
 @quiz_bp.route('/parent/learning-report/')

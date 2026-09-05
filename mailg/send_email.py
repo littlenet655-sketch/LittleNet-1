@@ -2,8 +2,15 @@ import os, sys, smtplib
 from email.mime.text import MIMEText
 
 def send_email(receiver, subject, body):
-    email = os.getenv('MAIL_EMAIL')
-    password = os.getenv('MAIL_PASSWORD')
+    host = os.getenv('SMTP_HOST') or 'smtp.gmail.com'
+    try:
+        port = int(os.getenv('SMTP_PORT', '587'))
+    except (ValueError, TypeError):
+        port = 587
+    email = os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')
+    password = os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')
+    use_tls = os.getenv('SMTP_USE_TLS', 'true').lower() in ('1', 'true', 'yes')
+
     if not email or not password:
         safe_subject = str(subject).encode('ascii', errors='replace').decode('ascii')
         try:
@@ -16,8 +23,9 @@ def send_email(receiver, subject, body):
         msg['Subject'] = subject
         msg['From'] = f"LittleNet Safety <{email}>"
         msg['To'] = receiver
-        with smtplib.SMTP('smtp.gmail.com', 587, timeout=15) as s:
-            s.starttls()
+        with smtplib.SMTP(host, port, timeout=15) as s:
+            if use_tls:
+                s.starttls()
             s.login(email, password)
             s.send_message(msg)
         return True

@@ -9,7 +9,7 @@ def _runtime_device():
         if requested=='cpu':return 'cpu'
         return 'cuda' if torch.cuda.is_available() else 'cpu'
     except Exception:return 'cpu'
-_CLIP=None;_CLIP_PROC=None;_YOLO=None;_NUDE=None;_NSFW=None;_OPENNSFW2=None;_EXTRA_HF=None
+_CLIP=None;_CLIP_PROC=None;_NUDE=None;_NSFW=None;_OPENNSFW2=None;_EXTRA_HF=None
 
 def _clip_score_impl(image_path):
     global _CLIP,_CLIP_PROC
@@ -64,19 +64,6 @@ def _extra_hf_nsfw(path):
         if any(k in label for k in ('nsfw','porn','sexual','adult','unsafe')):score=max(score,float(row.get('score',0) or 0))
     return score
 
-def _yolo_scores(path):
-    global _YOLO
-    from ultralytics import YOLO
-    if _YOLO is None:_YOLO=YOLO('yolov8n.pt')
-    result=_YOLO(path,verbose=False,device=0 if _runtime_device()=='cuda' else 'cpu')[0]
-    defaults={'knife','scissors','gun','pistol','rifle','weapon'}
-    custom={x.strip().lower() for x in os.getenv('LITTLENET_DANGEROUS_OBJECTS','').split(',') if x.strip()}
-    dangerous=defaults|custom;weapon=0.0;hits=[]
-    for b in result.boxes:
-        label=str(result.names[int(b.cls[0])]).lower();conf=float(b.conf[0])
-        if label in dangerous:weapon=max(weapon,conf);hits.append({'label':label,'score':conf})
-    return weapon,hits
-
 def check_image(path):
     from .remote_client import enabled,moderate_file
     if enabled():
@@ -90,9 +77,6 @@ def check_image(path):
     c=_clip_score(path)
     if c:ran+=1;adult=max(adult,c['adult']);sexual=max(sexual,c.get('sexual',0));violence=max(violence,c['violence']);weapon=max(weapon,c.get('weapon',0));general=max(general,c['general']);details['clip']=c
     else:errors.append('clip')
-    try:
-        y,h=timed_call('yolo',lambda:_yolo_scores(path),timeout_seconds('yolo',90));ran+=1;weapon=max(weapon,float(y));details['yolo_hits']=h
-    except Exception as exc:errors.append('yolo_timeout' if 'timeout' in str(exc) else 'yolo')
     if env_flag('LITTLENET_ENABLE_OPENNSFW2'):
         try:
             s=float(timed_call('opennsfw2',lambda:_opennsfw2(path),timeout_seconds('opennsfw2',90)));ran+=1;adult=max(adult,s);sexual=max(sexual,s);details['opennsfw2']=s
@@ -113,6 +97,9 @@ def video_duration_seconds(path):
         except Exception:return 0
 
 def _audio_from_video(path):
+    import shutil
+    if not shutil.which('ffmpeg'):
+        return None
     fd,out=tempfile.mkstemp(suffix='.wav');os.close(fd)
     try:subprocess.run(['ffmpeg','-y','-loglevel','error','-i',path,'-vn','-ac','1','-ar','16000',out],check=True,timeout=90);return out
     except Exception:

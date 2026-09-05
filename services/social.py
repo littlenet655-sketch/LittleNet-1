@@ -33,7 +33,7 @@ def visible_posts(viewer_id, reels=False, limit=20, offset=0):
       (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,
       (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count
       FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
-      WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=%s
+      WHERE ((p.moderation_status='ALLOWED' AND p.is_safe=TRUE) OR (p.child_id=%s AND p.moderation_status='REVIEW')) AND p.is_story=FALSE AND p.is_reel=%s
         AND p.content_category = ANY(%s)
         AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
         AND (p.child_id=%s OR p.child_id IN (SELECT following_child_id FROM followers WHERE child_id=%s AND approved=TRUE))
@@ -46,7 +46,7 @@ def visible_posts(viewer_id, reels=False, limit=20, offset=0):
           UNION SELECT interest_name FROM child_interests WHERE child_id=%s AND approved=TRUE
           UNION SELECT ambition_name FROM child_ambitions WHERE child_id=%s AND approved=TRUE) THEN 0 ELSE 1 END, p.created_at DESC
       LIMIT %s OFFSET %s''',
-      (reels,cats,age_group,age_group,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,limit,offset))
+      (viewer_id,reels,cats,age_group,age_group,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,limit,offset))
 
 
 def active_stories(viewer_id):
@@ -113,15 +113,45 @@ def parent_notify(child_id,kind,message,url=None):
 
 def post_visible_to(viewer_id,post_id):
     cats=effective_categories(viewer_id);age_group=_age_group(viewer_id)
-    return fetch_one("""SELECT p.* FROM posts p WHERE p.post_id=%s AND p.moderation_status='ALLOWED' AND p.is_safe=TRUE
+    return fetch_one("""SELECT p.* FROM posts p WHERE p.post_id=%s AND (p.moderation_status='ALLOWED' OR (p.child_id=%s AND p.moderation_status='REVIEW')) AND p.is_safe=TRUE
       AND p.content_category = ANY(%s) AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
       AND (p.child_id=%s OR EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE))
       AND p.child_id NOT IN (
         SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
         UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
-        UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)""",(post_id,cats,age_group,age_group,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id))
+        UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)""",(post_id,viewer_id,cats,age_group,age_group,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id))
 
 def visible_profile_posts(viewer_id,target_id,limit=60):
+    if viewer_id == target_id:
+        return fetch_all("""SELECT p.* FROM posts p WHERE p.child_id=%s AND p.is_story=FALSE
+          AND ((p.moderation_status='ALLOWED' AND p.is_safe=TRUE) OR p.moderation_status='REVIEW')
+          ORDER BY p.created_at DESC LIMIT %s""",(target_id,limit))
     rows=fetch_all("""SELECT p.* FROM posts p WHERE p.child_id=%s AND p.is_story=FALSE
       AND p.moderation_status='ALLOWED' AND p.is_safe=TRUE ORDER BY p.created_at DESC LIMIT %s""",(target_id,limit))
     return [p for p in rows if post_visible_to(viewer_id,p['post_id'])]
+
+def is_post_shareable_to(post_id, sender_id, receiver_id):
+    """
+    Verifies that a post is safe, approved, and eligible to be shared with a recipient.
+    Guarantees that direct messaging cannot bypass recipient's age group or parental category controls.
+    """
+    if not can_interact(sender_id, receiver_id):
+        return False, "Approved connection required"
+    p_sender = post_visible_to(sender_id, post_id)
+    if not p_sender:
+        return False, "Post unavailable"
+    if p_sender.get('moderation_status') != 'ALLOWED' or not p_sender.get('is_safe'):
+        return False, "Post not approved for sharing"
+    
+    # Check recipient category controls
+    cats = effective_categories(receiver_id)
+    if p_sender.get('content_category') not in cats:
+        return False, "Post category restricted by recipient's parent controls"
+    
+    # Check recipient age group suitability
+    recip_age = _age_group(receiver_id)
+    post_age = p_sender.get('audience_age_group')
+    if post_age and post_age != 'ALL' and recip_age and post_age != recip_age:
+        return False, "Post not suitable for recipient's age group"
+        
+    return True, "OK"

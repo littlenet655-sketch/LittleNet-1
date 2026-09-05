@@ -1,4 +1,5 @@
 from flask import Blueprint,render_template,request,redirect,session,jsonify
+from extensions import limiter
 from decorators import parent_required
 from parent.service import children,owns,pending_follows
 from database.connection import fetch_one,fetch_all,execute,get_db_connection
@@ -28,8 +29,84 @@ def dashboard():
             FROM child_quiz_attempts WHERE child_id=%s AND attempted_at>=NOW()-INTERVAL '7 days'""",(cid,)) or {'attempted':0,'correct':0}
         attempted=int(quiz.get('attempted') or 0);correct=int(quiz.get('correct') or 0)
         k['quiz_7d']={'attempted':attempted,'correct':correct,'accuracy':round(correct*100/attempted) if attempted else 0}
+    parent_user = fetch_one("SELECT email FROM users WHERE user_id=%s", (session['user_id'],))
+    p_email = (parent_user.get('email') or '').lower() if parent_user else ''
+    pending_children = fetch_all("""
+        SELECT pcm.approval_token, pcm.verification_token, pcm.child_id, u.username, u.full_name, u.created_at
+        FROM parent_child_map pcm
+        JOIN users u ON u.user_id = pcm.child_id
+        WHERE (pcm.parent_id = %s OR LOWER(pcm.parent_email) = %s)
+          AND pcm.approved = FALSE
+          AND u.account_status = 'PENDING_APPROVAL'
+          AND pcm.approval_status <> 'PENDING_EMAIL_CONFIRMATION'
+        ORDER BY u.created_at DESC
+    """, (session['user_id'], p_email))
+    awaiting_email_confirmation = fetch_all("""
+        SELECT pcm.child_id, u.username, u.full_name, u.created_at
+        FROM parent_child_map pcm
+        JOIN users u ON u.user_id = pcm.child_id
+        WHERE pcm.parent_id = %s
+          AND pcm.approved = FALSE
+          AND pcm.approval_status = 'PENDING_EMAIL_CONFIRMATION'
+        ORDER BY u.created_at DESC
+    """, (session['user_id'],))
     unread=(fetch_one('SELECT COUNT(*) n FROM parent_notifications WHERE parent_id=%s AND is_read=FALSE',(session['user_id'],)) or {'n':0})['n']
-    return render_template('parent_dashboard.html',children=kids,pending=pending_follows(session['user_id']),unread=unread)
+    return render_template('parent_dashboard.html',children=kids,pending=pending_follows(session['user_id']),unread=unread,pending_children=pending_children,awaiting_email_confirmation=awaiting_email_confirmation)
+
+@parent_bp.route('/parent/quick-approve-child/', methods=['POST'])
+@parent_required
+def quick_approve_child():
+    try:
+        child_id = int(request.form.get('child_id', 0))
+    except (TypeError, ValueError):
+        return ('Invalid child', 400)
+    action = request.form.get('action', 'approve')
+    parent_id = session['user_id']
+    # Must be the parent this child actually named (by account link or by the
+    # parent_email they registered with) -- never let any logged-in parent
+    # approve/activate an arbitrary child_id.
+    parent_row = fetch_one('SELECT email FROM users WHERE user_id=%s', (parent_id,))
+    parent_email = (parent_row.get('email') or '').lower() if parent_row else ''
+    mapping = fetch_one(
+        "SELECT map_id,approval_status FROM parent_child_map WHERE child_id=%s AND approved=FALSE AND (parent_id=%s OR LOWER(parent_email)=%s)",
+        (child_id, parent_id, parent_email)
+    )
+    if not mapping:
+        return ('Forbidden: this child is not linked to your account', 403)
+    if mapping.get('approval_status') == 'PENDING_EMAIL_CONFIRMATION':
+        # This child was created by a parent and requires the emailed
+        # confirmation link, not this legacy quick-approve shortcut.
+        return ('This account requires email confirmation. Check your inbox for the confirmation link.', 403)
+    if action == 'approve':
+        execute("UPDATE users SET account_status = 'ACTIVE' WHERE user_id = %s", (child_id,))
+        execute("""
+            UPDATE parent_child_map 
+            SET approved = TRUE, 
+                approved_at = NOW(), 
+                approval_status = 'APPROVED',
+                parent_id = %s,
+                verified_parent_id = COALESCE(verified_parent_id, %s)
+            WHERE child_id = %s
+        """, (parent_id, parent_id, child_id))
+        execute("""
+            INSERT INTO parent_safety_settings(child_id, parent_id, safety_level)
+            VALUES(%s, %s, 'STRICT')
+            ON CONFLICT (child_id) DO UPDATE SET parent_id = EXCLUDED.parent_id
+        """, (child_id, parent_id))
+        execute("""
+            INSERT INTO child_time_limits(child_id, daily_limit_minutes, strict_mode)
+            VALUES(%s, 60, TRUE)
+            ON CONFLICT (child_id) DO NOTHING
+        """, (child_id,))
+        execute("""
+            INSERT INTO parent_control_settings(child_id, parent_id, allow_reels, allow_stories, allow_messaging, allow_posting, allow_discover, educational_only_feed)
+            VALUES(%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE)
+            ON CONFLICT (child_id) DO NOTHING
+        """, (child_id, parent_id))
+    else:
+        execute("UPDATE users SET account_status = 'REJECTED' WHERE user_id = %s", (child_id,))
+        execute("UPDATE parent_child_map SET approval_status = 'DECLINED' WHERE child_id = %s", (child_id,))
+    return redirect('/parent/dashboard/')
 @parent_bp.route('/parent/create-child/',methods=['GET','POST'])
 @parent_required
 def create_child():
@@ -39,11 +116,43 @@ def create_child():
         if decision.action!='ALLOW':
             return render_template('parent_create_child.html',error='Child profile text could not be published under LittleNet safety rules.'),400
         try:
-            child_id=create_child_by_parent(session['user_id'],request.form)
-            return redirect(f'/parent/controls/?child_id={child_id}')
+            child_id,_token=create_child_by_parent(session['user_id'],request.form)
+            child=fetch_one('SELECT full_name FROM users WHERE user_id=%s',(child_id,)) or {'full_name':'Your child'}
+            return render_template(
+                'approval_success.html',
+                title='Check your email to activate the account',
+                message=f"We created {child['full_name']}'s LittleNet account, but it will not work until you confirm it. Open the confirmation email we just sent to your parent account's inbox and tap Confirm & activate account.",
+                button_url='/parent/dashboard/',
+                button_text='Go to Parent Dashboard'
+            )
         except Exception:
             return render_template('parent_create_child.html',error='Child account could not be created. Check duplicate email/username and all required values.'),400
     return render_template('parent_create_child.html')
+
+@parent_bp.route('/parent/confirm-child/<token>/', methods=['GET'])
+@parent_required
+def confirm_child(token):
+    mapping=fetch_one(
+        "SELECT map_id,child_id FROM parent_child_map WHERE approval_token=%s AND parent_id=%s AND approved=FALSE AND approval_status='PENDING_EMAIL_CONFIRMATION'",
+        (token, session['user_id'])
+    )
+    if not mapping:
+        return render_template(
+            'approval_success.html', is_error=True,
+            title='Link invalid or already used',
+            message='This confirmation link is invalid, expired, or the account is already active.',
+            button_url='/parent/dashboard/', button_text='Go to Parent Dashboard'
+        ), 400
+    execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s", (mapping['child_id'],))
+    execute("UPDATE parent_child_map SET approved=TRUE,approved_at=NOW(),is_token_used=TRUE,approval_status='APPROVED' WHERE map_id=%s", (mapping['map_id'],))
+    log(mapping['child_id'],'ACCOUNT_EMAIL_CONFIRMED',{'confirmed_by':session['user_id']})
+    child=fetch_one('SELECT full_name FROM users WHERE user_id=%s',(mapping['child_id'],)) or {'full_name':'Your child'}
+    return render_template(
+        'approval_success.html', is_verified=True,
+        title='Account activated!',
+        message=f"{child['full_name']}'s LittleNet account is now active and ready to log in under your Parent Mode controls.",
+        button_url='/parent/dashboard/', button_text='Go to Parent Dashboard'
+    )
 
 @parent_bp.route('/parent/follow-requests/')
 @parent_required
@@ -116,6 +225,7 @@ def review(event_id):
     finally:conn.close()
 
 @parent_bp.route('/parent/controls/',methods=['GET','POST'])
+@limiter.limit('30 per minute')
 @parent_required
 def parent_controls():
     kids=children(session['user_id']);cid=int(request.values.get('child_id') or (kids[0]['user_id'] if kids else 0))
@@ -239,3 +349,77 @@ def reject_follow_compat():
     except:return jsonify(error='invalid ids'),400
     if not owns(session['user_id'],a):return jsonify(error='forbidden'),403
     execute('DELETE FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=FALSE',(a,b));return jsonify(ok=True)
+
+@parent_bp.route('/parent/settings/', methods=['GET', 'POST'])
+@parent_required
+def parent_settings():
+    kids = children(session['user_id'])
+    if not kids:
+        return render_template('parent_settings.html', children=[], child=None, error='No children linked to this parent account.')
+    
+    try:
+        cid = int(request.values.get('child_id') or kids[0]['user_id'])
+    except (TypeError, ValueError):
+        cid = kids[0]['user_id']
+        
+    if not owns(session['user_id'], cid):
+        return ('Forbidden', 403)
+        
+    child = fetch_one("SELECT user_id, full_name, username, account_status FROM users WHERE user_id=%s", (cid,)) or {'user_id': cid, 'full_name': 'Child', 'account_status': 'ACTIVE'}
+    
+    success_msg = None
+    error_msg = None
+    
+    if request.method == 'POST':
+        # 1. Emergency Pause / Account Status
+        is_paused = 'pause_account' in request.form
+        new_status = 'SUSPENDED' if is_paused else 'ACTIVE'
+        execute("UPDATE users SET account_status=%s WHERE user_id=%s", (new_status, cid))
+        child['account_status'] = new_status
+        
+        # 2. Daily screen time limit
+        try:
+            limit_mins = int(request.form.get('daily_limit', 60))
+            strict = 'strict_mode' in request.form
+            if 1 <= limit_mins <= 1440:
+                execute('''INSERT INTO child_time_limits(child_id, daily_limit_minutes, strict_mode)
+                           VALUES(%s,%s,%s)
+                           ON CONFLICT(child_id) DO UPDATE SET daily_limit_minutes=EXCLUDED.daily_limit_minutes, strict_mode=EXCLUDED.strict_mode, updated_at=NOW()''',
+                        (cid, limit_mins, strict))
+        except Exception:
+            pass
+            
+        # 3. AI Safety Level
+        lvl = request.form.get('safety_level', 'STRICT').upper()
+        if lvl in {'STANDARD', 'STRICT', 'VERY_STRICT'}:
+            execute('''INSERT INTO parent_safety_settings(child_id, parent_id, safety_level)
+                       VALUES(%s,%s,%s)
+                       ON CONFLICT(child_id) DO UPDATE SET safety_level=EXCLUDED.safety_level, updated_at=NOW()''',
+                    (cid, session['user_id'], lvl))
+                    
+        # 4. Feature Permissions & Quiet Hours
+        try:
+            save_controls(session['user_id'], cid, request.form)
+            success_msg = "Parent settings saved and enforced successfully!"
+            log(cid, 'PARENT_SETTINGS_UPDATED', {'parent_id': session['user_id'], 'paused': is_paused, 'limit': request.form.get('daily_limit'), 'safety': lvl})
+            notify(cid, 'PARENT_CONTROLS', 'Parent Mode updated your safety controls & limits', '/child/dashboard/', session['user_id'])
+        except Exception as e:
+            error_msg = str(e)
+            
+    controls = controls_for_child(cid)
+    limit = fetch_one('SELECT * FROM child_time_limits WHERE child_id=%s', (cid,)) or {'daily_limit_minutes': 60, 'strict_mode': True}
+    safety = fetch_one('SELECT safety_level FROM parent_safety_settings WHERE child_id=%s', (cid,)) or {'safety_level': 'STRICT'}
+    
+    return render_template(
+        'parent_settings.html',
+        children=kids,
+        child_id=cid,
+        child=child,
+        controls=controls,
+        limit=limit,
+        safety=safety,
+        success=success_msg,
+        error=error_msg,
+        categories=SAFE_CATEGORIES
+    )
+

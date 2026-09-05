@@ -1,5 +1,7 @@
 import os, sys, uuid, random, io
 from datetime import datetime, timedelta
+sys.stdout.reconfigure(encoding='utf-8')
+sys.stderr.reconfigure(encoding='utf-8')
 sys.path.insert(0, os.path.abspath('.'))
 from dotenv import load_dotenv
 load_dotenv('.env')
@@ -14,6 +16,7 @@ os.makedirs("uploads/stories", exist_ok=True)
 os.makedirs("uploads/profile_pictures", exist_ok=True)
 
 print("🚀 Seeding Authentic Instagram Demo Content for LittleNet...")
+
 
 # Demo accounts specification
 DEMO_USERS = [

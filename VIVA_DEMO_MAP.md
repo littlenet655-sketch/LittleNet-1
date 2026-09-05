@@ -1,4 +1,4 @@
-# LittleNet — What to Show in Viva
+# LittleNet  -  What to Show in Viva
 
 Use this order so the demo follows the project report rather than jumping between features.
 
@@ -30,5 +30,5 @@ Use this order so the demo follows the project report rather than jumping betwee
 1. **Safety is before visibility:** child-facing queries require `ALLOWED` and `is_safe`.
 2. **No stranger social graph:** follows and DMs are parent-approved; Discover is network/school scoped.
 3. **Multimodal:** image/video/audio/text are all covered; video includes both frames and audio.
-4. **Parent control is server-side:** hiding a button is not the control—direct URLs are also denied.
+4. **Parent control is server-side:** hiding a button is not the control - direct URLs are also denied.
 5. **AI failure does not silently allow content:** partial failures go to REVIEW; total safety outage blocks.

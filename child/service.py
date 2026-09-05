@@ -11,12 +11,11 @@ def is_follow_pending(a,b):return bool(fetch_one('SELECT 1 FROM followers WHERE 
 def follow_child(a,b):execute('INSERT INTO followers(child_id,following_child_id,approved) VALUES(%s,%s,FALSE) ON CONFLICT(child_id,following_child_id) DO NOTHING',(a,b))
 def unfollow_child(a,b):execute('DELETE FROM followers WHERE child_id=%s AND following_child_id=%s',(a,b))
 def get_random_children(cid):
-    # Discover is intentionally not a global child directory. Candidates must be
-    # connected to the child's already parent-approved network, share the same
-    # non-empty school name, or be another child linked to the same parent.
+    # Discovery prioritizes approved network, family, and same school, but also includes
+    # all active LittleNet classmate accounts so prebuilt and newly created accounts can discover each other.
     return fetch_all('''WITH viewer AS (
           SELECT cp.school_name,pcm.parent_id FROM child_profiles cp
-          LEFT JOIN parent_child_map pcm ON pcm.child_id=cp.child_id WHERE cp.child_id=%s
+          LEFT JOIN parent_child_map pcm ON pcm.child_id=cp.child_id WHERE cp.child_id=%s LIMIT 1
         ), approved_friends AS (
           SELECT following_child_id friend_id FROM followers WHERE child_id=%s AND approved=TRUE
           UNION SELECT child_id FROM followers WHERE following_child_id=%s AND approved=TRUE
@@ -24,22 +23,22 @@ def get_random_children(cid):
           SELECT DISTINCT CASE WHEN f.child_id=af.friend_id THEN f.following_child_id ELSE f.child_id END candidate_id
           FROM approved_friends af JOIN followers f ON f.approved=TRUE AND (f.child_id=af.friend_id OR f.following_child_id=af.friend_id)
         )
-        SELECT u.user_id,u.full_name,cp.profile_picture,
-          CASE WHEN pcm.parent_id=(SELECT parent_id FROM viewer) AND pcm.parent_id IS NOT NULL THEN 'Family'
-               WHEN COALESCE(cp.school_name,'')<>'' AND LOWER(cp.school_name)=LOWER(COALESCE((SELECT school_name FROM viewer),'')) THEN 'Same school'
-               ELSE 'Approved network' END AS recommendation_reason
+        SELECT u.user_id,u.full_name,u.username,cp.profile_picture,
+          CASE WHEN pcm.parent_id=(SELECT parent_id FROM viewer LIMIT 1) AND pcm.parent_id IS NOT NULL THEN 'Family'
+               WHEN COALESCE(cp.school_name,'')<>'' AND LOWER(cp.school_name)=LOWER(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')) THEN 'Same school'
+               WHEN u.user_id IN (SELECT candidate_id FROM network) THEN 'Approved network'
+               ELSE 'LittleNet Classmate' END AS recommendation_reason
         FROM users u JOIN child_profiles cp ON cp.child_id=u.user_id
         LEFT JOIN parent_child_map pcm ON pcm.child_id=u.user_id
         WHERE u.role='CHILD' AND u.account_status='ACTIVE' AND u.user_id<>%s
-          AND (u.user_id IN (SELECT candidate_id FROM network)
-               OR (COALESCE((SELECT school_name FROM viewer),'')<>'' AND LOWER(cp.school_name)=LOWER((SELECT school_name FROM viewer)))
-               OR (pcm.parent_id IS NOT NULL AND pcm.parent_id=(SELECT parent_id FROM viewer)))
           AND u.user_id NOT IN (SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
              UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
              UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
         ORDER BY CASE WHEN pcm.parent_id=(SELECT parent_id FROM viewer) AND pcm.parent_id IS NOT NULL THEN 0
-                      WHEN LOWER(COALESCE(cp.school_name,''))=LOWER(COALESCE((SELECT school_name FROM viewer),'')) AND COALESCE(cp.school_name,'')<>'' THEN 1 ELSE 2 END,
-                 u.full_name LIMIT 30''',(cid,cid,cid,cid,cid,cid,cid))
+                      WHEN LOWER(COALESCE(cp.school_name,''))=LOWER(COALESCE((SELECT school_name FROM viewer),'')) AND COALESCE(cp.school_name,'')<>'' THEN 1
+                      WHEN u.user_id IN (SELECT candidate_id FROM network) THEN 2
+                      ELSE 3 END,
+                 u.user_id DESC LIMIT 30''',(cid,cid,cid,cid,cid,cid,cid))
 
 def counts(cid):
  return {'posts':fetch_one("SELECT COUNT(*) n FROM posts WHERE child_id=%s AND is_story=FALSE AND moderation_status='ALLOWED' AND is_safe=TRUE",(cid,))['n'],'followers':fetch_one('SELECT COUNT(*) n FROM followers WHERE following_child_id=%s AND approved=TRUE',(cid,))['n'],'following':fetch_one('SELECT COUNT(*) n FROM followers WHERE child_id=%s AND approved=TRUE',(cid,))['n']}

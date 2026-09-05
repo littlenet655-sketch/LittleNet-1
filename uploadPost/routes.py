@@ -10,6 +10,7 @@ from safety.visual_service import video_duration_seconds
 from quiz.service import bump
 from services.audit import log
 from services.controls import SAFE_CATEGORIES, controls_for_child, effective_categories
+from extensions import limiter
 
 upload_bp=Blueprint('upload',__name__,template_folder='templates')
 IMG={'jpg','jpeg','png','webp'};VID={'mp4','mov','avi','mkv','webm'};AUD={'mp3','wav','m4a','ogg','webm'}
@@ -40,6 +41,13 @@ def _merge(*signals):
     return out
 
 def _create(content_type,payload,caption,category,is_story=False,is_reel=False,path=None,music_path=None,music_signals=None,audience_age_group='ALL'):
+    from safety.pii_service import scan_pii
+    if caption and scan_pii(caption)['detected']:
+        from safety.policy import Decision
+        _unlink(path);_unlink(music_path)
+        d=Decision('BLOCK',100.0,'Personal contact or phone number sharing in caption is prohibited')
+        parent_notify(session['user_id'],'CONTENT_BLOCKED',d.reason,'/parent/safety/')
+        return None,d
     cs,_=evaluate(session['user_id'],'TEXT',caption or '')
     ms,_=evaluate(session['user_id'],content_type,payload) if content_type!='TEXT' else (cs,None)
     merged=_merge(cs,ms,music_signals)
@@ -69,6 +77,7 @@ def api_reels():
     return jsonify(visible_posts(session['user_id'],True,10,(page-1)*10))
 
 @upload_bp.route('/child/upload-post/',methods=['GET','POST'])
+@limiter.limit('30 per hour')
 @child_required
 def upload_post(force_kind=None):
     if request.method=='GET' and force_kind is None:return render_template('upload_post.html')
@@ -88,7 +97,7 @@ def upload_post(force_kind=None):
         if md.action=='BLOCK':_unlink(music_path);parent_notify(session['user_id'],'STORY_AUDIO_BLOCKED',md.reason,'/parent/safety/');return jsonify(blocked=True,reason=md.reason),400
     if not file or not file.filename:
         if caption:
-            _,d=_create('TEXT',caption,caption,category,is_story,is_reel,None,music_path,music_signals,audience);return jsonify(success=d.action!='BLOCK',status=d.action),200 if d.action!='BLOCK' else 400
+            _,d=_create('TEXT',caption,caption,category,is_story,is_reel,None,music_path,music_signals,audience);return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
         _unlink(music_path);return jsonify(error='Select media or enter text'),400
     mt,ext=_media_type(file)
     if not mt:_unlink(music_path);return jsonify(error='Unsupported file'),400
@@ -102,7 +111,7 @@ def upload_post(force_kind=None):
     if mt=='VIDEO':
         dur=video_duration_seconds(path);limit=Config.REEL_MAX_SECONDS if is_reel else Config.STORY_MAX_SECONDS if is_story else Config.VIDEO_MAX_SECONDS
         if dur<=0 or dur>limit:_unlink(path);_unlink(music_path);return jsonify(error=f'Video must be under {limit} seconds'),400
-    _,d=_create(mt,path,caption,category,is_story,is_reel,path,music_path,music_signals,audience);return jsonify(success=d.action!='BLOCK',status=d.action),200 if d.action!='BLOCK' else 400
+    _,d=_create(mt,path,caption,category,is_story,is_reel,path,music_path,music_signals,audience);return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
 
 @upload_bp.route('/like/<int:post_id>/',methods=['POST'])
 @child_required
@@ -124,6 +133,11 @@ def comment(post_id):
     if not p:return jsonify(error='not found'),404
     if p['child_id']!=session['user_id'] and not can_interact(session['user_id'],p['child_id']):return jsonify(error='approved connection required'),403
     if not text:return jsonify(error='empty comment'),400
+    from safety.pii_service import scan_pii
+    pii_res = scan_pii(text)
+    if pii_res['detected'] and pii_res['policy_action'] == 'BLOCK':
+        parent_notify(session['user_id'],'COMMENT_BLOCKED','Attempted contact/PII sharing in comment','/parent/safety/')
+        return jsonify(blocked=True,error="Personal contact info cannot be shared in comments."),400
     sig,d=evaluate(session['user_id'],'TEXT',text)
     if d.action=='BLOCK':record(session['user_id'],'COMMENT',None,sig,d);parent_notify(session['user_id'],'COMMENT_BLOCKED',d.reason,'/parent/safety/');return jsonify(blocked=True),400
     row=execute("INSERT INTO comments(post_id,child_id,comment_text,moderation_status) VALUES(%s,%s,%s,%s) RETURNING comment_id",(post_id,session['user_id'],text,'ALLOWED' if d.action=='ALLOW' else 'REVIEW'),returning=True);record(session['user_id'],'COMMENT',row['comment_id'],sig,d)
@@ -182,9 +196,11 @@ def saved_posts_page():
 def my_posts():return render_template('my_posts.html',posts=fetch_all("SELECT * FROM posts WHERE child_id=%s AND is_story=FALSE ORDER BY created_at DESC",(session['user_id'],)))
 
 @upload_bp.route('/api/like/<int:post_id>/',methods=['POST'])
+@limiter.limit('60 per minute')
 @child_required
 def api_like(post_id):return like(post_id)
 @upload_bp.route('/api/comment/<int:post_id>/',methods=['POST'])
+@limiter.limit('30 per minute')
 @child_required
 def api_comment(post_id):return comment(post_id)
 @upload_bp.route('/api/comments/<int:post_id>/')
@@ -205,6 +221,7 @@ def api_post_detail(post_id):
 def api_random_posts():return jsonify(visible_posts(session['user_id'],False,6,0))
 
 @upload_bp.route('/upload-story/',methods=['POST'])
+@limiter.limit('30 per hour')
 @child_required
 def upload_story_alias():
     files=[f for f in request.files.getlist('media') if f and f.filename]
@@ -222,7 +239,7 @@ def upload_story_alias():
         music_copy=None
         if music_master:
             import shutil;ext=music_master.rsplit('.',1)[-1];music_copy=os.path.join('uploads/music',f'{uuid.uuid4().hex}.{ext}');shutil.copy2(music_master,music_copy)
-        _,d=_create('TEXT',caption,caption,category,True,False,None,music_copy,music_signals,audience);_unlink(music_master);return jsonify(success=d.action!='BLOCK',count=1 if d.action!='BLOCK' else 0,status=d.action),200 if d.action!='BLOCK' else 400
+        _,d=_create('TEXT',caption,caption,category,True,False,None,music_copy,music_signals,audience);_unlink(music_master);return jsonify(success=d.action!='BLOCK',count=1 if d.action!='BLOCK' else 0,status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
     import shutil
     results=[]
     try:

@@ -2,51 +2,109 @@
 {% block content %}
 {% import '_icons.html' as ico %}
 
-<div class="ig-explore-page" style="max-width: 470px; margin: 0 auto; padding-bottom: 60px;">
-  <!-- Search Bar (Instagram Style) -->
-  <div class="ig-search-bar-wrap" style="padding: 10px 16px; position: sticky; top: 54px; background: #FFFFFF; z-index: 25; border-bottom: 1px solid #EFEFEF;">
-    <div style="background: #EFEFEF; border-radius: 8px; display: flex; align-items: center; padding: 0 12px; gap: 8px; height: 36px;">
-      <span style="color: #8E8E8E; display: grid; place-items: center;">{{ ico.icon('search', 16) }}</span>
-      <input type="text" class="searchbox" placeholder="Search approved classmates..." aria-label="Search" style="background: transparent; border: 0; outline: none; width: 100%; font-size: 14px; color: #262626;">
+<div class="ig-explore-page">
+  <!-- Search Bar (Instagram Style with Form & Autocomplete) -->
+  <div class="ig-search-bar-wrap">
+    <form method="get" action="/discover/" id="explore-search-form">
+      <div class="ig-search-inner">
+        <span class="ig-search-icon">{{ ico.icon('search', 16) }}</span>
+        <input type="text" 
+               id="discover-search-input"
+               name="q" 
+               value="{{ search_query or '' }}"
+               class="ig-search-input" 
+               placeholder="Search #mrbean, #science, clips, classmates..." 
+               aria-label="Search" 
+               autocomplete="off">
+        {% if search_query %}
+          <a href="/discover/" class="ig-search-clear">✕</a>
+        {% endif %}
+      </div>
+      <!-- Live Search Suggestions Dropdown -->
+      <div id="search-suggestions-dropdown" class="ig-search-dropdown">
+      </div>
+    </form>
+
+    <!-- Trending Hashtags / Category Pills -->
+    <div class="ig-tag-pills">
+      <a href="/discover/" class="ig-tag-pill ig-tag-pill-all {% if not search_query %}active{% endif %}">
+        All
+      </a>
+      <a href="/discover/?q=%23mrbean" class="ig-tag-pill ig-tag-pill-mrbean {% if 'mrbean' in (search_query or '').lower() %}active{% endif %}">
+        🎬 #mrbean
+      </a>
+      <a href="/discover/?q=%23science" class="ig-tag-pill ig-tag-pill-science {% if 'science' in (search_query or '').lower() %}active{% endif %}">
+        🔬 #science
+      </a>
+      <a href="/discover/?q=%23space" class="ig-tag-pill ig-tag-pill-space {% if 'space' in (search_query or '').lower() %}active{% endif %}">
+        🌌 #space
+      </a>
+      <a href="/discover/?q=%23robotics" class="ig-tag-pill ig-tag-pill-robotics {% if 'robotics' in (search_query or '').lower() %}active{% endif %}">
+        🤖 #robotics
+      </a>
+      <a href="/discover/?q=%23coding" class="ig-tag-pill ig-tag-pill-coding {% if 'coding' in (search_query or '').lower() %}active{% endif %}">
+        💻 #coding
+      </a>
     </div>
   </div>
 
-  <!-- Suggested Classmates Section -->
-  <div style="padding: 14px 16px 8px;">
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-      <span style="font-size: 14px; font-weight: 600; color: #262626;">Suggested for you</span>
-      <span style="font-size: 12px; font-weight: 600; color: #0095F6; cursor: pointer;">See All</span>
+  <!-- Search Results Notification Banner -->
+  {% if pii_warning %}
+  <div class="ig-search-banner" style="background: rgba(239, 68, 68, 0.1); border-color: #ef4444; color: #ef4444;">
+    <span>
+      🔒 Searching for phone numbers, addresses, or private contacts is not allowed to keep kids safe.
+    </span>
+    <a href="/discover/" style="color: #3b82f6;">Show Safe Posts</a>
+  </div>
+  {% elif search_query %}
+  <div class="ig-search-banner">
+    <span>
+      Results for <b>{{ search_query }}</b> ({{ recommended_posts|length }} safe items)
+    </span>
+    <a href="/discover/">Show All</a>
+  </div>
+  {% endif %}
+
+  <!-- Suggested Classmates Section (Only when not querying specific hashtags) -->
+  {% if not search_query and children %}
+  <div class="ig-suggested-section">
+    <div class="ig-suggested-header">
+      <span class="ig-suggested-title">Suggested Classmates</span>
+      <span class="ig-suggested-badge">Parent-Approved</span>
     </div>
 
-    <div class="people-cards" style="padding: 0; display: flex; flex-direction: column; gap: 12px;">
-      {% for c in children %}
-      <div class="person-card" style="display: flex; align-items: center; justify-content: space-between; padding: 0; border: 0; background: transparent; margin: 0;">
-        <a href="/child/view-profile/{{ c.user_id }}/" style="display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; min-width: 0; flex: 1;">
-          <div style="width: 44px; height: 44px; border-radius: 50%; padding: 1.5px; background: linear-gradient(45deg, #f09433, #dc2743, #bc1888); flex: none; display: grid; place-items: center;">
-            <img src="/{{ c.profile_picture }}" data-hide-error alt="{{ c.full_name }}" style="width: 40px; height: 40px; border-radius: 50%; object-fit: cover; border: 1.5px solid #fff; background: #fff;">
+    <div class="ig-person-list">
+      {% for c in children[:4] %}
+      <div class="ig-person-row">
+        <a href="/child/view-profile/{{ c.user_id }}/" class="ig-person-link">
+          <div class="ig-person-ring">
+            <img src="/{{ c.profile_picture }}" data-hide-error alt="{{ c.full_name }}" class="ig-person-avatar">
           </div>
-          <div style="min-width: 0; flex: 1;">
-            <b style="display: block; font-size: 13px; color: #262626; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ c.full_name }}</b>
-            <small style="display: block; font-size: 11px; color: #737373; margin-top: 1px;">{{ c.recommendation_reason or 'Parent-approved classmate' }}</small>
+          <div class="ig-person-meta">
+            <b class="ig-person-name">{{ c.full_name }}</b>
+            <small class="ig-person-reason">{{ c.recommendation_reason or 'Classmate' }}</small>
           </div>
         </a>
-        <button class="ig-btn {% if c.is_following or c.is_pending %}ig-btn-secondary{% else %}ig-btn-primary{% endif %}" data-follow="{{ c.user_id }}" style="font-size: 12px; padding: 6px 14px; flex: none;">
+        <button class="ig-btn {% if c.is_following or c.is_pending %}ig-btn-secondary{% else %}ig-btn-primary{% endif %}" data-follow="{{ c.user_id }}">
           {{ 'Following' if c.is_following else 'Requested' if c.is_pending else 'Follow' }}
         </button>
-      </div>
-      {% else %}
-      <div style="text-align: center; padding: 24px 0; color: #737373;">
-        <p style="font-size: 13px;">No new classmates to suggest right now.</p>
       </div>
       {% endfor %}
     </div>
   </div>
+  {% endif %}
 
   <!-- Discover Safe Content Grid -->
-  <div style="margin-top: 16px; border-top: 1px solid #EFEFEF; padding-top: 12px;">
-    <div style="padding: 0 16px 10px;">
-      <span style="font-size: 14px; font-weight: 600; color: #262626;">Explore Safe Posts</span>
+  <div class="ig-grid-section {% if search_query %}is-search{% endif %}">
+    <div class="ig-grid-header">
+      <span class="ig-grid-title">
+        {% if search_query %}Matched Safe Content{% else %}Explore Safe Posts & Clips{% endif %}
+      </span>
+      <span class="ig-grid-badge">
+        🛡️ AI Verified Safe
+      </span>
     </div>
+
     <div class="ig-post-grid">
       {% for p in recommended_posts if recommended_posts is defined and recommended_posts %}
       <a class="ig-grid-tile" href="/post/{{ p.post_id }}/">
@@ -54,13 +112,77 @@
           <img loading="lazy" src="/{{ p.media_path }}" alt="Explore">
         {% elif p.media_type == 'VIDEO' %}
           <video muted playsinline preload="metadata" src="/{{ p.media_path }}"></video>
-          <span class="ig-tile-badge">{{ ico.icon('clips', 14) }}</span>
+          <span class="ig-tile-badge-clip">
+            ▶ CLIP
+          </span>
         {% else %}
-          <div class="ig-text-tile">{{ p.caption }}</div>
+          <div class="ig-text-tile">
+            {{ p.caption[:80] }}
+          </div>
         {% endif %}
       </a>
+      {% else %}
+      <div class="ig-empty-search">
+        <span class="ig-empty-search-icon">🔍</span>
+        <p class="ig-empty-search-title">No posts found matching "{{ search_query }}".</p>
+        <p class="ig-empty-search-desc">Try searching for <a href="/discover/?q=%23mrbean">#mrbean</a>, <a href="/discover/?q=%23science">#science</a>, or <a href="/discover/?q=%23space">#space</a>.</p>
+      </div>
       {% endfor %}
     </div>
   </div>
 </div>
+
+<script>
+(function() {
+  var input = document.getElementById('discover-search-input');
+  var box = document.getElementById('search-suggestions-dropdown');
+  var timer = null;
+
+  if (!input || !box) return;
+
+  input.addEventListener('input', function() {
+    var val = input.value.trim();
+    clearTimeout(timer);
+    if (!val) {
+      box.style.display = 'none';
+      box.innerHTML = '';
+      return;
+    }
+    timer = setTimeout(function() {
+      fetch('/api/search/suggestions/?q=' + encodeURIComponent(val))
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+          if (!data.suggestions || data.suggestions.length === 0) {
+            box.style.display = 'none';
+            box.innerHTML = '';
+            return;
+          }
+          var html = '<div class="ig-search-suggestions-list">';
+          data.suggestions.forEach(function(item) {
+            var icon = item.type === 'hashtag' ? '🏷️' : '👤';
+            html += '<a href="' + item.url + '" class="ig-search-suggestion-item">';
+            html += '<span class="ig-search-suggestion-icon">' + icon + '</span>';
+            html += '<div>';
+            html += '<b class="ig-search-suggestion-label">' + item.label + '</b>';
+            html += '<small class="ig-search-suggestion-sub">' + item.sub + '</small>';
+            html += '</div>';
+            html += '</a>';
+          });
+          html += '</div>';
+          box.innerHTML = html;
+          box.style.display = 'block';
+        })
+        .catch(function() {
+          box.style.display = 'none';
+        });
+    }, 200);
+  });
+
+  document.addEventListener('click', function(e) {
+    if (!box.contains(e.target) && e.target !== input) {
+      box.style.display = 'none';
+    }
+  });
+})();
+</script>
 {% endblock %}

@@ -2,7 +2,6 @@ import os, uuid, base64
 from flask import Blueprint, render_template, request, redirect, session, jsonify, flash, url_for
 from werkzeug.utils import secure_filename
 from auth.service import (
-    register_child,
     approve_child_account,
     register_parent_account,
     register_parent_direct,
@@ -101,28 +100,12 @@ def login():
 @auth_bp.route('/register-child/', methods=['GET', 'POST'])
 @limiter.limit('100 per hour')
 def register_page():
-    if request.method == 'POST':
-        res = register_child(request.form)
-        if not res.get("success"):
-            return render_template('child_register.html', error=res.get("error", "Registration failed")), 400
-        
-        token = res.get("verification_token") or res.get("approval_token") or res.get("token")
-        
-        # Instant demo mode shortcut if requested
-        if request.form.get('instant_demo') == '1':
-            approve_child_account(token)
-            child_user = fetch_one('SELECT * FROM users WHERE LOWER(username)=%s', (request.form.get('username', '').strip().lower(),))
-            if child_user:
-                _set_session(child_user)
-                return redirect(_dest(child_user))
-
-        return render_template(
-            'registered.html',
-            token=token,
-            parent_email=request.form.get('parent_email'),
-            child_name=res.get("child_name")
-        )
-    return render_template('child_register.html')
+    # Kids Mode policy: children never create their own account. A supervising
+    # parent must sign up first (or log in) and add the child from the Parent
+    # Mode dashboard (/parent/create-child/), where the account is active
+    # immediately under that parent's controls -- no separate child self-service
+    # signup flow, and nothing here accepts a POST anymore.
+    return redirect('/register-parent/?note=parents_create_child_accounts')
 
 @auth_bp.route('/verify-parent/<token>/', methods=['GET', 'POST'])
 @limiter.limit('30 per minute')
@@ -175,6 +158,16 @@ def verify_parent(token):
         parent_row = fetch_one("SELECT * FROM users WHERE user_id=%s", (result["parent_id"],))
         if parent_row:
             _set_session(parent_row)
+
+        if result.get("auto_approved"):
+            return render_template(
+                "approval_success.html",
+                is_verified=True,
+                title="Child Account Approved & Active!",
+                message=f"You have successfully verified your identity and activated {child_data.get('child_name')}'s account. They can now log in safely!",
+                button_url="/parent/dashboard/",
+                button_text="Go to Parent Dashboard"
+            )
 
         return redirect(f"/parent/approve-child/{result['approval_token']}/")
 
@@ -293,6 +286,7 @@ def approve_child(token):
 @auth_bp.route('/register-parent/', methods=['GET', 'POST'])
 @limiter.limit('100 per hour')
 def register_parent_direct_page():
+    import random
     if request.method == 'POST':
         try:
             res = register_parent_direct(request.form)
@@ -301,8 +295,14 @@ def register_parent_direct_page():
             _set_session(user)
             return redirect('/parent/dashboard/')
         except Exception as exc:
-            return render_template('parent_register_direct.html', error=str(exc)), 400
-    return render_template('parent_register_direct.html')
+            n1 = random.randint(14, 28)
+            n2 = random.randint(13, 29)
+            return render_template('parent_register_direct.html', error=str(exc),
+                                   challenge_q=f"{n1} + {n2}", challenge_expected=str(n1 + n2)), 400
+    n1 = random.randint(14, 28)
+    n2 = random.randint(13, 29)
+    return render_template('parent_register_direct.html',
+                           challenge_q=f"{n1} + {n2}", challenge_expected=str(n1 + n2))
 
 @auth_bp.route('/register-parent/<token>/', methods=['GET', 'POST'])
 @limiter.limit('10 per minute')
@@ -315,17 +315,31 @@ def face_enroll():
     if session.get('role') != 'CHILD':
         return redirect('/login/?mode=kids')
     if request.method == 'POST':
-        photo = request.files.get('photo')
-        if not photo:
-            return render_template('face_enroll.html', error='Take a clear selfie.'), 400
         os.makedirs('uploads/faces', exist_ok=True)
         path = os.path.join('uploads/faces', f'enroll_{session["user_id"]}_{uuid.uuid4().hex}.jpg')
-        photo.save(path)
+        has_photo = False
+        photo = request.files.get('photo')
+        if photo:
+            photo.save(path)
+            has_photo = True
+        else:
+            photo_b64 = request.form.get('photo_b64')
+            if photo_b64:
+                if ',' in photo_b64:
+                    photo_b64 = photo_b64.split(',', 1)[1]
+                try:
+                    with open(path, 'wb') as f:
+                        f.write(base64.b64decode(photo_b64))
+                    has_photo = True
+                except Exception:
+                    pass
+        if not has_photo:
+            return render_template('face_enroll.html', error='Live camera capture required.'), 400
         try:
             enroll(session['user_id'], path)
             return redirect('/child/dashboard/')
         except Exception:
-            return render_template('face_enroll.html', error='Face enrollment failed. Use a live, well-lit face.'), 400
+            return render_template('face_enroll.html', error='Face enrollment failed. Look directly into the camera in good lighting.'), 400
         finally:
             try:
                 os.remove(path)
@@ -337,22 +351,38 @@ def face_enroll():
 @limiter.limit('10 per minute')
 def face_login():
     if request.method == 'POST':
-        email = request.form.get('email', '').strip().lower()
-        photo = request.files.get('photo')
-        user = fetch_one("SELECT * FROM users WHERE email=%s AND role='CHILD' AND account_status='ACTIVE'", (email,))
-        if not user or not photo:
-            return render_template('face_login.html', error='Child account/photo not found.'), 400
+        identifier = request.form.get('email', '').strip().lower()
+        user = fetch_one("SELECT * FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role='CHILD' AND account_status='ACTIVE'", (identifier, identifier))
+        if not user:
+            return render_template('face_login.html', error='Child account not found.'), 400
         os.makedirs('uploads/faces', exist_ok=True)
         path = os.path.join('uploads/faces', f'login_{uuid.uuid4().hex}.jpg')
-        photo.save(path)
+        has_photo = False
+        photo = request.files.get('photo')
+        if photo:
+            photo.save(path)
+            has_photo = True
+        else:
+            photo_b64 = request.form.get('photo_b64')
+            if photo_b64:
+                if ',' in photo_b64:
+                    photo_b64 = photo_b64.split(',', 1)[1]
+                try:
+                    with open(path, 'wb') as f:
+                        f.write(base64.b64decode(photo_b64))
+                    has_photo = True
+                except Exception:
+                    pass
+        if not has_photo:
+            return render_template('face_login.html', error='Live camera selfie is required.'), 400
         try:
             ok, reason, _ = verify(user['user_id'], path)
             if not ok:
-                return render_template('face_login.html', error='Liveness failed.' if reason == 'liveness_failed' else 'Face did not match.'), 401
+                return render_template('face_login.html', error='Liveness check failed. Please look straight into the camera.' if reason == 'liveness_failed' else 'Face did not match enrolled profile.'), 401
             _set_session(user, 'FACE')
             return redirect(_dest(user))
         except Exception:
-            return render_template('face_login.html', error='Face service unavailable. Use password login.'), 503
+            return render_template('face_login.html', error='Face authentication service unavailable. Use password login.'), 503
         finally:
             try:
                 os.remove(path)

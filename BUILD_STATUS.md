@@ -30,9 +30,9 @@ The existing LittleNet repository now covers the corrected project PPT/report pl
 Adult/sexual evidence >= 0.40 and weapon evidence >= 0.45 hard-block before ordinary risk thresholds. Total safety outage cannot ALLOW content. Partial safety failure without hard-block evidence goes to REVIEW. Kids Mode queries expose only content that has passed the required relationship, Parent Control, age/category and safety checks.
 
 ## Deployment source ready
-- `Dockerfile.web` — lightweight Flask/Jinja web service
-- `Dockerfile.ai` / `ai_server.py` — heavyweight AI service
-- `modal_ai.py` — optional Modal GPU deployment
+- `Dockerfile.web`  -  lightweight Flask/Jinja web service
+- `Dockerfile.ai` / `ai_server.py`  -  heavyweight AI service
+- `modal_ai.py`  -  optional Modal GPU deployment
 - PostgreSQL schema + idempotent upgrade
 - `/healthz` and `/readyz`
 - GitHub CI and APK build workflow

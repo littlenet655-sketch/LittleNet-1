@@ -1,11 +1,12 @@
 {
   "id": "/",
-  "name": "Parent Child System",
-  "short_name": "PCS",
+  "name": "LittleNet - Safe Child Social Platform",
+  "short_name": "LittleNet",
+  "description": "A safer place for kids to connect, create and learn, with parent-enforced controls.",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#ffffff",
-  "theme_color": "#1565C0",
+  "background_color": "#FFF7ED",
+  "theme_color": "#FFF7ED",
   "orientation": "portrait",
   "icons": [
     {

@@ -39,10 +39,14 @@
         {{ 'Following' if is_following else 'Requested' if is_pending else 'Follow' }}
       </button>
 
-      {% if not child_controls or child_controls.allow_messaging %}
+      {% if (not child_controls or child_controls.allow_messaging) and can_message %}
       <a href="/chat/{{ target_user_id }}/" class="ig-btn ig-btn-secondary" style="display: flex; align-items: center; justify-content: center; gap: 6px; text-decoration: none; flex: 1;">
         {{ ico.icon('send', 16) }} Message
       </a>
+      {% elif not child_controls or child_controls.allow_messaging %}
+      <button class="ig-btn ig-btn-outline" type="button" disabled title="You can message once you both follow each other and a parent has approved the connection" style="display: flex; align-items: center; justify-content: center; gap: 6px; flex: 1; opacity: .6; cursor: not-allowed;">
+        {{ ico.icon('send', 16) }} Message
+      </button>
       {% endif %}
 
       <form method="post" action="/mute/{{target_user_id}}/" style="margin: 0;">

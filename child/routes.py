@@ -3,13 +3,14 @@ from flask import Blueprint,render_template,request,redirect,session,jsonify
 from extensions import limiter
 from decorators import child_required
 from child.service import *
-from services.social import visible_posts,active_stories,story_visible_to,parent_notify,visible_profile_posts
-from services.usage import lock_state,heartbeat
+from services.social import visible_posts,active_stories,story_visible_to,parent_notify,visible_profile_posts,can_interact,_age_group
+from services.usage import lock_state,heartbeat,minutes_today
 from quiz.service import quiz_due
 from database.connection import execute,fetch_one,fetch_all
 from safety.moderation_service import evaluate,record
 from services.audit import log
-from services.controls import quiet_hours_state
+from services.controls import quiet_hours_state,effective_categories
+from safety.pii_service import scan_pii
 
 child_bp=Blueprint('child',__name__,template_folder='templates')
 def _guard():
@@ -32,7 +33,13 @@ def dashboard():
             create_child_profile(session['user_id'], {'full_name': session.get('full_name') or 'Student', 'bio': "Hey! I'm on LittleNet 🌟"})
         except Exception:
             pass
-    return render_template('child_dashboard.html',profile=get_child_profile(session['user_id']),stories=active_stories(session['user_id']),posts=visible_posts(session['user_id'],False,12,0),reels=visible_posts(session['user_id'],True,5,0))
+    suggs = get_random_children(session['user_id'])[:5]
+    return render_template('child_dashboard.html',
+                           profile=get_child_profile(session['user_id']),
+                           stories=active_stories(session['user_id']),
+                           posts=visible_posts(session['user_id'],False,12,0),
+                           reels=visible_posts(session['user_id'],True,5,0),
+                           suggested_users=suggs)
 
 
 @child_bp.route('/stories/')
@@ -64,6 +71,9 @@ def record_story_view(post_id):
 @child_required
 def create_profile():
     if request.method=='POST':
+        from safety.pii_service import scan_pii
+        if scan_pii(_public_profile_text(request.form))['detected']:
+            return render_template('create_profile.html',error='Profile cannot contain phone numbers, addresses, or external contacts.'),400
         signals,d=evaluate(session['user_id'],'TEXT',_public_profile_text(request.form))
         if d.action!='ALLOW': return render_template('create_profile.html',error='Profile text could not be published under Kids Mode safety rules.'),400
         create_child_profile(session['user_id'],request.form);replace_profile_tags(session['user_id'],request.form.get('skills','').split(','),request.form.get('interests','').split(','),request.form.get('ambitions','').split(','));parent_notify(session['user_id'],'PROFILE_APPROVAL','Skills/interests/ambitions need approval','/parent/content-approval/');return redirect('/child/dashboard/')
@@ -74,25 +84,154 @@ def create_profile():
 def profile():
     c=counts(session['user_id']);ps=visible_profile_posts(session['user_id'],session['user_id']);return render_template('profile.html',profile=get_child_profile(session['user_id']),counts=c,posts=ps)
 
+@child_bp.route('/child/settings/')
+@child_required
+def child_settings():
+    g = _guard()
+    if g: return g
+    try:
+        prof = get_child_profile(session.get('user_id'))
+    except Exception:
+        prof = None
+    try:
+        used = minutes_today(session.get('user_id'))
+    except Exception:
+        used = 0
+    try:
+        lim = fetch_one('SELECT * FROM child_time_limits WHERE child_id=%s', (session.get('user_id'),))
+        daily_limit = lim['daily_limit_minutes'] if lim else 60
+    except Exception:
+        daily_limit = 60
+    try:
+        has_face = bool(fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s', (session.get('user_id'),)))
+    except Exception:
+        has_face = False
+    return render_template('child_settings.html', profile=prof, used_minutes=used, daily_limit=daily_limit, has_face=has_face)
+
 @child_bp.route('/child/view-profile/<int:user_id>/')
 @child_required
 def view_profile(user_id):
     if fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(session['user_id'],user_id,user_id,session['user_id'])):return ('Not available',404)
-    return render_template('view_profile.html',profile=get_child_profile(user_id),counts=counts(user_id),target_user_id=user_id,is_following=is_following(session['user_id'],user_id),is_pending=is_follow_pending(session['user_id'],user_id),posts=visible_profile_posts(session['user_id'],user_id))
+    return render_template('view_profile.html',profile=get_child_profile(user_id),counts=counts(user_id),target_user_id=user_id,is_following=is_following(session['user_id'],user_id),is_pending=is_follow_pending(session['user_id'],user_id),posts=visible_profile_posts(session['user_id'],user_id),can_message=can_interact(session['user_id'],user_id))
 
 @child_bp.route('/discover/')
+@limiter.limit('60 per minute')
 @child_required
 def discover():
-    kids=get_random_children(session['user_id'])
-    for k in kids:k['is_following']=is_following(session['user_id'],k['user_id']);k['is_pending']=is_follow_pending(session['user_id'],k['user_id'])
-    return render_template('discover.html',children=kids)
+    viewer_id = session['user_id']
+    q = (request.args.get('q') or '').strip()
+    tag = (request.args.get('tag') or '').strip()
+    search_term = tag if tag else q
+
+    # Phase 21: Check PII in search query to prevent contact lookups
+    pii_res = scan_pii(search_term) if search_term else {'detected': False}
+    if pii_res.get('detected'):
+        return render_template('discover.html',
+                               children=[],
+                               recommended_posts=[],
+                               search_query="",
+                               active_tag="",
+                               pii_warning=True)
+
+    kids = get_random_children(viewer_id)
+    for k in kids:
+        k['is_following'] = is_following(viewer_id, k['user_id'])
+        k['is_pending'] = is_follow_pending(viewer_id, k['user_id'])
+
+    cats = effective_categories(viewer_id)
+    age_grp = _age_group(viewer_id)
+
+    if search_term:
+        clean_term = search_term.lstrip('#').strip()
+        pattern = f"%{clean_term}%"
+        posts = fetch_all('''
+            SELECT p.*, u.full_name, u.username, cp.profile_picture
+            FROM posts p
+            JOIN users u ON p.child_id = u.user_id
+            LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+            WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE
+              AND p.content_category = ANY(%s)
+              AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
+              AND p.child_id NOT IN (
+                SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
+                UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
+                UNION SELECT muted_id FROM muted_users WHERE muter_id=%s
+              )
+              AND (p.caption ILIKE %s OR p.content_category ILIKE %s OR u.full_name ILIKE %s OR u.username ILIKE %s)
+            ORDER BY p.created_at DESC LIMIT 50
+        ''', (cats, age_grp, age_grp, viewer_id, viewer_id, viewer_id, pattern, pattern, pattern, pattern))
+    else:
+        posts = fetch_all('''
+            SELECT p.*, u.full_name, u.username, cp.profile_picture
+            FROM posts p
+            JOIN users u ON p.child_id = u.user_id
+            LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+            WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE
+              AND p.content_category = ANY(%s)
+              AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
+              AND p.child_id NOT IN (
+                SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
+                UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
+                UNION SELECT muted_id FROM muted_users WHERE muter_id=%s
+              )
+            ORDER BY p.created_at DESC LIMIT 30
+        ''', (cats, age_grp, age_grp, viewer_id, viewer_id, viewer_id))
+
+    return render_template('discover.html',
+                           children=kids,
+                           recommended_posts=posts,
+                           search_query=search_term,
+                           active_tag=tag)
+
+@child_bp.route('/api/search/suggestions/')
+@child_required
+def search_suggestions():
+    q = (request.args.get('q') or '').strip().lower()
+    if not q or scan_pii(q).get('detected'):
+        return jsonify(suggestions=[])
+    clean = q.lstrip('#')
+    pattern = f"%{clean}%"
+    suggestions = []
+    if any(k in clean for k in ('mr', 'bean', 'com', 'fun')):
+        suggestions.append({'type': 'hashtag', 'label': '#mrbean', 'sub': 'Mr. Bean Comedy & Fun Safe Clips', 'url': '/discover/?q=%23mrbean'})
+    if any(k in clean for k in ('sci', 'space', 'ast')):
+        suggestions.append({'type': 'hashtag', 'label': '#science', 'sub': 'Science, Space & Astronomy', 'url': '/discover/?q=%23science'})
+    if any(k in clean for k in ('rob', 'ard', 'stem', 'tech')):
+        suggestions.append({'type': 'hashtag', 'label': '#robotics', 'sub': 'Robotics & Coding Projects', 'url': '/discover/?q=%23robotics'})
+    if any(k in clean for k in ('art', 'draw', 'paint')):
+        suggestions.append({'type': 'hashtag', 'label': '#art', 'sub': 'Drawing & Creativity', 'url': '/discover/?q=%23art'})
+    if any(k in clean for k in ('cod', 'dev', 'py')):
+        suggestions.append({'type': 'hashtag', 'label': '#coding', 'sub': 'Kid Coding & Python', 'url': '/discover/?q=%23coding'})
+
+    classmates = fetch_all('''
+        SELECT user_id, full_name, username
+        FROM users
+        WHERE role='CHILD' AND account_status='ACTIVE'
+          AND (full_name ILIKE %s OR username ILIKE %s)
+        LIMIT 5
+    ''', (pattern, pattern))
+    for c in classmates:
+        suggestions.append({'type': 'user', 'label': c['full_name'], 'sub': f"@{c['username']}", 'url': f"/child/view-profile/{c['user_id']}/"})
+
+    return jsonify(suggestions=suggestions)
 
 @child_bp.route('/follow/<int:child_id>/',methods=['POST'])
 @child_required
 def follow(child_id):
     if child_id==session['user_id']:return jsonify(status='self'),400
-    if is_following(session['user_id'],child_id) or is_follow_pending(session['user_id'],child_id):unfollow_child(session['user_id'],child_id);return jsonify(status='removed')
-    follow_child(session['user_id'],child_id);log(session['user_id'],'FOLLOW_REQUEST',{'target':child_id});parent_notify(session['user_id'],'FOLLOW_REQUEST','A new connection request needs approval','/parent/follow-requests/');return jsonify(status='pending')
+    if is_following(session['user_id'],child_id) or is_follow_pending(session['user_id'],child_id):
+        unfollow_child(session['user_id'],child_id)
+        return jsonify(status='removed')
+    follow_child(session['user_id'],child_id)
+    log(session['user_id'],'FOLLOW_REQUEST',{'target':child_id})
+    parent_notify(session['user_id'],'FOLLOW_REQUEST','A new connection request needs approval','/parent/follow-requests/')
+    try:
+        sender = fetch_one('SELECT full_name FROM users WHERE user_id=%s', (session['user_id'],))
+        s_name = (sender or {}).get('full_name') or 'A LittleNet friend'
+        notify(child_id, 'FOLLOW_REQUEST', f"{s_name} sent you a friend follow request.", '/notifications/', session['user_id'])
+    except Exception:
+        pass
+    return jsonify(status='pending')
 
 @child_bp.route('/block/<int:user_id>/',methods=['POST'])
 @child_required
@@ -108,7 +247,143 @@ def mute(user_id):
 
 @child_bp.route('/notifications/')
 @child_required
-def notifications():return render_template('notifications.html',items=fetch_all('SELECT * FROM notifications WHERE user_id=%s ORDER BY created_at DESC LIMIT 100',(session['user_id'],)),role='CHILD')
+def notifications():
+    user_id = session['user_id']
+    pending = fetch_all('''
+        SELECT f.child_id AS requester_id, u.full_name, u.username, cp.profile_picture, f.created_at
+        FROM followers f
+        JOIN users u ON u.user_id = f.child_id
+        LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+        WHERE f.following_child_id = %s AND f.approved = FALSE
+        ORDER BY f.created_at DESC
+    ''', (user_id,))
+
+    raw_items = fetch_all('''
+        SELECT n.*, 
+               u.username AS actor_username, 
+               u.full_name AS actor_name, 
+               cp.profile_picture AS actor_avatar
+        FROM notifications n
+        LEFT JOIN users u ON u.user_id = n.actor_id
+        LEFT JOIN child_profiles cp ON cp.child_id = n.actor_id
+        WHERE n.user_id = %s
+        ORDER BY n.created_at DESC LIMIT 100
+    ''', (user_id,))
+
+    # Find posts for thumbnail extraction
+    post_ids = []
+    for it in raw_items:
+        url = it.get('target_url') or ''
+        if url.startswith('/post/'):
+            parts = url.strip('/').split('/')
+            if len(parts) >= 2 and parts[1].isdigit():
+                post_ids.append(int(parts[1]))
+
+    post_thumbs = {}
+    if post_ids:
+        rows = fetch_all('SELECT post_id, media_url, thumbnail_url FROM posts WHERE post_id = ANY(%s)', (list(set(post_ids)),))
+        for r in rows:
+            post_thumbs[r['post_id']] = r.get('thumbnail_url') or r.get('media_url')
+
+    import datetime
+    now = datetime.datetime.now(datetime.timezone.utc) if hasattr(datetime, 'timezone') else datetime.datetime.utcnow()
+
+    sections = {'today': [], 'yesterday': [], 'this_week': [], 'earlier': []}
+    items = []
+
+    for it in raw_items:
+        item = dict(it)
+        url = item.get('target_url') or ''
+        # Thumbnail resolution
+        if url.startswith('/post/'):
+            parts = url.strip('/').split('/')
+            if len(parts) >= 2 and parts[1].isdigit():
+                item['thumbnail'] = post_thumbs.get(int(parts[1]))
+            else:
+                item['thumbnail'] = None
+        else:
+            item['thumbnail'] = None
+
+        # Filter category
+        ntype = item.get('notification_type', '')
+        if 'COMMENT' in ntype:
+            item['filter_category'] = 'comments'
+        elif 'FOLLOW' in ntype:
+            item['filter_category'] = 'follows'
+        elif item.get('actor_id'):
+            item['filter_category'] = 'people'
+        else:
+            item['filter_category'] = 'all'
+
+        # Formatted action text
+        msg = item.get('message') or ''
+        actor_name = item.get('actor_name') or ''
+        actor_user = item.get('actor_username') or ''
+        clean_msg = msg
+        for prefix in [f"{actor_name} ", f"{actor_user} ", "Someone "]:
+            if clean_msg.startswith(prefix):
+                clean_msg = clean_msg[len(prefix):]
+                break
+        item['action_text'] = clean_msg
+
+        # Relative time & grouping
+        created = item.get('created_at')
+        time_str = '1m'
+        group = 'earlier'
+        if created:
+            if hasattr(created, 'tzinfo') and created.tzinfo is not None:
+                delta = now - created
+            else:
+                delta = datetime.datetime.utcnow() - created
+
+            secs = max(0, int(delta.total_seconds()))
+            days = delta.days
+            if secs < 60:
+                time_str = f"{secs}s"
+                group = 'today'
+            elif secs < 3600:
+                time_str = f"{secs // 60}m"
+                group = 'today'
+            elif secs < 86400:
+                time_str = f"{secs // 3600}h"
+                group = 'today'
+            elif days == 1:
+                time_str = '1d'
+                group = 'yesterday'
+            elif days < 7:
+                time_str = f"{days}d"
+                group = 'this_week'
+            elif days < 14:
+                time_str = '1w'
+                group = 'earlier'
+            else:
+                time_str = f"{days // 7}w"
+                group = 'earlier'
+
+        item['time_ago'] = time_str
+        item['time_group'] = group
+        sections[group].append(item)
+        items.append(item)
+
+    return render_template('notifications.html', pending_requests=pending, items=items, sections=sections, role='CHILD')
+
+@child_bp.route('/child/follow-requests/<int:requester_id>/accept/', methods=['POST'])
+@child_required
+def accept_follow_request(requester_id):
+    execute('UPDATE followers SET approved=TRUE WHERE child_id=%s AND following_child_id=%s AND approved=FALSE', (requester_id, session['user_id']))
+    try:
+        sender = fetch_one('SELECT full_name FROM users WHERE user_id=%s', (session['user_id'],))
+        s_name = (sender or {}).get('full_name') or 'Your friend'
+        notify(requester_id, 'FOLLOW_ACCEPTED', f"{s_name} accepted your follow request! You are now connected.", f"/child/view-profile/{session['user_id']}/", session['user_id'])
+    except Exception:
+        pass
+    return redirect('/notifications/')
+
+@child_bp.route('/child/follow-requests/<int:requester_id>/decline/', methods=['POST'])
+@child_required
+def decline_follow_request(requester_id):
+    execute('DELETE FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=FALSE', (requester_id, session['user_id']))
+    return redirect('/notifications/')
 
 @child_bp.route('/notifications/read/',methods=['POST'])
 @child_required
@@ -145,6 +420,7 @@ def upload_profile_picture():
             parent_notify(session['user_id'],'PROFILE_PHOTO_BLOCKED',d.reason,'/parent/safety/')
             return jsonify(status=d.action),400
         execute('UPDATE child_profiles SET profile_picture=%s,updated_at=NOW() WHERE child_id=%s',(path,session['user_id']))
+        session['_avatar']=path
         return jsonify(ok=True,path='/'+path)
     except Exception:
         try:os.remove(path)
@@ -170,6 +446,7 @@ def quiet_hours_page():
     return render_template('quiet_hours.html',quiet=quiet)
 
 @child_bp.route('/report/',methods=['POST'])
+@limiter.limit('15 per hour')
 @child_required
 def report_content():
     kind=(request.form.get('target_type') or '').upper();reason=(request.form.get('reason') or '').strip()
@@ -246,9 +523,10 @@ def api_share_post():
     data=request.get_json(silent=True) or {}
     try:receiver=int(data.get('receiver_id'));post_id=int(data.get('post_id'))
     except:return jsonify(error='invalid request'),400
-    from services.social import post_visible_to,can_interact
+    from services.social import is_post_shareable_to
     from childMessage.service import conversation
-    if not can_interact(session['user_id'],receiver) or not post_visible_to(session['user_id'],post_id):return jsonify(error='not allowed'),403
+    ok, reason = is_post_shareable_to(post_id, session['user_id'], receiver)
+    if not ok:return jsonify(error=reason),403
     cid=conversation(session['user_id'],receiver);execute("INSERT INTO child_messages(conversation_id,sender_child_id,receiver_child_id,message_type,shared_post_id,moderation_status) VALUES(%s,%s,%s,'SHARED_POST',%s,'ALLOWED')",(cid,session['user_id'],receiver,post_id));return jsonify(ok=True)
 
 @child_bp.route('/time-limit-reached/')
@@ -259,7 +537,10 @@ def time_limit_reached():return render_template('time_limit_reached.html')
 @child_required
 def edit_profile():
     if request.method=='POST':
-        sig,d=evaluate(session['user_id'],'TEXT',_public_profile_text(request.form))
+        from safety.pii_service import scan_pii
+        if scan_pii(_public_profile_text(request.form))['detected']:
+            return render_template('edit_profile.html',profile=get_child_profile(session['user_id']),error='Profile cannot contain phone numbers, addresses, or external contacts.'),400
+        signals,d=evaluate(session['user_id'],'TEXT',_public_profile_text(request.form))
         if d.action!='ALLOW':return render_template('edit_profile.html',profile=get_child_profile(session['user_id']),error='Profile text could not be published under Kids Mode safety rules.'),400
         execute('UPDATE child_profiles SET full_name=%s,school_name=%s,location=%s,current_class=%s,bio=%s,updated_at=NOW() WHERE child_id=%s',(request.form.get('full_name'),request.form.get('school_name'),request.form.get('location'),request.form.get('current_class'),request.form.get('bio'),session['user_id']));return redirect('/child/profile/')
     return render_template('edit_profile.html',profile=get_child_profile(session['user_id']))

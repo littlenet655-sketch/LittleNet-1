@@ -1,4 +1,4 @@
-# LittleNet – Child Centric Social Platform with AI-based Content Filtering
+# LittleNet  -  Child Centric Social Platform with AI-based Content Filtering
 
 [![Project Status: Production Live](https://img.shields.io/badge/Status-Production%20Live-brightgreen.svg)](#live-cloud-deployments)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Android%20APK%20%7C%20Cloud%20GPU-blue.svg)](#mobile-android-apk)
@@ -8,9 +8,9 @@
 ---
 
 ### 🎓 Academic Information
-* **Institution**: Adichunchanagiri Institute of Technology, Chikkamagaluru – 577102
+* **Institution**: Adichunchanagiri Institute of Technology, Chikkamagaluru  -  577102
 * **Department**: Department of Computer Science & Engineering (Data Science)
-* **Project Type**: Major Project Phase II Presentation (2025–2026)
+* **Project Type**: Major Project Phase II Presentation (2025 - 2026)
 * **Group Number**: `DSPG06`
 * **Under the Guidance of**: Prof. Harshitha HD
 * **Presented By**:
@@ -23,7 +23,7 @@
 
 ## 🌟 Executive Abstract
 
-**LittleNet** is a modern, child-centric social networking ecosystem designed from the ground up to protect children aged 6–16 while offering an engaging, interactive space to share creativity, learn, and socialize safely.
+**LittleNet** is a modern, child-centric social networking ecosystem designed from the ground up to protect children aged 6 - 16 while offering an engaging, interactive space to share creativity, learn, and socialize safely.
 
 Traditional platforms expose minors to severe risks including cyberbullying, mature content, online predators, and uncontrolled screen time. LittleNet solves these challenges through **real-time, multi-modal AI content filtering**, a **parent-first approval paradigm**, and **biometric child authentication**:
 
@@ -193,10 +193,10 @@ pip install -r requirements-core.txt
 ### 2. Configure Credentials (`.env`)
 Create a `.env` file in the root directory:
 ```env
-DATABASE_URL=postgresql://postgres.zjlzygnusxjwdocftwjt:Littlenet%400ait04@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
-SECRET_KEY=littlenet_secret_production_key_2026_super_secure
-AI_SERVICE_URL=https://littlenet655--littlenet-ai-ai-web.modal.run
-AI_SHARED_SECRET=littlenet_secret_key_2026
+DATABASE_URL=postgresql://postgres.your-project-ref:[YOUR_PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
+SECRET_KEY=your_secret_production_key_here
+AI_SERVICE_URL=https://your-modal-app.modal.run
+AI_SHARED_SECRET=your_ai_shared_secret_here
 BASE_URL=http://localhost:5000
 COOKIE_SECURE=0
 ```

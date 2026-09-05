@@ -1,6 +1,6 @@
-# LittleNet – Academic Viva Presentation Guide & Screen-to-Model Map
+# LittleNet  -  Academic Viva Presentation Guide & Screen-to-Model Map
 
-**Major Project Phase II (2025–2026)**  
+**Major Project Phase II (2025 - 2026)**  
 **Department of Computer Science & Engineering (Data Science)**  
 **Adichunchanagiri Institute of Technology, Chikkamagaluru**  
 **Group**: `DSPG06` | **Project**: LittleNet
@@ -22,7 +22,7 @@ Use this table during your viva defense to answer questions like: *"Which neural
 | **Parent Safety Command Center** | `/parent/dashboard/` | [`parent_dashboard.html`](file:///d:/aitprojects/LittleNet-1/parent/templates/parent_dashboard.html) | `parent/routes.py:dashboard()` | Real-time screen-time limits, quiet-hour locking, behavior index |
 | **Flagged Content Review** | `/parent/safety-review/` | [`safety_review.html`](file:///d:/aitprojects/LittleNet-1/parent/templates/safety_review.html) | `parent/routes.py:safety_review()` | Multi-signal breakdown (adult/weapon/violence/toxicity) + **Blurred preview toggle** |
 | **Biometric Face Login** | `/face-login/` | [`face_login.html`](file:///d:/aitprojects/LittleNet-1/auth/templates/face_login.html) | `auth/routes.py:face_login()` | **DeepFace** facial embeddings + live anti-spoofing verification |
-| **STEM & Safety Quizzes** | `/learning/` | [`learning.html`](file:///d:/aitprojects/LittleNet-1/quiz/templates/learning.html) | `quiz/routes.py:learning_hub()` | Adaptive age-tiered question bank (6–8, 9–11, 12–13, 14–18) |
+| **STEM & Safety Quizzes** | `/learning/` | [`learning.html`](file:///d:/aitprojects/LittleNet-1/quiz/templates/learning.html) | `quiz/routes.py:learning_hub()` | Adaptive age-tiered question bank (6 - 8, 9 - 11, 12 - 13, 14 - 18) |
 
 ---
 
@@ -37,7 +37,7 @@ When demonstrating LittleNet to internal or external examiners, follow this exac
    - **Password**: `StudentAIT2026!`
 3. Point out the child-safe visual design:
    - Warm cream background (`#FFF7ED`), candy-gradient story rings, rounded cards (20px), and bottom navigation (`Home`, `Find`, `Create`, `Clips`, `Me`).
-   - Note that there are **no stranger feeds**—only parent-approved connections and educational topics.
+   - Note that there are **no stranger feeds** - only parent-approved connections and educational topics.
 
 ### Step 2: Test Content Safety Filtering (1.5 minutes)
 1. Navigate to **Create** (`/child/upload-post/`).
