@@ -6,7 +6,7 @@
     <div class="auth-brand-wrap">
       <img src="/static/icons/app_logo.png" alt="LittleNet Logo" style="width:64px;height:64px;border-radius:16px;object-fit:cover;box-shadow:0 8px 24px rgba(0,149,246,.22);">
       <h1 class="brand auth-title">Verify your email</h1>
-      <p class="auth-subtitle">We sent a 6-digit code to <strong>{{ masked_email }}</strong>. Enter it below to activate Parent Mode.</p>
+      <p class="auth-subtitle">We sent a 6-digit code to <strong>{{ masked_email }}</strong>. Enter it below to continue to the required live selfie check.</p>
     </div>
 
     {% if error %}
@@ -34,7 +34,7 @@
         <small style="display:block;color:#64748B;font-size:11px;margin-top:6px;">The code expires after 10 minutes and locks after repeated incorrect attempts.</small>
       </div>
       <button type="submit" class="btn primary auth-submit-btn">
-        <span>Verify Email & Open Parent Mode</span><span class="btn-arrow">→</span>
+        <span>Verify Email & Continue to Live Selfie</span><span class="btn-arrow">→</span>
       </button>
     </form>
 
@@ -45,7 +45,7 @@
 
     <div class="parent-info-card" style="margin-top:16px;">
       <span class="info-icon">🛡️</span>
-      <span>Your Parent account remains inactive until this email ownership check succeeds.</span>
+      <span>Your Parent account remains inactive until both this email check and the live adult/liveness check succeed.</span>
     </div>
   </div>
 </div>
