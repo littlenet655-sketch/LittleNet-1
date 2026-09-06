@@ -1,8 +1,8 @@
 """Email OTP gate for standalone Parent Mode registration.
 
-The parent account is created in PENDING_APPROVAL state and cannot authenticate
-until the six-digit email code is verified. OTP values are never stored in
-plaintext and expire after ten minutes.
+The parent account is created in PENDING_APPROVAL state. Email OTP proves email
+ownership only; the account remains pending until live adult/liveness verification
+succeeds. OTP values are never stored in plaintext and expire after ten minutes.
 """
 import hashlib
 import hmac
@@ -97,6 +97,7 @@ def _send_code(user_id, email, full_name, code):
     <p>Your one-time verification code is:</p>
     <p style="font-size:30px;font-weight:800;letter-spacing:8px;margin:20px 0;">{code}</p>
     <p>This code expires in {OTP_TTL_MINUTES} minutes. Do not share it with anyone.</p>
+    <p>After OTP verification, LittleNet will ask for a live adult/liveness check before the account can become active.</p>
     <p>If you did not create a LittleNet Parent account, you can ignore this email.</p>
     """
     return bool(send_email(email, 'LittleNet: Your 6-digit parent verification code', body))
@@ -155,7 +156,7 @@ def begin_parent_registration(form):
 
 
 def verify_parent_email_otp(user_id, code):
-    """Verify a pending parent's six-digit OTP and activate the account."""
+    """Verify email ownership but deliberately keep the parent account pending."""
     _ensure_table()
     code = (code or '').strip()
     if len(code) != 6 or not code.isdigit():
@@ -180,7 +181,6 @@ def verify_parent_email_otp(user_id, code):
                 conn.rollback()
                 return False, 'Verification request not found. Please register again.', None
             if row.get('verified_at'):
-                cur.execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'", (user_id,))
                 conn.commit()
                 return True, None, fetch_one('SELECT * FROM users WHERE user_id=%s', (user_id,))
             if row['attempts'] >= OTP_MAX_ATTEMPTS:
@@ -201,7 +201,6 @@ def verify_parent_email_otp(user_id, code):
                 return False, 'Incorrect verification code.', None
 
             cur.execute('UPDATE parent_email_otps SET verified_at=NOW() WHERE user_id=%s', (user_id,))
-            cur.execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'", (user_id,))
         conn.commit()
     except Exception:
         conn.rollback()
@@ -214,14 +213,18 @@ def verify_parent_email_otp(user_id, code):
 
 
 def resend_parent_email_otp(user_id):
-    """Rotate the code for an unverified parent and send it again."""
+    """Rotate the code for a parent who has not yet completed email verification."""
     _ensure_table()
     user = fetch_one(
-        "SELECT user_id,email,full_name,role,account_status FROM users WHERE user_id=%s",
+        """SELECT u.user_id,u.email,u.full_name,u.role,u.account_status,o.verified_at
+           FROM users u LEFT JOIN parent_email_otps o ON o.user_id=u.user_id
+           WHERE u.user_id=%s""",
         (user_id,),
     )
     if not user or user.get('role') != 'PARENT' or user.get('account_status') == 'ACTIVE':
         return False, 'No pending parent verification was found.'
+    if user.get('verified_at'):
+        return False, 'Email is already verified. Continue with live adult verification.'
 
     code = _new_code()
     conn = get_db_connection()
