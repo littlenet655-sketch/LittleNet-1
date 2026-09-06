@@ -1,0 +1,93 @@
+name: Build & Validate LittleNet Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      backend_url:
+        description: "Final HTTPS LittleNet backend URL"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  signed-release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      BACKEND_URL: ${{ inputs.backend_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v5
+        with:
+          gradle-version: '8.9'
+
+      - name: Validate HTTPS backend and signing secrets
+        env:
+          ANDROID_SIGNING_KEY: ${{ secrets.ANDROID_SIGNING_KEY }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          python - <<'PY'
+          import os,sys
+          u=os.environ.get('BACKEND_URL','').strip()
+          if not u.startswith('https://') or 'YOUR-LITTLENET-BACKEND' in u:
+              sys.exit('backend_url must be the real HTTPS LittleNet deployment')
+          for name in ('ANDROID_SIGNING_KEY','ANDROID_KEY_ALIAS','ANDROID_KEYSTORE_PASSWORD'):
+              if not os.environ.get(name):
+                  sys.exit(f'Missing required GitHub secret: {name}')
+          PY
+
+      - name: Inject production backend URL
+        run: python tools/set_backend_url.py "$BACKEND_URL"
+
+      - name: Build unsigned release APK
+        working-directory: android
+        run: gradle --no-daemon :app:assembleRelease
+
+      - name: Sign release APK
+        id: sign_app
+        uses: ilharp/sign-android-release@v2
+        with:
+          releaseDir: android/app/build/outputs/apk/release
+          signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
+          keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
+          keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          buildToolsVersion: 35.0.0
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install and launch signed APK on emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          SIGNED_APK: ${{ steps.sign_app.outputs.signedFile }}
+        with:
+          api-level: 35
+          target: google_apis
+          arch: x86_64
+          profile: pixel_7_pro
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: |
+            adb install -r "$SIGNED_APK"
+            adb shell am start -W -n com.littlenet.app/.MainActivity
+            adb shell pidof com.littlenet.app
+
+      - name: Upload signed APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleNet-signed-release-apk
+          path: ${{ steps.sign_app.outputs.signedFile }}
+          if-no-files-found: error
+          retention-days: 30
