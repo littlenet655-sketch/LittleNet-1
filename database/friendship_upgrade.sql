@@ -11,15 +11,12 @@ DO $$ BEGIN
     CHECK (approval_stage IN ('REQUESTED','SENDER_PARENT_APPROVED','RECEIVER_PARENT_PENDING','ACTIVE'));
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
--- Any relationship that was already approved before Step 6 is grandfathered as
--- a fully active friendship. This avoids locking out existing demo/test accounts.
 UPDATE followers
 SET approval_stage='ACTIVE',
     sender_parent_approved_at=COALESCE(sender_parent_approved_at,created_at),
     receiver_parent_approved_at=COALESCE(receiver_parent_approved_at,created_at)
 WHERE approved=TRUE;
 
--- Mirror existing active friendships so all feed/story/count queries are symmetric.
 INSERT INTO followers(child_id,following_child_id,approved,approval_stage,sender_parent_approved_at,receiver_parent_approved_at,created_at)
 SELECT following_child_id,child_id,TRUE,'ACTIVE',
        COALESCE(sender_parent_approved_at,created_at),
@@ -35,11 +32,8 @@ SET approved=TRUE,
 CREATE OR REPLACE FUNCTION littlenet_two_parent_friendship_update()
 RETURNS TRIGGER AS $$
 DECLARE
-  reverse_row followers%ROWTYPE;
   requester_name TEXT;
 BEGIN
-  -- Legacy Parent Mode writes approved=TRUE. Intercept that write and turn the
-  -- first approval into the sender-parent stage rather than an active friendship.
   IF OLD.approved=FALSE AND NEW.approved=TRUE THEN
     IF OLD.approval_stage='REQUESTED' THEN
       NEW.approved=FALSE;
@@ -69,7 +63,7 @@ BEGIN
 
       RETURN NEW;
     ELSIF OLD.approval_stage='RECEIVER_PARENT_PENDING' THEN
-      -- The target child's parent is approving the reciprocal pending row.
+      -- Only the reciprocal receiver-parent row can activate the friendship.
       NEW.approved=TRUE;
       NEW.approval_stage='ACTIVE';
       NEW.receiver_parent_approved_at=COALESCE(NEW.receiver_parent_approved_at,NOW());
@@ -90,14 +84,22 @@ BEGIN
 
       RETURN NEW;
     ELSIF OLD.approval_stage='SENDER_PARENT_APPROVED' THEN
-      -- Internal reverse-row activation from the receiver-parent approval.
-      NEW.approval_stage='ACTIVE';
-      NEW.receiver_parent_approved_at=COALESCE(NEW.receiver_parent_approved_at,NOW());
+      -- This row may become ACTIVE only through the nested UPDATE issued while
+      -- processing the reciprocal RECEIVER_PARENT_PENDING approval above.
+      -- A repeated/manual sender-parent HTTP approval reaches the trigger at
+      -- depth 1 and is rejected, so one parent can never approve twice to bypass
+      -- the second family.
+      IF pg_trigger_depth() > 1 THEN
+        NEW.approval_stage='ACTIVE';
+        NEW.receiver_parent_approved_at=COALESCE(NEW.receiver_parent_approved_at,NOW());
+        RETURN NEW;
+      END IF;
+      NEW.approved=FALSE;
+      NEW.approval_stage='SENDER_PARENT_APPROVED';
       RETURN NEW;
     END IF;
   END IF;
 
-  -- Never permit a non-ACTIVE row to become approved through an unexpected path.
   IF NEW.approved=TRUE AND NEW.approval_stage<>'ACTIVE' THEN
     NEW.approved=FALSE;
   END IF;
@@ -113,9 +115,6 @@ FOR EACH ROW EXECUTE FUNCTION littlenet_two_parent_friendship_update();
 CREATE OR REPLACE FUNCTION littlenet_friendship_delete_pair()
 RETURNS TRIGGER AS $$
 BEGIN
-  -- A pending cancellation/rejection or an active unfriend removes the paired row
-  -- too, keeping the friendship state symmetric. The nested delete sees no reverse
-  -- row after the first deletion and therefore terminates naturally.
   DELETE FROM followers
   WHERE child_id=OLD.following_child_id
     AND following_child_id=OLD.child_id;
