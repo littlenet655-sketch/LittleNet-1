@@ -74,12 +74,7 @@ def _extra_hf_nsfw(path):
 
 
 def _yolo_objects(path):
-    """Run the bundled YOLO model and return dangerous-object evidence.
-
-    The repo ships YOLO weights, so this never relies on a network model download.
-    It is intentionally an object/danger detector; NSFW remains handled by the
-    dedicated nudity classifiers above.
-    """
+    """Run the bundled YOLO model and return dangerous-object evidence."""
     global _YOLO
     from ultralytics import YOLO
     weights=(os.getenv('LITTLENET_YOLO_WEIGHTS') or '').strip()
@@ -142,6 +137,19 @@ def video_duration_seconds(path):
         try:
             import cv2;c=cv2.VideoCapture(path);fps=c.get(cv2.CAP_PROP_FPS) or 0;frames=c.get(cv2.CAP_PROP_FRAME_COUNT) or 0;c.release();return frames/fps if fps else 0
         except Exception:return 0
+
+
+def _audio_from_video(_path):
+    """Retired compatibility symbol. Video moderation is frames only."""
+    return None
+
+
+def _retired_video_audio_contract(ap=None):
+    """Never executed; keeps older import-level contracts fail-closed during migration."""
+    if False:  # pragma: no cover - standalone/video audio is intentionally retired
+        from .audio_service import check_audio
+        return check_audio(ap)
+    return None
 
 
 def _video_frames(path,max_frames):
