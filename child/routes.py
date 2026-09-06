@@ -111,6 +111,7 @@ def child_settings():
 @child_bp.route('/child/view-profile/<int:user_id>/')
 @child_required
 def view_profile(user_id):
+    if not can_discover_child(session['user_id'],user_id):return ('Not available',404)
     if fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(session['user_id'],user_id,user_id,session['user_id'])):return ('Not available',404)
     return render_template('view_profile.html',profile=get_child_profile(user_id),counts=counts(user_id),target_user_id=user_id,is_following=is_following(session['user_id'],user_id),is_pending=is_follow_pending(session['user_id'],user_id),posts=visible_profile_posts(session['user_id'],user_id),can_message=can_interact(session['user_id'],user_id))
 
@@ -123,7 +124,7 @@ def discover():
     tag = (request.args.get('tag') or '').strip()
     search_term = tag if tag else q
 
-    # Phase 21: Check PII in search query to prevent contact lookups
+    # Search never accepts phone/address/external-contact lookups.
     pii_res = scan_pii(search_term) if search_term else {'detected': False}
     if pii_res.get('detected'):
         return render_template('discover.html',
@@ -133,13 +134,17 @@ def discover():
                                active_tag="",
                                pii_warning=True)
 
-    kids = get_random_children(viewer_id)
+    person_term = None
+    if q and not q.startswith('#') and not tag:
+        person_term = q.lstrip('#').strip()
+    kids = discoverable_children(viewer_id,person_term,30)
     for k in kids:
         k['is_following'] = is_following(viewer_id, k['user_id'])
         k['is_pending'] = is_follow_pending(viewer_id, k['user_id'])
 
     cats = effective_categories(viewer_id)
     age_grp = _age_group(viewer_id)
+    allowed_child_ids = [viewer_id] + discoverable_child_ids(viewer_id)
 
     if search_term:
         clean_term = search_term.lstrip('#').strip()
@@ -150,6 +155,7 @@ def discover():
             JOIN users u ON p.child_id = u.user_id
             LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
             WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE
+              AND p.child_id = ANY(%s)
               AND p.content_category = ANY(%s)
               AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
               AND p.child_id NOT IN (
@@ -159,7 +165,7 @@ def discover():
               )
               AND (p.caption ILIKE %s OR p.content_category ILIKE %s OR u.full_name ILIKE %s OR u.username ILIKE %s)
             ORDER BY p.created_at DESC LIMIT 50
-        ''', (cats, age_grp, age_grp, viewer_id, viewer_id, viewer_id, pattern, pattern, pattern, pattern))
+        ''', (allowed_child_ids,cats,age_grp,age_grp,viewer_id,viewer_id,viewer_id,pattern,pattern,pattern,pattern))
     else:
         posts = fetch_all('''
             SELECT p.*, u.full_name, u.username, cp.profile_picture
@@ -167,6 +173,7 @@ def discover():
             JOIN users u ON p.child_id = u.user_id
             LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
             WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE
+              AND p.child_id = ANY(%s)
               AND p.content_category = ANY(%s)
               AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
               AND p.child_id NOT IN (
@@ -175,7 +182,7 @@ def discover():
                 UNION SELECT muted_id FROM muted_users WHERE muter_id=%s
               )
             ORDER BY p.created_at DESC LIMIT 30
-        ''', (cats, age_grp, age_grp, viewer_id, viewer_id, viewer_id))
+        ''', (allowed_child_ids,cats,age_grp,age_grp,viewer_id,viewer_id,viewer_id))
 
     return render_template('discover.html',
                            children=kids,
@@ -190,7 +197,6 @@ def search_suggestions():
     if not q or scan_pii(q).get('detected'):
         return jsonify(suggestions=[])
     clean = q.lstrip('#')
-    pattern = f"%{clean}%"
     suggestions = []
     if any(k in clean for k in ('mr', 'bean', 'com', 'fun')):
         suggestions.append({'type': 'hashtag', 'label': '#mrbean', 'sub': 'Mr. Bean Comedy & Fun Safe Clips', 'url': '/discover/?q=%23mrbean'})
@@ -203,15 +209,9 @@ def search_suggestions():
     if any(k in clean for k in ('cod', 'dev', 'py')):
         suggestions.append({'type': 'hashtag', 'label': '#coding', 'sub': 'Kid Coding & Python', 'url': '/discover/?q=%23coding'})
 
-    classmates = fetch_all('''
-        SELECT user_id, full_name, username
-        FROM users
-        WHERE role='CHILD' AND account_status='ACTIVE'
-          AND (full_name ILIKE %s OR username ILIKE %s)
-        LIMIT 5
-    ''', (pattern, pattern))
+    classmates = discoverable_children(session['user_id'],clean,5)
     for c in classmates:
-        suggestions.append({'type': 'user', 'label': c['full_name'], 'sub': f"@{c['username']}", 'url': f"/child/view-profile/{c['user_id']}/"})
+        suggestions.append({'type': 'user', 'label': c['full_name'], 'sub': f"@{c['username']} · {c.get('recommendation_reason','Allowed network')}", 'url': f"/child/view-profile/{c['user_id']}/"})
 
     return jsonify(suggestions=suggestions)
 
@@ -219,6 +219,7 @@ def search_suggestions():
 @child_required
 def follow(child_id):
     if child_id==session['user_id']:return jsonify(status='self'),400
+    if not can_discover_child(session['user_id'],child_id):return jsonify(error='child unavailable'),404
     if is_following(session['user_id'],child_id) or is_follow_pending(session['user_id'],child_id):
         unfollow_child(session['user_id'],child_id)
         return jsonify(status='removed')
@@ -228,7 +229,7 @@ def follow(child_id):
     try:
         sender = fetch_one('SELECT full_name FROM users WHERE user_id=%s', (session['user_id'],))
         s_name = (sender or {}).get('full_name') or 'A LittleNet friend'
-        notify(child_id, 'FOLLOW_REQUEST', f"{s_name} sent you a friend follow request.", '/notifications/', session['user_id'])
+        notify(child_id, 'FOLLOW_REQUEST', f"{s_name} sent you a parent-mediated friend request.", '/notifications/', session['user_id'])
     except Exception:
         pass
     return jsonify(status='pending')
@@ -249,14 +250,17 @@ def mute(user_id):
 @child_required
 def notifications():
     user_id = session['user_id']
+    # Children can see that a request exists, but Parent Mode is the only place
+    # where either side can approve it.
     pending = fetch_all('''
-        SELECT f.child_id AS requester_id, u.full_name, u.username, cp.profile_picture, f.created_at
+        SELECT CASE WHEN f.child_id=%s THEN f.following_child_id ELSE f.child_id END AS requester_id,
+               u.full_name,u.username,cp.profile_picture,f.created_at,f.approval_stage
         FROM followers f
-        JOIN users u ON u.user_id = f.child_id
-        LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
-        WHERE f.following_child_id = %s AND f.approved = FALSE
+        JOIN users u ON u.user_id=CASE WHEN f.child_id=%s THEN f.following_child_id ELSE f.child_id END
+        LEFT JOIN child_profiles cp ON cp.child_id=u.user_id
+        WHERE (f.child_id=%s OR f.following_child_id=%s) AND f.approved=FALSE
         ORDER BY f.created_at DESC
-    ''', (user_id,))
+    ''', (user_id,user_id,user_id,user_id))
 
     raw_items = fetch_all('''
         SELECT n.*, 
@@ -308,7 +312,7 @@ def notifications():
         ntype = item.get('notification_type', '')
         if 'COMMENT' in ntype:
             item['filter_category'] = 'comments'
-        elif 'FOLLOW' in ntype:
+        elif 'FOLLOW' in ntype or 'FRIEND' in ntype:
             item['filter_category'] = 'follows'
         elif item.get('actor_id'):
             item['filter_category'] = 'people'
@@ -370,19 +374,16 @@ def notifications():
 @child_bp.route('/child/follow-requests/<int:requester_id>/accept/', methods=['POST'])
 @child_required
 def accept_follow_request(requester_id):
-    execute('UPDATE followers SET approved=TRUE WHERE child_id=%s AND following_child_id=%s AND approved=FALSE', (requester_id, session['user_id']))
-    try:
-        sender = fetch_one('SELECT full_name FROM users WHERE user_id=%s', (session['user_id'],))
-        s_name = (sender or {}).get('full_name') or 'Your friend'
-        notify(requester_id, 'FOLLOW_ACCEPTED', f"{s_name} accepted your follow request! You are now connected.", f"/child/view-profile/{session['user_id']}/", session['user_id'])
-    except Exception:
-        pass
-    return redirect('/notifications/')
+    # Child accounts never approve friendship. Both approval steps belong to
+    # the verified parents in Parent Mode.
+    return jsonify(error='Parent approval required'),403
 
 @child_bp.route('/child/follow-requests/<int:requester_id>/decline/', methods=['POST'])
 @child_required
 def decline_follow_request(requester_id):
-    execute('DELETE FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=FALSE', (requester_id, session['user_id']))
+    # A child may hide/cancel a pending request involving themselves, but cannot
+    # approve or activate it.
+    execute('DELETE FROM followers WHERE approved=FALSE AND ((child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s))', (requester_id,session['user_id'],session['user_id'],requester_id))
     return redirect('/notifications/')
 
 @child_bp.route('/notifications/read/',methods=['POST'])
@@ -462,7 +463,7 @@ def report_content():
     except:return jsonify(error='invalid target'),400
     if kind not in {'USER','POST','COMMENT','MESSAGE'} or not reason:return jsonify(error='invalid report'),400
     valid=False
-    if kind=='USER':valid=bool(fetch_one("SELECT 1 FROM users WHERE user_id=%s AND role='CHILD' AND user_id<>%s",(tid,session['user_id'])))
+    if kind=='USER':valid=bool(fetch_one("SELECT 1 FROM users WHERE user_id=%s AND role='CHILD' AND user_id<>%s",(tid,session['user_id']))) and can_discover_child(session['user_id'],tid)
     elif kind=='POST':
         from services.social import post_visible_to
         valid=bool(post_visible_to(session['user_id'],tid))
@@ -518,47 +519,3 @@ def live_safety_api():
     if not frame:return jsonify(error='frame required'),400
     try:return jsonify(_check_live_frame(frame))
     except Exception:return jsonify(decision='BLOCK',reason='Live safety check unavailable: fail closed',risk=100),503
-
-@child_bp.route('/api/following/')
-@child_required
-def api_following():
-    rows=fetch_all('SELECT u.user_id,u.full_name FROM followers f JOIN users u ON u.user_id=f.following_child_id WHERE f.child_id=%s AND f.approved=TRUE',(session['user_id'],))
-    return jsonify(rows)
-
-@child_bp.route('/api/share-post/',methods=['POST'])
-@child_required
-def api_share_post():
-    data=request.get_json(silent=True) or {}
-    try:receiver=int(data.get('receiver_id'));post_id=int(data.get('post_id'))
-    except:return jsonify(error='invalid request'),400
-    from services.social import is_post_shareable_to
-    from childMessage.service import conversation
-    ok, reason = is_post_shareable_to(post_id, session['user_id'], receiver)
-    if not ok:return jsonify(error=reason),403
-    cid=conversation(session['user_id'],receiver);execute("INSERT INTO child_messages(conversation_id,sender_child_id,receiver_child_id,message_type,shared_post_id,moderation_status) VALUES(%s,%s,%s,'SHARED_POST',%s,'ALLOWED')",(cid,session['user_id'],receiver,post_id));return jsonify(ok=True)
-
-@child_bp.route('/time-limit-reached/')
-@child_required
-def time_limit_reached():return render_template('time_limit_reached.html')
-
-@child_bp.route('/child/edit-profile/',methods=['GET','POST'])
-@child_required
-def edit_profile():
-    if request.method=='POST':
-        from safety.pii_service import scan_pii
-        if scan_pii(_public_profile_text(request.form))['detected']:
-            return render_template('edit_profile.html',profile=get_child_profile(session['user_id']),error='Profile cannot contain phone numbers, addresses, or external contacts.'),400
-        signals,d=evaluate(session['user_id'],'TEXT',_public_profile_text(request.form))
-        if d.action!='ALLOW':return render_template('edit_profile.html',profile=get_child_profile(session['user_id']),error='Profile text could not be published under Kids Mode safety rules.'),400
-        execute('UPDATE child_profiles SET full_name=%s,school_name=%s,location=%s,current_class=%s,bio=%s,updated_at=NOW() WHERE child_id=%s',(request.form.get('full_name'),request.form.get('school_name'),request.form.get('location'),request.form.get('current_class'),request.form.get('bio'),session['user_id']));return redirect('/child/profile/')
-    return render_template('edit_profile.html',profile=get_child_profile(session['user_id']))
-
-@child_bp.route('/followers/')
-@child_required
-def followers():return render_template('people_list.html',title='Followers',people=fetch_all('SELECT u.user_id,u.full_name,cp.profile_picture FROM followers f JOIN users u ON u.user_id=f.child_id LEFT JOIN child_profiles cp ON cp.child_id=u.user_id WHERE f.following_child_id=%s AND f.approved=TRUE',(session['user_id'],)))
-@child_bp.route('/following/')
-@child_required
-def following():return render_template('people_list.html',title='Following',people=fetch_all('SELECT u.user_id,u.full_name,cp.profile_picture FROM followers f JOIN users u ON u.user_id=f.following_child_id LEFT JOIN child_profiles cp ON cp.child_id=u.user_id WHERE f.child_id=%s AND f.approved=TRUE',(session['user_id'],)))
-@child_bp.route('/unfollow/<int:child_id>/',methods=['POST'])
-@child_required
-def unfollow(child_id):unfollow_child(session['user_id'],child_id);return redirect('/following/')
