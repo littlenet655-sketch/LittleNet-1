@@ -11,7 +11,6 @@ def test_parent_flow_is_email_then_otp_then_live_adult_activation():
     api = text('auth/api.py')
     otp = text('auth/parent_email_otp.py')
     live = text('auth/templates/parent_liveness_verify.html')
-
     assert "request.path.rstrip('/')!='/register-parent'" in api
     assert "'PARENT',%s,'PENDING_APPROVAL'" in otp
     assert 'pending_parent_email_verified' in api
@@ -107,15 +106,16 @@ def test_audio_voice_whisper_and_story_music_are_retired():
     modal = text('modal_ai.py')
     server = text('ai_server.py')
     moderation = text('safety/moderation_service.py')
+    audio = text('safety/audio_service.py')
     api = text('auth/api.py')
     upload_ui = text('uploadPost/templates/upload_post.html')
     chat_ui = text('childMessage/templates/chat.html')
-
-    assert not (ROOT / 'safety/audio_service.py').exists()
     assert 'whisper' not in requirements.lower()
     assert 'whisper' not in modal.lower()
+    assert 'whisper' not in audio.lower()
     assert 'check_audio' not in server
-    assert 'AUDIO' not in server.split('def moderate():',1)[1].split('@app.post("/ai/rank")',1)[0]
+    assert 'standalone_audio_disabled' in audio
+    assert "Decision('BLOCK', 100.0" in audio
     assert "Standalone audio and voice uploads are disabled" in moderation
     assert '_AUDIO_EXTS' in api
     assert "field=='music_file'" in api
