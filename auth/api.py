@@ -1,4 +1,5 @@
 import random
+from functools import wraps
 
 from flask import Blueprint,request,jsonify,session,render_template,redirect
 from extensions import csrf,limiter
@@ -23,6 +24,15 @@ def _masked_email(email):
     if not sep:return 'your email address'
     shown=(local[:2]+'***') if len(local)>2 else (local[:1]+'***')
     return f'{shown}@{domain}'
+
+
+def pending_parent_required(fn):
+    @wraps(fn)
+    def wrapped(*args,**kwargs):
+        if not session.get('pending_parent_user_id') or not session.get('pending_parent_email'):
+            return redirect('/register-parent/')
+        return fn(*args,**kwargs)
+    return wrapped
 
 
 @api_bp.before_app_request
@@ -51,11 +61,10 @@ def parent_registration_email_gate():
 
 @api_bp.route('/verify-parent-email/',methods=['GET','POST'])
 @limiter.limit('20 per minute')
+@pending_parent_required
 def verify_parent_email():
-    user_id=session.get('pending_parent_user_id')
-    email=session.get('pending_parent_email')
-    if not user_id or not email:
-        return redirect('/register-parent/')
+    user_id=session['pending_parent_user_id']
+    email=session['pending_parent_email']
 
     error=None
     delivery_error=None
@@ -84,11 +93,10 @@ def verify_parent_email():
 
 @api_bp.route('/verify-parent-email/resend/',methods=['POST'])
 @limiter.limit('3 per 15 minutes')
+@pending_parent_required
 def resend_parent_email():
-    user_id=session.get('pending_parent_user_id')
-    email=session.get('pending_parent_email')
-    if not user_id or not email:
-        return redirect('/register-parent/')
+    user_id=session['pending_parent_user_id']
+    email=session['pending_parent_email']
     from auth.parent_email_otp import resend_parent_email_otp
     try:
         ok,error=resend_parent_email_otp(int(user_id))
