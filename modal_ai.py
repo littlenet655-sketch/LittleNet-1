@@ -3,15 +3,8 @@
 Deploy from the project root with:
     modal deploy modal_ai.py
 
-The resulting HTTPS Web Function exposes the same API expected by
-``safety.remote_client``:
-  GET  /healthz
-  POST /ai/moderate
-  POST /ai/face/embedding
-  POST /ai/face/verify
-
-Create a Modal Secret named ``littlenet-ai-secrets`` containing at least
-``AI_SHARED_SECRET`` before deploying.
+Locked scope: text/image/video moderation plus guardian/child face verification.
+Standalone audio, voice and story-music moderation are intentionally excluded.
 """
 from pathlib import Path
 import os
@@ -24,8 +17,6 @@ app = modal.App("littlenet-ai")
 model_cache = modal.Volume.from_name("littlenet-model-cache", create_if_missing=True)
 ai_secret = modal.Secret.from_name("littlenet-ai-secrets", required_keys=["AI_SHARED_SECRET"])
 
-# Build all heavyweight model dependencies once. Model *weights* remain in the
-# persistent volume so redeploying source code does not repeatedly download them.
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg", "libgl1", "libglib2.0-0", "libgomp1")
@@ -39,7 +30,7 @@ image = (
         "deepface>=0.0.93,<0.1",
         "tensorflow>=2.16,<2.19",
         "tf-keras>=2.16,<2.19",
-        "openai-whisper>=20250625",
+        "ultralytics>=8.3,<9",
         "opencv-python-headless==4.11.0.86",
         "Flask==3.1.2",
         "python-dotenv==1.1.1",
@@ -53,12 +44,12 @@ image = (
             "LITTLENET_AI_SERVER": "1",
             "LITTLENET_DEVICE": "cuda",
             "LITTLENET_MODEL_CACHE": "/cache/models",
-            "LITTLENET_WHISPER_MODEL": "base",
             "HF_HOME": "/cache/huggingface",
             "HF_HUB_CACHE": "/cache/huggingface/hub",
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
-            "LITTLENET_DEPLOY_VERSION": "4",
+            "LITTLENET_YOLO_WEIGHTS": "/root/littlenet/yolov8n-oiv7.pt",
+            "LITTLENET_DEPLOY_VERSION": "5",
         }
     )
     .add_local_dir(
@@ -103,11 +94,9 @@ image = (
 @modal.concurrent(max_inputs=2, target_inputs=1)
 @modal.wsgi_app()
 def ai_web():
-    """Serve the existing Flask AI API on a Modal T4 container."""
     os.chdir("/root/littlenet")
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     from ai_server import app as flask_ai_app
-
     return flask_ai_app
 
 
@@ -121,7 +110,7 @@ def ai_web():
     timeout=1800,
 )
 def warm_models():
-    """Explicitly warm/download all planned AI models into the cache volume."""
+    """Warm every model in the locked moderation/face stack."""
     os.chdir("/root/littlenet")
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     os.environ["LITTLENET_AI_SERVER"] = "1"
@@ -131,9 +120,8 @@ def warm_models():
 
     def run(name, fn):
         try:
-            fn()
-            results[name] = {"ok": True}
-        except Exception as exc:  # diagnostic command: return all failures at once
+            fn(); results[name] = {"ok": True}
+        except Exception as exc:
             results[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
     run("detoxify", lambda: __import__("detoxify").Detoxify("original"))
@@ -143,33 +131,30 @@ def warm_models():
         from transformers import CLIPModel, CLIPProcessor
         CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
-
     run("clip", clip)
 
     def falconsai():
         from transformers import pipeline
         pipeline("image-classification", model="Falconsai/nsfw_image_detection", device=0)
-
     run("falconsai_nsfw", falconsai)
+
+    def yolo():
+        from ultralytics import YOLO
+        model = YOLO("/root/littlenet/yolov8n-oiv7.pt")
+        _ = model.names
+    run("yolo_oiv7", yolo)
 
     def face():
         from deepface import DeepFace
         DeepFace.build_model("Facenet512")
-
     run("deepface_facenet512", face)
 
-    def whisper_model():
-        import whisper
-        whisper.load_model("base", download_root="/cache/models/whisper")
-
-    run("whisper_base", whisper_model)
     model_cache.commit()
     return results
 
 
 @app.local_entrypoint()
 def main():
-    """Run ``modal run modal_ai.py`` to print a model warm-up report."""
     report = warm_models.remote()
     for name, result in report.items():
         print(f"{'OK' if result['ok'] else 'FAIL':4} {name}: {result.get('error', '')}")
