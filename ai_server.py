@@ -141,5 +141,24 @@ def face_verify_endpoint():
             try: os.unlink(path)
             except OSError: pass
 
+
+@app.post("/ai/face/adult")
+def face_adult_endpoint():
+    """Run anti-spoof liveness plus adult-age analysis for guardian verification."""
+    if not authorized(): return deny()
+    path = None
+    try:
+        path = save_upload()
+        from safety.face_service import verify_adult_face
+        result = verify_adult_face(path)
+        return jsonify({"ok": True, "result": _sanitize(result)})
+    except Exception as exc:
+        reason = "liveness_failed" if any(k in str(exc).lower() for k in ("liveness", "spoof", "real")) else "adult_face_error"
+        return jsonify({"ok": False, "reason": reason}), 422
+    finally:
+        if path:
+            try: os.unlink(path)
+            except OSError: pass
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8081")))
