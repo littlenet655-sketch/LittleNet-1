@@ -18,7 +18,24 @@ def decide(signals:dict, safety_level='STRICT', adult_threshold=0.40):
         reason='grooming/coercion hard blocked' if category=='GROOMING' or signals.get('deterministic_grooming') else 'severe abuse/threat hard blocked'
         return Decision('BLOCK',100.0,reason)
     if total_failure: return Decision('BLOCK',100.0,'AI safety unavailable: fail closed')
-    if adult >= adult_threshold or category in ADULT_CATEGORIES:return Decision('BLOCK',max(adult*100,90),'18+ content hard blocked')
+
+    # Visual NSFW models have different score calibration. For IMAGE/VIDEO model
+    # diagnostics, use model-specific thresholds before the generic adult score.
+    visual_nsfw=None
+    if signals.get('model_signals') and category in {'IMAGE','VIDEO','ADULT','NSFW','NUDITY','EXPLICIT'}:
+        try:
+            from .nsfw_policy import classify_signals as classify_nsfw
+            visual_nsfw=classify_nsfw(signals)
+        except Exception:
+            visual_nsfw=None
+    if visual_nsfw and visual_nsfw.get('has_evidence'):
+        top=visual_nsfw.get('top') or {}
+        if visual_nsfw.get('block'):
+            return Decision('BLOCK',max(float(top.get('score',0))*100,90),f"18+ visual content hard blocked: {top.get('model','nsfw')} evidence")
+        if visual_nsfw.get('review'):
+            return Decision('REVIEW',max(float(top.get('score',0))*100,50),f"possible 18+ visual content requires parent review: {top.get('model','nsfw')} evidence")
+    elif adult >= adult_threshold or category in ADULT_CATEGORIES:
+        return Decision('BLOCK',max(adult*100,90),'18+ content hard blocked')
 
     # Do not rely only on the legacy weapon_score mapping. Inspect raw YOLO
     # detections as well so OpenImages labels such as Axe, Handgun and Kitchen
