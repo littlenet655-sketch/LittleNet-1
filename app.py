@@ -11,17 +11,17 @@ from parent.routes import parent_bp
 from parent.api import parent_api_bp
 from quiz.routes import quiz_bp
 from admin.routes import admin_bp
-from database.connection import fetch_one
+from database.connection import fetch_one, execute
 from services.usage import lock_state,heartbeat
-from quiz.service import quiz_due
+from quiz.service import quiz_due, needs_onboarding_quiz
 from services.controls import controls_for_child, feature_allowed, effective_categories, quiet_hours_state
 from services.i18n import language_for_user, tr, LANGUAGES
 
+
 def create_app():
     app=Flask(__name__);app.config.from_object(Config)
-    # Railway/Modal terminate TLS before Flask. Honor the single trusted proxy
-    # hop so request.is_secure, redirects and HSTS reflect the public HTTPS URL.
     app.wsgi_app=ProxyFix(app.wsgi_app,x_for=1,x_proto=1,x_host=1,x_port=1)
+
     def _dynamic_cookie_secure(flask_app):
         if not flask_app.config.get('SESSION_COOKIE_SECURE', False):
             return False
@@ -29,14 +29,17 @@ def create_app():
         if has_request_context() and request:
             return request.is_secure
         return flask_app.config.get('SESSION_COOKIE_SECURE', False)
+
     app.session_interface.get_cookie_secure = _dynamic_cookie_secure
     if Config.BASE_URL.startswith('https://'):
         if Config.SECRET_KEY=='change-me-before-demo' or len(Config.SECRET_KEY)<32:
             raise RuntimeError('Production SECRET_KEY must be a random value of at least 32 characters')
         if Config.AI_SERVICE_URL and not Config.AI_SHARED_SECRET:
             raise RuntimeError('AI_SHARED_SECRET is required when AI_SERVICE_URL is configured')
+
     csrf.init_app(app);limiter.init_app(app)
     from flask_wtf.csrf import CSRFError
+
     @app.errorhandler(CSRFError)
     def handle_csrf_error(e):
         if request.path.startswith(('/login', '/switch-mode', '/register', '/logout')):
@@ -44,13 +47,58 @@ def create_app():
             return redirect('/login/?error=Your+session+was+refreshed.+Please+enter+your+credentials+to+continue.')
         return render_template('csrf_error.html', reason=e.description), 400
 
-    for bp in [auth_bp,api_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp]:app.register_blueprint(bp)
+    for bp in [auth_bp,api_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp]:
+        app.register_blueprint(bp)
+
+    @app.before_request
+    def signup_preflight():
+        """Give deterministic, human-friendly duplicate errors before DB constraints fire."""
+        if request.method != 'POST':
+            return None
+        path = request.path.rstrip('/')
+        if path == '/register-parent':
+            username=(request.form.get('username') or '').strip()
+            email=(request.form.get('email') or '').strip().lower()
+            row=fetch_one(
+                'SELECT username,email FROM users WHERE LOWER(username)=LOWER(%s) OR LOWER(email)=LOWER(%s) LIMIT 1',
+                (username,email)
+            )
+            if row:
+                if (row.get('username') or '').casefold()==username.casefold():
+                    error=f"The username '{username}' already exists. Please choose a different username."
+                else:
+                    error=f"The email '{email}' is already used by a LittleNet account. Please log in instead."
+                import random
+                n1=random.randint(14,28);n2=random.randint(13,29)
+                return render_template('parent_register_direct.html',error=error,challenge_q=f'{n1} + {n2}',challenge_expected=str(n1+n2)),409
+        if path == '/parent/create-child' and session.get('role')=='PARENT':
+            username=(request.form.get('username') or '').strip()
+            email=(request.form.get('email') or '').strip().lower()
+            if username or email:
+                row=fetch_one(
+                    'SELECT username,email FROM users WHERE LOWER(username)=LOWER(%s) OR (%s<>\'\' AND LOWER(email)=LOWER(%s)) LIMIT 1',
+                    (username,email,email)
+                )
+                if row:
+                    if (row.get('username') or '').casefold()==username.casefold():
+                        error=f"The username '{username}' already exists. Choose another username for your child."
+                    else:
+                        error=f"The email '{email}' is already used. Use a different child email or log in to the existing account."
+                    return render_template('parent_create_child.html',error=error),409
+        return None
 
     @app.before_request
     def enforce_kids_controls():
-        if session.get('role')!='CHILD':return None
+        if session.get('role')!='CHILD':
+            return None
         path=request.path
-        if path.startswith('/static/') or path.startswith('/uploads/') or path in {'/logout/','/switch-mode/','/language/','/api/usage/heartbeat/','/quiet-hours/'}:return None
+        if path.startswith('/static/') or path.startswith('/uploads/') or path in {'/logout/','/switch-mode/','/language/','/api/usage/heartbeat/','/quiet-hours/'}:
+            return None
+        if path.startswith('/quiz/'):
+            return None
+        if needs_onboarding_quiz(session['user_id']):
+            return redirect('/quiz/start/?onboarding=1')
+
         feature=None
         if path.startswith(('/reels/','/api/reels/')):feature='reels'
         elif path.startswith(('/stories/','/story/','/api/story-view/')):feature='stories'
@@ -64,8 +112,6 @@ def create_app():
         quiet=quiet_hours_state(session['user_id'])
         if quiet['active']:
             return render_template('quiet_hours.html',quiet=quiet),403
-        if path.startswith('/quiz/'):
-            return None
         key=session.get('usage_session_key')
         if key:heartbeat(key)
         locked,_=lock_state(session['user_id'])
@@ -75,8 +121,6 @@ def create_app():
 
     @app.route('/sw.js')
     def service_worker():
-        # Served from the root so its default scope covers the whole app, not
-        # just /static/ -- required for the manifest's start_url to work.
         response = send_from_directory('static', 'sw.js', mimetype='application/javascript')
         response.headers['Service-Worker-Allowed'] = '/'
         return response
@@ -120,8 +164,6 @@ def create_app():
 
     @app.route('/healthz')
     def healthz():
-        # Liveness for the web container itself. Keep external AI out of this
-        # check so a temporary inference outage does not cause a deploy loop.
         try:
             row=fetch_one('SELECT 1 ok')
             return jsonify(status='ok',database=bool(row and row['ok']==1))
@@ -130,6 +172,7 @@ def create_app():
 
     @app.route('/readyz')
     def readyz():
+        import os
         db_ok=False; ai_ok=None; ai_detail='local'
         try:
             row=fetch_one('SELECT 1 ok'); db_ok=bool(row and row['ok']==1)
@@ -143,17 +186,36 @@ def create_app():
                 ai_ok=True;ai_detail='local'
         except Exception:
             ai_ok=False;ai_detail='remote_unavailable'
-        ok=db_ok and bool(ai_ok)
-        return jsonify(status='ready' if ok else 'degraded',database=db_ok,ai=ai_ok,ai_mode=ai_detail),(200 if ok else 503)
+        mail_ok=bool((os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')) and (os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')))
+        ok=db_ok and bool(ai_ok) and mail_ok
+        return jsonify(status='ready' if ok else 'degraded',database=db_ok,ai=ai_ok,ai_mode=ai_detail,mail=mail_ok,mail_mode='smtp' if mail_ok else 'not_configured'),(200 if ok else 503)
 
     @app.after_request
     def security_headers(response):
-        # Cache control for high-speed client rendering (reduces network load dramatically)
+        # Parent-created child accounts are converted from email-only activation
+        # to the camera + liveness guardian verification flow. The legacy email
+        # sent inside create_child_by_parent becomes unusable after this state
+        # transition; a fresh verification email is sent immediately below.
+        if request.method=='POST' and request.path.rstrip('/')=='/parent/create-child' and session.get('role')=='PARENT' and response.status_code<400:
+            try:
+                parent=fetch_one('SELECT full_name,email FROM users WHERE user_id=%s AND role=\'PARENT\'',(session['user_id'],))
+                mapping=fetch_one('''SELECT pcm.map_id,pcm.child_id,pcm.approval_token,pcm.approval_status,u.full_name AS child_name,u.username,u.age
+                    FROM parent_child_map pcm JOIN users u ON u.user_id=pcm.child_id
+                    WHERE pcm.parent_id=%s AND pcm.approved=FALSE
+                    ORDER BY pcm.created_at DESC LIMIT 1''',(session['user_id'],))
+                if parent and mapping and mapping.get('approval_status')=='PENDING_EMAIL_CONFIRMATION':
+                    token=mapping['approval_token']
+                    execute("UPDATE parent_child_map SET verification_token=%s,approval_status='PENDING_PARENT_VERIFICATION' WHERE map_id=%s",(token,mapping['map_id']))
+                    from mailg.send_email import send_email
+                    verify_url=f"{Config.BASE_URL.rstrip('/')}/verify-parent/{token}/"
+                    send_email(parent['email'],f"LittleNet: Verify yourself to activate {mapping['child_name']}",f"""<h2>Complete guardian camera verification</h2><p>You created the Kids Mode account for <strong>{mapping['child_name']}</strong> (@{mapping['username']}, age {mapping['age']}).</p><p>Before this child can log in, complete live camera liveness and adult guardian verification.</p><p><a href='{verify_url}' style='display:inline-block;padding:12px 22px;background:#0095F6;color:#fff;text-decoration:none;border-radius:10px;font-weight:700'>Open camera verification</a></p>""")
+            except Exception:
+                app.logger.exception('Could not transition new child to guardian camera verification')
+
         if request.path.startswith('/static/'):
             response.headers['Cache-Control'] = 'public, max-age=604800, immutable'
         elif request.path.startswith('/uploads/'):
             response.headers['Cache-Control'] = 'public, max-age=86400'
-
         response.headers.setdefault('X-Content-Type-Options','nosniff')
         response.headers.setdefault('X-Frame-Options','DENY')
         response.headers.setdefault('Referrer-Policy','same-origin')
@@ -183,15 +245,7 @@ def create_app():
                 activity_count = int((pending_reqs or {}).get('n', 0)) + int((unread_notifs or {}).get('n', 0))
             except Exception:
                 activity_count = 0
-        return {
-            't':lambda key:tr(lang,key),
-            'ui_language':lang,
-            'ui_languages':LANGUAGES,
-            'child_controls':ctrls,
-            'child_effective_categories':effective_categories(uid) if uid and session.get('role')=='CHILD' else [],
-            'nav_avatar':avatar,
-            'unread_activity_count':activity_count,
-        }
+        return {'t':lambda key:tr(lang,key),'ui_language':lang,'ui_languages':LANGUAGES,'child_controls':ctrls,'child_effective_categories':effective_categories(uid) if uid and session.get('role')=='CHILD' else [],'nav_avatar':avatar,'unread_activity_count':activity_count}
 
     @app.errorhandler(413)
     def too_large(_):return jsonify(error='upload too large'),413
@@ -208,5 +262,7 @@ def create_app():
             return jsonify(error='Internal Server Error'), 500
         return render_template('500.html'), 500
     return app
+
+
 app=create_app()
 if __name__=='__main__':app.run(host='0.0.0.0',port=5000,debug=False)

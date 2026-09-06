@@ -3,24 +3,64 @@ from database.connection import fetch_one, fetch_all, execute
 
 # ─── Age helpers ──────────────────────────────────────────────────────────────
 
+def _age_from_profile_or_user(cid):
+    """Return the best available child age without silently inventing one."""
+    r = fetch_one(
+        '''SELECT cp.date_of_birth, cp.age AS profile_age, u.age AS user_age
+           FROM users u
+           LEFT JOIN child_profiles cp ON cp.child_id=u.user_id
+           WHERE u.user_id=%s''',
+        (cid,)
+    )
+    if not r:
+        return None
+    dob = r.get('date_of_birth')
+    if dob:
+        t = date.today()
+        return t.year - dob.year - ((t.month, t.day) < (dob.month, dob.day))
+    for key in ('profile_age', 'user_age'):
+        try:
+            value = int(r.get(key))
+            if 4 <= value <= 18:
+                return value
+        except (TypeError, ValueError):
+            pass
+    return None
+
+
 def age_group(cid):
-    r = fetch_one('SELECT date_of_birth FROM child_profiles WHERE child_id=%s', (cid,))
-    if not r or not r['date_of_birth']:
-        return '9-11'  # Safe default for children without DOB
-    d = r['date_of_birth']; t = date.today()
-    a = t.year - d.year - ((t.month, t.day) < (d.month, d.day))
-    return '6-8' if 6 <= a <= 8 else '9-11' if 9 <= a <= 11 else '12-13' if 12 <= a <= 13 else '9-11'
+    """Map a child to the quiz/feed age bands used by LittleNet."""
+    a = _age_from_profile_or_user(cid)
+    if a is None:
+        return '9-11'  # conservative middle-band fallback for legacy demo rows
+    if a <= 8:
+        return '6-8'
+    if a <= 11:
+        return '9-11'
+    if a <= 13:
+        return '12-13'
+    return '14-18'
+
 
 def learning_age_group(cid):
-    g = age_group(cid)
-    if g:
-        return g
-    return '9-11'  # Default
+    return age_group(cid) or '9-11'
+
+
+def needs_onboarding_quiz(cid, required_questions=2):
+    """New parent-created child accounts complete a short age-matched quiz first."""
+    created = fetch_one(
+        "SELECT 1 FROM activity_logs WHERE child_id=%s AND activity_type='ACCOUNT_CREATED_BY_PARENT' LIMIT 1",
+        (cid,)
+    )
+    if not created:
+        return False
+    row = fetch_one('SELECT COUNT(*) AS n FROM child_quiz_attempts WHERE child_id=%s', (cid,)) or {'n': 0}
+    return int(row.get('n') or 0) < int(required_questions)
 
 # ─── Classic quiz bank (used by quiz page) ────────────────────────────────────
 
 def quizzes(cid, limit=5):
-    """Return random unseen questions for the quiz page. Falls back to any if all seen."""
+    """Return random unseen age-matched questions; repeat only after exhaustion."""
     g = age_group(cid)
     if not g:
         return []
@@ -34,7 +74,6 @@ def quizzes(cid, limit=5):
         (g, cid, limit)
     )
     if not rows:
-        # All questions answered — allow repeats so the quiz page never breaks
         rows = fetch_all(
             'SELECT * FROM quizzes WHERE age_group=%s ORDER BY RANDOM() LIMIT %s',
             (g, limit)
@@ -44,28 +83,26 @@ def quizzes(cid, limit=5):
 # ─── Feed quiz — single unseen question injected between reels ────────────────
 
 def next_feed_quiz(cid):
-    """Return ONE unseen question for the feed quiz card.
-    Prioritizes child_personalized_quiz_pool, then adaptive difficulty, then general bank."""
+    """Return ONE unseen question, preferring personalized/adaptive material."""
     g = age_group(cid)
     if not g:
         return None
 
-    # 1. Check personalized pool first
     try:
         p_row = fetch_one('''
             SELECT q.*, p.pool_id FROM child_personalized_quiz_pool p
             JOIN quizzes q ON q.quiz_id = p.quiz_id
             WHERE p.child_id = %s AND p.served = FALSE
+              AND q.age_group=%s
               AND q.quiz_id NOT IN (SELECT quiz_id FROM child_quiz_attempts WHERE child_id=%s)
             ORDER BY p.created_at ASC LIMIT 1
-        ''', (cid, cid))
+        ''', (cid, g, cid))
         if p_row:
             execute('UPDATE child_personalized_quiz_pool SET served=TRUE WHERE pool_id=%s', (p_row['pool_id'],))
             return p_row
     except Exception:
         pass
 
-    # 2. Check adaptive difficulty level
     from quiz.learning_service import get_child_difficulty_level, trigger_background_refill_if_needed, populate_child_personalized_pool
     diff = get_child_difficulty_level(cid)
 
@@ -89,14 +126,13 @@ def next_feed_quiz(cid):
             (g, cid)
         )
 
-    # 3. Fire non-blocking async refill and personalization in background
     try:
         trigger_background_refill_if_needed(g, cid)
         populate_child_personalized_pool(cid, g)
     except Exception:
         pass
-
     return row
+
 
 def _unseen_count(cid, g):
     r = fetch_one(
@@ -112,9 +148,9 @@ def _unseen_count(cid, g):
 # ─── Feed quiz answer submission ──────────────────────────────────────────────
 
 def record_feed_answer(cid, quiz_id, selected_answer):
-    """Record a feed-quiz answer. Returns (is_correct, correct_answer, xp_awarded, explanation)."""
+    """Record an age-authorized feed answer and award XP."""
     q = fetch_one('SELECT * FROM quizzes WHERE quiz_id=%s', (quiz_id,))
-    if not q:
+    if not q or q.get('age_group') != age_group(cid):
         return False, '', 0, ''
     is_correct = (str(selected_answer).strip() == str(q['correct_answer']).strip())
     execute(
@@ -129,7 +165,6 @@ def record_feed_answer(cid, quiz_id, selected_answer):
             (cid, xp)
         )
 
-    # If vocabulary word is attached, update spaced repetition tracking
     if q.get('vocabulary_word') and q.get('language'):
         try:
             from quiz.learning_service import record_vocabulary_attempt
@@ -137,15 +172,15 @@ def record_feed_answer(cid, quiz_id, selected_answer):
         except Exception:
             pass
 
-    # Reset bump counter so next quiz triggers after another 3-4 posts
     reset(cid)
     explanation = q.get('explanation') or ''
     return is_correct, q['correct_answer'], xp, explanation
 
-# ─── Post-counter helpers ─────────────────────────────────────────────────────
+# ─── Post-counter helpers ──────────────────────────────────────────────────────
 
 def setting(cid):
     return fetch_one('SELECT * FROM parent_quiz_settings WHERE child_id=%s', (cid,))
+
 
 def quiz_due(cid):
     s = setting(cid)
@@ -154,12 +189,14 @@ def quiz_due(cid):
     p = fetch_one('SELECT posts_seen FROM child_quiz_progress WHERE child_id=%s', (cid,))
     return bool(p and p['posts_seen'] >= s['quiz_frequency'])
 
+
 def bump(cid):
     execute(
         '''INSERT INTO child_quiz_progress(child_id,posts_seen) VALUES(%s,1)
            ON CONFLICT(child_id) DO UPDATE SET posts_seen=child_quiz_progress.posts_seen+1,last_updated=NOW()''',
         (cid,)
     )
+
 
 def reset(cid):
     execute(
@@ -183,6 +220,7 @@ def learning_challenges(cid):
            ORDER BY a.completed NULLS FIRST, c.challenge_id''',
         (cid, g)
     )
+
 
 def learning_points(cid):
     row = fetch_one(
