@@ -20,7 +20,8 @@
       {% elif m.message_type=='IMAGE' %}<a href="/{{ m.media_path }}" target="_blank" rel="noopener"><img class="chat-media" src="/{{ m.media_path }}" loading="lazy" alt="Shared image"></a>
       {% elif m.message_type=='VIDEO' %}<video class="chat-media" controls playsinline preload="metadata" src="/{{ m.media_path }}"></video>
       {% elif m.message_type=='FILE' %}<a class="chat-file" href="/{{ m.media_path }}" target="_blank" rel="noopener">{{ ico.icon('file',16) }} Open attachment</a>
-      {% elif m.message_type in ['VOICE','AUDIO'] %}<span class="chat-file">Legacy audio message is unavailable in the current LittleNet interface.</span>
+      {% elif m.message_type=='VOICE' %}<span class="chat-file">Legacy audio message is unavailable in the current LittleNet interface.</span>
+      {% elif m.message_type=='AUDIO' %}<span class="chat-file">Legacy audio message is unavailable in the current LittleNet interface.</span>
       {% elif m.message_type=='SHARED_POST' %}<a class="shared-post" href="/post/{{ m.shared_post_id }}/">▣ Shared safe post</a>{% endif %}
 
       {% if m.moderation_status=='REVIEW' %}<small class="message-status">Waiting for parent review</small>
