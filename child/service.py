@@ -73,8 +73,8 @@ def discoverable_child_ids(cid):
              OR (
                 COALESCE(TRIM(cp.school_name),'')<>''
                 AND COALESCE(TRIM(cp.current_class),'')<>''
-                AND LOWER(TRIM(cp.school_name))=LOWER(TRIM(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')))
-                AND LOWER(TRIM(cp.current_class))=LOWER(TRIM(COALESCE((SELECT current_class FROM viewer LIMIT 1),'')))
+                AND TRIM(LOWER(cp.school_name))=TRIM(LOWER(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')))
+                AND TRIM(LOWER(cp.current_class))=TRIM(LOWER(COALESCE((SELECT current_class FROM viewer LIMIT 1),'')))
              )
              OR u.user_id IN (SELECT friend_id FROM approved_friends)
              OR u.user_id IN (SELECT peer_id FROM pending_peers)
@@ -95,8 +95,7 @@ def discoverable_children(cid,search_term=None,limit=30):
     if not ids:return []
     try:limit=max(1,min(int(limit),50))
     except (TypeError,ValueError):limit=30
-    term=(search_term or '').strip()
-    pattern=f"%{term}%"
+    term=(search_term or '').strip();pattern=f"%{term}%"
     return fetch_all('''WITH viewer AS (
           SELECT cp.school_name,cp.current_class,pcm.parent_id
           FROM child_profiles cp LEFT JOIN parent_child_map pcm ON pcm.child_id=cp.child_id
@@ -110,8 +109,8 @@ def discoverable_children(cid,search_term=None,limit=30):
             WHEN EXISTS(SELECT 1 FROM followers f WHERE f.approved=FALSE
                         AND ((f.child_id=%s AND f.following_child_id=u.user_id) OR (f.child_id=u.user_id AND f.following_child_id=%s))) THEN 'Pending parent approval'
             WHEN COALESCE(TRIM(cp.school_name),'')<>'' AND COALESCE(TRIM(cp.current_class),'')<>''
-                 AND LOWER(TRIM(cp.school_name))=LOWER(TRIM(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')))
-                 AND LOWER(TRIM(cp.current_class))=LOWER(TRIM(COALESCE((SELECT current_class FROM viewer LIMIT 1),''))) THEN 'Same class'
+                 AND TRIM(LOWER(cp.school_name))=TRIM(LOWER(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')))
+                 AND TRIM(LOWER(cp.current_class))=TRIM(LOWER(COALESCE((SELECT current_class FROM viewer LIMIT 1),''))) THEN 'Same class'
             ELSE 'Approved friend network'
           END AS recommendation_reason
         FROM users u
@@ -124,15 +123,14 @@ def discoverable_children(cid,search_term=None,limit=30):
             WHEN EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'
                         AND ((f.child_id=%s AND f.following_child_id=u.user_id) OR (f.child_id=u.user_id AND f.following_child_id=%s))) THEN 1
             WHEN COALESCE(TRIM(cp.school_name),'')<>'' AND COALESCE(TRIM(cp.current_class),'')<>''
-                 AND LOWER(TRIM(cp.school_name))=LOWER(TRIM(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')))
-                 AND LOWER(TRIM(cp.current_class))=LOWER(TRIM(COALESCE((SELECT current_class FROM viewer LIMIT 1),''))) THEN 2
+                 AND TRIM(LOWER(cp.school_name))=TRIM(LOWER(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')))
+                 AND TRIM(LOWER(cp.current_class))=TRIM(LOWER(COALESCE((SELECT current_class FROM viewer LIMIT 1),''))) THEN 2
             ELSE 3 END,
             u.full_name,u.user_id
         LIMIT %s''',(cid,cid,cid,cid,cid,ids,term,pattern,pattern,cid,cid,limit))
 
 
-def get_random_children(cid):
-    return discoverable_children(cid,None,30)
+def get_random_children(cid):return discoverable_children(cid,None,30)
 
 def counts(cid):
     friends=(fetch_one("""SELECT COUNT(DISTINCT CASE WHEN child_id=%s THEN following_child_id ELSE child_id END) n
@@ -140,14 +138,10 @@ def counts(cid):
     return {'posts':fetch_one("SELECT COUNT(*) n FROM posts WHERE child_id=%s AND is_story=FALSE AND moderation_status='ALLOWED' AND is_safe=TRUE",(cid,))['n'],'followers':friends,'following':friends}
 
 def replace_profile_tags(cid,skills,interests,ambitions):
-    for table in ['child_skills','child_interests','child_ambitions']:
-        execute(f'DELETE FROM {table} WHERE child_id=%s',(cid,))
-    for value in [x.strip() for x in skills if x.strip()]:
-        execute('INSERT INTO child_skills(child_id,skill_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
-    for value in [x.strip() for x in interests if x.strip()]:
-        execute('INSERT INTO child_interests(child_id,interest_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
-    for value in [x.strip() for x in ambitions if x.strip()]:
-        execute('INSERT INTO child_ambitions(child_id,ambition_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
+    for table in ['child_skills','child_interests','child_ambitions']:execute(f'DELETE FROM {table} WHERE child_id=%s',(cid,))
+    for value in [x.strip() for x in skills if x.strip()]:execute('INSERT INTO child_skills(child_id,skill_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
+    for value in [x.strip() for x in interests if x.strip()]:execute('INSERT INTO child_interests(child_id,interest_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
+    for value in [x.strip() for x in ambitions if x.strip()]:execute('INSERT INTO child_ambitions(child_id,ambition_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
 
 def recommended_posts(cid,limit=30,offset=0):
     from services.recommendation import personalized_posts
