@@ -46,11 +46,20 @@ def _client():
 
 
 def upload_file(local_path: str, key: str, content_type: Optional[str] = None) -> str:
-    """Upload one already-moderated file and return its DB storage reference."""
+    """Upload one moderated file and return its private R2 DB reference.
+
+    LittleNet intentionally has no speech/audio moderation. Any video is therefore
+    converted to a silent video immediately before persistence. If ffmpeg/ffprobe
+    cannot prove the audio track is gone, the exception propagates and the caller's
+    existing R2 transaction marks the child media BLOCKED instead of publishing it.
+    """
     path = Path(local_path)
     if not path.is_file():
         raise FileNotFoundError(local_path)
     ctype = content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    if ctype.lower().startswith('video/'):
+        from services.media_sanitizer import strip_video_audio_in_place
+        strip_video_audio_in_place(str(path))
     _client().upload_file(
         str(path),
         os.environ["R2_BUCKET"],
