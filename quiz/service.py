@@ -32,7 +32,7 @@ def age_group(cid):
     """Map a child to the quiz/feed age bands used by LittleNet."""
     a = _age_from_profile_or_user(cid)
     if a is None:
-        return '9-11'  # conservative middle-band fallback for legacy demo rows
+        return '9-11'
     if a <= 8:
         return '6-8'
     if a <= 11:
@@ -47,12 +47,17 @@ def learning_age_group(cid):
 
 
 def needs_onboarding_quiz(cid, required_questions=2):
-    """New parent-created child accounts complete a short age-matched quiz first."""
+    """Require face enrollment first, then the short age-matched onboarding quiz."""
     created = fetch_one(
         "SELECT 1 FROM activity_logs WHERE child_id=%s AND activity_type='ACCOUNT_CREATED_BY_PARENT' LIMIT 1",
         (cid,)
     )
     if not created:
+        return False
+    # Do not let the global quiz gate jump ahead of compulsory face enrollment.
+    # The child_required decorator redirects the child to /face/enroll/ first.
+    face = fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1', (cid,))
+    if not face:
         return False
     row = fetch_one('SELECT COUNT(*) AS n FROM child_quiz_attempts WHERE child_id=%s', (cid,)) or {'n': 0}
     return int(row.get('n') or 0) < int(required_questions)
