@@ -73,13 +73,12 @@ def check_text(text:str):
     from .remote_client import enabled, moderate_text
     text=(text or '').strip();low=text.lower()
 
-    # Deterministic hard-safety evidence is computed locally first so a remote
-    # classifier outage can never erase known grooming/18+/severe-abuse signals.
     adult=1.0 if any(t in low for t in ADULT_TERMS) else 0.0
     profanity=1.0 if any(re.search(r'\b'+re.escape(t)+r'\b',low) for t in PROFANE) else 0.0
     bullying=.90 if any(t in low for t in BULLYING_TERMS) else 0.0
     severe=1.0 if any(t in low for t in SEVERE_ABUSE_TERMS) else 0.0
     grooming=1.0 if any(re.search(p,low) for p in GROOMING_PATTERNS) else 0.0
+    remote_failed=False
 
     if enabled():
         try:
@@ -96,11 +95,11 @@ def check_text(text:str):
             remote['deterministic_severe_abuse']=bool(severe)
             return normalize_signals(remote,category='TEXT')
         except Exception:
-            # Continue with local deterministic/ML checks rather than silently
-            # downgrading the message because a remote service failed.
-            pass
+            remote_failed=True
 
-    toxicity=max(profanity,bullying,severe,grooming);sexual=adult;ran=0;errors=[];extras={}
+    toxicity=max(profanity,bullying,severe,grooming);sexual=adult;ran=0
+    errors=['remote_ai_unavailable'] if remote_failed else []
+    extras={}
     if text:
         try:
             scores=timed_call('detoxify',lambda:_detox_scores(text),timeout_seconds('detoxify',90));ran+=1
@@ -120,12 +119,15 @@ def check_text(text:str):
     elif bullying>=.6:category='CYBERBULLYING'
     else:category='TEXT'
 
+    deterministic=adult>0 or bullying>0 or profanity>0 or severe>0 or grooming>0
+    total_failure=bool(text) and ran==0 and not deterministic
+    partial_failure=bool(text) and bool(errors) and (ran>0 or deterministic)
     result={
         'adult_score':sexual,'sexual_score':sexual,'violence_score':severe,'weapon_score':0,
         'toxicity_score':toxicity,'general_score':max(sexual,toxicity,severe),'category':category,
         'deterministic_grooming':bool(grooming),'deterministic_severe_abuse':bool(severe),
-        'total_safety_failure':bool(text) and ran==0 and adult==0 and bullying==0 and profanity==0 and severe==0 and grooming==0,
-        'partial_safety_failure':bool(text) and bool(errors) and (ran>0 or adult>0 or bullying>0 or profanity>0 or severe>0 or grooming>0),
+        'total_safety_failure':total_failure,
+        'partial_safety_failure':partial_failure,
         'errors':errors,**extras
     }
     return normalize_signals(result,category='TEXT')
