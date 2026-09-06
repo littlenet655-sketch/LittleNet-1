@@ -4,6 +4,7 @@ from config import Config
 from extensions import csrf,limiter
 from auth.routes import auth_bp
 from auth.api import api_bp
+from child.search_routes import content_search_bp
 from child.routes import child_bp
 from uploadPost.routes import upload_bp
 from childMessage.routes import child_message_bp
@@ -47,7 +48,7 @@ def create_app():
             return redirect('/login/?error=Your+session+was+refreshed.+Please+enter+your+credentials+to+continue.')
         return render_template('csrf_error.html', reason=e.description), 400
 
-    for bp in [auth_bp,api_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp]:
+    for bp in [auth_bp,api_bp,content_search_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp]:
         app.register_blueprint(bp)
 
     @app.before_request
@@ -137,10 +138,15 @@ def create_app():
         elif path.startswith(('/messages/','/chat/','/send-message/','/send-media/','/share-post/','/api/chat/','/api/share-post/')):feature='messaging'
         elif path.startswith(('/upload-story/','/api/delete-story/','/api/edit-story-caption/')):feature='stories'
         elif path.startswith('/child/upload-post/'):feature='posting'
-        elif path.startswith('/discover/'):feature='discover'
+        elif path.startswith(('/discover/','/api/discover/')):feature='discover'
         if feature and not feature_allowed(session['user_id'],feature):
             if path.startswith('/api/') or request.is_json:return jsonify(error='disabled_by_parent',feature=feature),403
             return render_template('feature_restricted.html',feature=feature),403
+        if path=='/discover/' and request.method=='GET':
+            target='/discover/search/'
+            if request.query_string:
+                target+='?'+request.query_string.decode('utf-8','ignore')
+            return redirect(target)
         quiet=quiet_hours_state(session['user_id'])
         if quiet['active']:
             return render_template('quiet_hours.html',quiet=quiet),403
