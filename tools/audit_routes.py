@@ -22,7 +22,16 @@ for p in route_files:
         if route:
             routes.append((rel,n.name,route,methods,decos))
             is_public=n.name in public_prefixes.get(rel,set())
-            if not is_public and not any(x in decos for x in {'child_required','parent_required','admin_required','login_required'}):
+            # Parent OTP/liveness routes intentionally run before a normal login.
+            # They are guarded by _pending_parent(), which requires the short-lived
+            # pending_parent_user_id session and re-checks that the DB account is
+            # still a PARENT in PENDING_APPROVAL state. Treat that narrowly scoped
+            # pre-auth registration guard as equivalent to the normal decorators.
+            has_pending_parent_guard=any(
+                isinstance(call,ast.Call) and isinstance(call.func,ast.Name) and call.func.id=='_pending_parent'
+                for call in ast.walk(n)
+            )
+            if not is_public and not has_pending_parent_guard and not any(x in decos for x in {'child_required','parent_required','admin_required','login_required'}):
                 errors.append(f'unguarded {rel}:{n.name} {route}')
             if route!='/parent/deleted-posts/' and any(x in route for x in ['/delete','/block','/mute','/follow-action','/review/','/safety-level','/submit','/send-','/share-']) and 'GET' in methods:
                 errors.append(f'mutating GET {rel}:{route}')
