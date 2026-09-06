@@ -1,0 +1,28 @@
+name: Package LittleNet submission ZIP
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Build clean release package
+        run: |
+          python tools/package_release.py
+          mkdir -p release
+          unzip -q ../LittleNet-complete-release.zip -d release
+      - name: Upload submission ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleNet-submission-ready
+          path: release/
+          if-no-files-found: error
+          retention-days: 14
