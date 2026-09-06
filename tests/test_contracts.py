@@ -438,8 +438,13 @@ def test_background_polling_and_invalid_prefetches_are_disabled():
 def test_parent_settings_handles_parent_without_children():
     root=Path(__file__).resolve().parents[1]
     template=(root/'parent/templates/parent_settings.html').read_text(encoding='utf-8')
-    assert '{% if child %}\n  <!-- Active Child Banner -->' in template
-    assert '</form>\n  {% endif %}' in template
+    assert '{% if not child %}' in template
+    assert 'No child account is linked yet' in template
+    assert '{% else %}' in template
+    assert 'Active &amp; protected' in template
+    assert '</form>' in template
+    assert 'More parent tools' in template
+    assert '{% endif %}' in template
 
 
 def test_for_you_feed_has_ai_semantic_ranking_with_safe_fallback():
