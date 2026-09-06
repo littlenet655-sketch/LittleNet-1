@@ -104,7 +104,7 @@ def quiet_hours_state(child_id, at=None):
     except ValueError:
         start=time(21,0);end=time(7,0)
     if start==end:
-        active=True  # explicit equal times means all-day quiet mode
+        active=True
     elif start<end:
         active=start<=current<end
     else:
@@ -120,7 +120,6 @@ def save_controls(parent_id,child_id,form):
     allowed=[x for x in form.getlist('allowed_categories') if x in SAFE_CATEGORIES]
     if not allowed: allowed=list(SAFE_CATEGORIES)
     qstart=_clock(form.get('quiet_start'),'21:00');qend=_clock(form.get('quiet_end'),'07:00')
-    # Reject malformed time strings before PostgreSQL sees them.
     _parse_clock(qstart);_parse_clock(qend)
     values={
         'allow_reels':'allow_reels' in form,
@@ -142,4 +141,7 @@ def save_controls(parent_id,child_id,form):
       allowed_categories=EXCLUDED.allowed_categories,updated_at=NOW()''',(
         child_id,parent_id,values['allow_reels'],values['allow_stories'],values['allow_messaging'],values['allow_posting'],
         values['allow_discover'],values['quiet_hours_enabled'],qstart,qend,values['educational_only_feed'],json.dumps(allowed)))
+    # Settings must take effect immediately. Without invalidating this cache,
+    # Parent Mode could show/enforce stale values for up to the cache TTL.
+    _controls_cache.pop(child_id, None)
     return controls_for_child(child_id)
