@@ -109,7 +109,19 @@ def web_preflight():
     pii_ok = bool(pii.get("available") and "EMAIL_ADDRESS" in pii.get("categories", []))
     return {
         "ok": bool(db and db["ok"] == 1 and ai.get("ok") and pii_ok),
-        "database": True,
+        "database": bool(db and db["ok"] == 1),
         "ai": ai,
         "presidio": pii_ok,
     }
+
+
+@app.local_entrypoint()
+def main(init_db: bool = False, preflight: bool = False):
+    """Release helper: optionally migrate Neon then validate web dependencies."""
+    if init_db:
+        print("database", init_database.remote())
+    if preflight:
+        report = web_preflight.remote()
+        print("preflight", report)
+        if not report.get("ok"):
+            raise RuntimeError(f"LittleNet web preflight failed: {report}")
