@@ -1,7 +1,7 @@
-"""Standalone LittleNet AI inference service.
+"""Standalone LittleNet heavy AI inference service.
 
-Deploy this separately from the lightweight web application when the web host has
-low RAM. It does not need database access and never stores uploaded media.
+The locked LittleNet scope supports TEXT, IMAGE and VIDEO moderation plus face
+verification. Standalone audio/voice moderation is intentionally not exposed.
 """
 import json
 import math
@@ -15,7 +15,6 @@ os.environ["LITTLENET_AI_SERVER"] = "1"
 from flask import Flask, jsonify, request
 
 from safety.text_service import check_text
-from safety.audio_service import check_audio
 from safety.visual_service import check_image, check_video
 
 app = Flask(__name__)
@@ -23,8 +22,6 @@ app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
 
 
 def authorized():
-    # Fail closed: the heavy inference API must never become public just because
-    # a deployment forgot to configure its shared secret.
     secret = os.getenv("AI_SHARED_SECRET", "").strip()
     supplied = request.headers.get("X-LittleNet-AI-Key", "")
     return bool(secret) and hmac.compare_digest(supplied, secret)
@@ -48,7 +45,7 @@ def save_upload():
 @app.get("/healthz")
 def healthz():
     if not authorized(): return deny()
-    return jsonify({"ok": True, "service": "littlenet-ai"})
+    return jsonify({"ok": True, "service": "littlenet-ai", "moderation": ["TEXT", "IMAGE", "VIDEO"]})
 
 
 def _sanitize(val):
@@ -57,19 +54,19 @@ def _sanitize(val):
     if hasattr(val, 'item'): return val.item()
     return val
 
+
 @app.post("/ai/moderate")
 def moderate():
     if not authorized(): return deny()
     t = (request.form.get("content_type") or "").upper()
     if t == "TEXT":
         return jsonify({"ok": True, "signals": _sanitize(check_text(request.form.get("text", "")))})
+    if t not in {"IMAGE", "VIDEO"}:
+        return jsonify({"ok": False, "error": "unsupported_content_type"}), 400
     path = None
     try:
         path = save_upload()
-        if t in {"AUDIO", "VOICE"}: signals = check_audio(path)
-        elif t == "VIDEO": signals = check_video(path)
-        elif t == "IMAGE": signals = check_image(path)
-        else: return jsonify({"ok": False, "error": "unsupported_content_type"}), 400
+        signals = check_video(path) if t == "VIDEO" else check_image(path)
         return jsonify({"ok": True, "signals": _sanitize(signals)})
     finally:
         if path:
@@ -144,7 +141,6 @@ def face_verify_endpoint():
 
 @app.post("/ai/face/adult")
 def face_adult_endpoint():
-    """Run anti-spoof liveness plus adult-age analysis for guardian verification."""
     if not authorized(): return deny()
     path = None
     try:
@@ -159,6 +155,7 @@ def face_adult_endpoint():
         if path:
             try: os.unlink(path)
             except OSError: pass
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8081")))

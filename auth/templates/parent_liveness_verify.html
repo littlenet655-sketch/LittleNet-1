@@ -1,0 +1,70 @@
+{% extends 'base.html' %}
+{% block title %}Live Parent Verification | LittleNet{% endblock %}
+{% block content %}
+<div class="auth-shell">
+  <div class="auth-card" style="max-width:560px;">
+    <div class="auth-brand-wrap">
+      <img src="/static/icons/app_logo.png" alt="LittleNet" style="width:64px;height:64px;border-radius:16px;object-fit:cover;box-shadow:0 8px 24px rgba(0,149,246,.22);">
+      <h1 class="brand auth-title">Final parent verification</h1>
+      <p class="auth-subtitle">Email <strong>{{ masked_email }}</strong> is verified. Now complete a live camera check before Parent Mode becomes active.</p>
+    </div>
+
+    {% if error %}
+    <div class="auth-alert auth-alert-error" role="alert"><span class="alert-icon">⚠️</span><span>{{ error }}</span></div>
+    {% endif %}
+
+    <div style="background:#EFF6FF;border:1px solid #BFDBFE;color:#1E40AF;border-radius:14px;padding:12px 14px;margin-bottom:14px;font-size:13px;font-weight:700;">
+      👁 Keep your face centered, look at the camera, then blink naturally. LittleNet also performs server-side anti-spoof and adult-age verification. No uploaded-photo or demo bypass is available.
+    </div>
+
+    <div style="position:relative;aspect-ratio:4/3;border-radius:20px;overflow:hidden;background:#0F172A;margin-bottom:12px;">
+      <video id="liveVideo" autoplay playsinline muted style="width:100%;height:100%;object-fit:cover;transform:scaleX(-1);"></video>
+      <img id="livePreview" alt="Live guardian capture" style="display:none;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);">
+      <div id="liveOval" style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:190px;height:230px;border:3px dashed #60A5FA;border-radius:50%;box-shadow:0 0 0 9999px rgba(15,23,42,.35);pointer-events:none;"></div>
+      <div id="liveHud" style="position:absolute;left:12px;top:12px;background:rgba(15,23,42,.8);color:#fff;border-radius:9px;padding:7px 10px;font-size:11px;font-weight:800;">STARTING CAMERA…</div>
+      <canvas id="liveCanvas" style="display:none;"></canvas>
+    </div>
+    <div id="cameraError" style="display:none;background:#FFF7ED;border:1px solid #FED7AA;color:#9A3412;border-radius:12px;padding:11px;margin-bottom:12px;font-size:12px;font-weight:700;">Camera permission is required. Enable the camera and reload this page. LittleNet does not provide a verification bypass.</div>
+
+    <form method="post" id="livenessForm">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="selfie_data" id="selfieData">
+      <button class="btn primary auth-submit-btn" id="finishBtn" type="submit" disabled style="width:100%;">
+        <span>Verify Adult & Activate Parent Mode</span><span class="btn-arrow">→</span>
+      </button>
+    </form>
+  </div>
+</div>
+<script>
+(() => {
+  const video=document.getElementById('liveVideo');
+  const preview=document.getElementById('livePreview');
+  const canvas=document.getElementById('liveCanvas');
+  const selfie=document.getElementById('selfieData');
+  const hud=document.getElementById('liveHud');
+  const oval=document.getElementById('liveOval');
+  const btn=document.getElementById('finishBtn');
+  const cameraError=document.getElementById('cameraError');
+  let stream=null,timer=null,previous=null,candidateAt=0,verified=false;
+
+  function fail(){cameraError.style.display='block';hud.textContent='CAMERA REQUIRED';btn.disabled=true;}
+  function capture(){
+    if(verified||!video.videoWidth)return;
+    verified=true;if(timer)clearInterval(timer);
+    canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+    const ctx=canvas.getContext('2d');ctx.translate(canvas.width,0);ctx.scale(-1,1);ctx.drawImage(video,0,0,canvas.width,canvas.height);
+    const data=canvas.toDataURL('image/jpeg',.9);selfie.value=data;preview.src=data;preview.style.display='block';video.style.display='none';
+    oval.style.border='3px solid #22C55E';hud.textContent='✓ LIVE BLINK CAPTURED';btn.disabled=false;
+    if(stream)stream.getTracks().forEach(t=>t.stop());
+  }
+  function watchBlink(){
+    const sample=document.createElement('canvas');sample.width=80;sample.height=60;const ctx=sample.getContext('2d');
+    timer=setInterval(()=>{if(verified||!video.videoWidth)return;ctx.drawImage(video,0,0,80,60);const px=ctx.getImageData(20,14,40,20).data;let lum=0;for(let i=0;i<px.length;i+=4)lum+=.299*px[i]+.587*px[i+1]+.114*px[i+2];const avg=lum/(px.length/4);if(previous!==null){const delta=Math.abs(avg-previous),now=Date.now();if(delta>5){if(candidateAt&&now-candidateAt>=120&&now-candidateAt<=500){capture();return;}candidateAt=now;}}previous=avg;},80);
+  }
+  async function start(){try{stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user',width:{ideal:640},height:{ideal:480}},audio:false});video.srcObject=stream;await video.play();hud.textContent='BLINK TO VERIFY';watchBlink();}catch(e){fail();}}
+  document.getElementById('livenessForm').addEventListener('submit',e=>{if(!verified||!selfie.value){e.preventDefault();return;}btn.disabled=true;btn.textContent='Verifying…';});
+  window.addEventListener('beforeunload',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());if(timer)clearInterval(timer);});
+  start();
+})();
+</script>
+{% endblock %}

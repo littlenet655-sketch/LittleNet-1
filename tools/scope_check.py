@@ -1,4 +1,4 @@
-"""Static scope guard for the corrected LittleNet PPT + locked final additions."""
+"""Static scope guard for the final locked LittleNet submission flow."""
 from pathlib import Path
 import sys
 R=Path(__file__).parents[1]
@@ -12,13 +12,18 @@ checks={
  'Likes/comments/sharing':('templates/_post.html','data-share-post'),
  'Save/bookmark':('uploadPost/routes.py','/saved/'),
  'Stories':('child/routes.py','/stories/'),
+ 'Parent email OTP gate':('auth/api.py','/verify-parent-email/'),
+ 'Parent live adult activation gate':('auth/api.py','/verify-parent-liveness/'),
+ 'Child face-first onboarding':('auth/api.py','/face/enroll/'),
+ 'Mandatory age onboarding quiz':('auth/api.py','/quiz/start/?onboarding=1'),
+ 'Compulsory doom-scroll quiz':('static/js/feed_quiz.js','Mandatory Brain Break'),
  '18+ hard block':('safety/policy.py','18+ content hard blocked'),
+ 'Grooming hard block':('safety/policy.py','deterministic_grooming'),
+ 'Severe abuse hard block':('safety/policy.py','deterministic_severe_abuse'),
  'NSFW visual moderation':('safety/visual_service.py','Falconsai/nsfw_image_detection'),
- 'Weapon detection (CLIP zero-shot)':('safety/visual_service.py','weapon gun knife dangerous object'),
- # YOLO object detection and Whisper voice-to-text moderation were removed at the
- # project owner's request (heavy models, not required); audio moderation now uses
- # a safe-placeholder/remote-AI path instead of local transcription.
- 'Audio moderation (no local transcription)':('safety/audio_service.py','def check_audio'),
+ 'YOLO object detection':('safety/visual_service.py','from ultralytics import YOLO'),
+ 'Standalone audio/voice retired':('safety/moderation_service.py','Standalone audio and voice uploads are disabled in LittleNet'),
+ 'Story music upload retired':('auth/api.py',"field=='music_file'"),
  'Cyberbullying/toxic NLP':('safety/text_service.py','CYBERBULLYING'),
  'Risk ALLOW/REVIEW/BLOCK':('safety/policy.py',"Decision('REVIEW'"),
  'Parent review':('parent/routes.py','/parent/review/'),
@@ -39,6 +44,8 @@ checks={
  'Face Login/liveness':('safety/face_service.py','anti_spoofing=True'),
  'Privacy/security headers':('app.py','Content-Security-Policy'),
  'PostgreSQL activity logs':('database/schema.sql','CREATE TABLE IF NOT EXISTS activity_logs'),
+ 'R2 media adapter':('services/object_storage.py','uploads/r2/'),
+ 'R2 child media enforcement':('auth/api.py','persist_child_media_to_r2'),
  'Android APK source':('android/app/src/main/java/com/littlenet/app/MainActivity.java','WebView'),
  'Modal AI deployment':('modal_ai.py','gpu="T4"'),
  'Quiet hours':('services/controls.py','quiet_hours_state'),
@@ -54,5 +61,18 @@ for name,(rel,needle) in checks.items():
     ok=p.exists() and needle in p.read_text(encoding='utf-8')
     print(('PASS' if ok else 'FAIL'),name)
     if not ok:errors.append(name)
-print(f'\nSCOPE_CHECK={len(checks)-len(errors)}/{len(checks)}')
+
+# Negative scope locks: removed features must not return through dependencies.
+negative={
+ 'Whisper dependency removed':('requirements-ai.txt','openai-whisper'),
+ 'Whisper Modal runtime removed':('modal_ai.py','whisper.load_model'),
+}
+for name,(rel,forbidden) in negative.items():
+    p=R/rel
+    ok=p.exists() and forbidden.lower() not in p.read_text(encoding='utf-8').lower()
+    print(('PASS' if ok else 'FAIL'),name)
+    if not ok:errors.append(name)
+
+total=len(checks)+len(negative)
+print(f'\nSCOPE_CHECK={total-len(errors)}/{total}')
 sys.exit(bool(errors))
