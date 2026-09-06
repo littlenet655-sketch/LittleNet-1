@@ -22,10 +22,14 @@ def owns(parent_id, child_id):
     ''', (parent_id, child_id, parent_id, parent_id)))
 
 def pending_follows(parent_id):
-    """Return actionable and waiting two-parent friendship stages for this parent."""
-    owned='''SELECT m.child_id FROM parent_child_map m JOIN users p ON p.user_id=%s
-             WHERE m.parent_id=%s OR m.verified_parent_id=%s OR LOWER(m.parent_email)=LOWER(p.email)'''
-    return fetch_all(f'''
+    """Return actionable/waiting two-parent friendship stages for this parent."""
+    return fetch_all('''
+        WITH owned AS (
+          SELECT m.child_id
+          FROM parent_child_map m
+          JOIN users p ON p.user_id=%s
+          WHERE m.parent_id=%s OR m.verified_parent_id=%s OR LOWER(m.parent_email)=LOWER(p.email)
+        )
         SELECT * FROM (
           SELECT f.child_id, f.following_child_id,
                  u1.full_name requester_name, u2.full_name target_name,
@@ -38,7 +42,7 @@ def pending_follows(parent_id):
           JOIN users u1 ON u1.user_id=f.child_id
           JOIN users u2 ON u2.user_id=f.following_child_id
           WHERE f.approved=FALSE AND f.approval_stage='REQUESTED'
-            AND f.child_id IN ({owned})
+            AND f.child_id IN (SELECT child_id FROM owned)
 
           UNION ALL
 
@@ -53,7 +57,7 @@ def pending_follows(parent_id):
           JOIN users u1 ON u1.user_id=f.child_id
           JOIN users u2 ON u2.user_id=f.following_child_id
           WHERE f.approved=FALSE AND f.approval_stage='RECEIVER_PARENT_PENDING'
-            AND f.child_id IN ({owned})
+            AND f.child_id IN (SELECT child_id FROM owned)
 
           UNION ALL
 
@@ -68,10 +72,10 @@ def pending_follows(parent_id):
           JOIN users u1 ON u1.user_id=f.child_id
           JOIN users u2 ON u2.user_id=f.following_child_id
           WHERE f.approved=FALSE AND f.approval_stage='SENDER_PARENT_APPROVED'
-            AND f.child_id IN ({owned})
+            AND f.child_id IN (SELECT child_id FROM owned)
         ) q
         ORDER BY actionable DESC, created_at ASC
-    ''', (parent_id,parent_id,parent_id, parent_id,parent_id,parent_id, parent_id,parent_id,parent_id))
+    ''', (parent_id,parent_id,parent_id))
 
 
 def get_parent_weekly_digest(parent_id, child_id):
