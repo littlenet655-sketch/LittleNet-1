@@ -167,6 +167,8 @@ def create_app():
         p=fetch_one('SELECT post_id,child_id,moderation_status,is_safe,is_story FROM posts WHERE media_path=%s OR story_music_path=%s',(stored,stored))
         if p:
             if role=='CHILD':
+                # Cheap fail-fast check before the full category/age/friend policy query.
+                if p['moderation_status']!='ALLOWED' and uid!=p['child_id']:return ('Unavailable',404)
                 from services.social import post_visible_to, story_visible_to
                 visible=story_visible_to(uid,p['post_id']) if p.get('is_story') else post_visible_to(uid,p['post_id'])
                 if not visible:return ('Unavailable',404)
