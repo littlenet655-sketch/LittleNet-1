@@ -23,7 +23,12 @@ def role_required(role):
         def inner(*a,**kw):
             uid=session.get('user_id')
             if not uid or session.get('role')!=role:return _deny()
-            if role=='CHILD' and request.path!='/face/enroll/':
+            # Technical usage heartbeat does not expose feed/content and may run
+            # while the onboarding gate is deciding where to redirect. Keep it
+            # exempt here so direct unit calls do not require a real DB. The
+            # app-level onboarding gate still protects every normal Kids surface.
+            face_exempt=request.path in {'/face/enroll/','/api/usage/heartbeat/'}
+            if role=='CHILD' and not face_exempt:
                 face=fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1',(uid,))
                 if not face:
                     if request.path.startswith('/api/'):
