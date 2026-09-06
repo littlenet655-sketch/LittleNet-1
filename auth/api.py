@@ -26,7 +26,8 @@ def _masked_email(email):
     return f'{shown}@{domain}'
 
 
-def pending_parent_required(fn):
+def login_required(fn):
+    """Require the short-lived pending-parent registration session for OTP routes."""
     @wraps(fn)
     def wrapped(*args,**kwargs):
         if not session.get('pending_parent_user_id') or not session.get('pending_parent_email'):
@@ -61,7 +62,7 @@ def parent_registration_email_gate():
 
 @api_bp.route('/verify-parent-email/',methods=['GET','POST'])
 @limiter.limit('20 per minute')
-@pending_parent_required
+@login_required
 def verify_parent_email():
     user_id=session['pending_parent_user_id']
     email=session['pending_parent_email']
@@ -93,7 +94,7 @@ def verify_parent_email():
 
 @api_bp.route('/verify-parent-email/resend/',methods=['POST'])
 @limiter.limit('3 per 15 minutes')
-@pending_parent_required
+@login_required
 def resend_parent_email():
     user_id=session['pending_parent_user_id']
     email=session['pending_parent_email']
