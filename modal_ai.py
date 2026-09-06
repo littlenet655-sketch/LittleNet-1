@@ -32,11 +32,12 @@ image = (
         "tf-keras>=2.16,<2.19",
         "ultralytics>=8.3,<9",
         "opencv-python-headless==4.11.0.86",
-        "Flask==3.1.2",
-        "python-dotenv==1.1.1",
-        "Pillow==11.3.0",
-        "pypdf==5.9.0",
-        "requests==2.32.5",
+        "scenedetect-headless>=0.7,<0.8",
+        "Flask==3.1.3",
+        "python-dotenv==1.2.2",
+        "Pillow==12.3.0",
+        "pypdf==6.16.1",
+        "requests==2.33.0",
     )
     .workdir("/root/littlenet")
     .env(
@@ -51,6 +52,8 @@ image = (
             "LITTLENET_DETOXIFY_MODEL": "multilingual",
             "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "3",
             "LITTLENET_VIDEO_MAX_FRAMES": "60",
+            "LITTLENET_ENABLE_SCENEDETECT": "1",
+            "LITTLENET_SCENEDETECT_THRESHOLD": "27",
             "LITTLENET_YOLO_WEIGHTS": "/root/littlenet/yolov8n-oiv7.pt",
             "LITTLENET_YOLO_REVIEW_THRESHOLD": "0.20",
             "LITTLENET_YOLO_BLOCK_THRESHOLD": "0.45",
@@ -60,29 +63,17 @@ image = (
             "LITTLENET_FALCONSAI_BLOCK_THRESHOLD": "0.70",
             "LITTLENET_CLIP_REVIEW_THRESHOLD": "0.40",
             "LITTLENET_CLIP_BLOCK_THRESHOLD": "0.65",
-            "LITTLENET_DEPLOY_VERSION": "7",
+            "LITTLENET_DEPLOY_VERSION": "8",
         }
     )
     .add_local_dir(
         str(ROOT),
         remote_path="/root/littlenet",
         ignore=[
-            ".git/**",
-            ".pytest_cache/**",
-            "**/__pycache__/**",
-            "uploads/**",
-            "android/**",
-            "tools/gradle-8.9/**",
-            "node_modules/**",
-            ".agent/**",
-            ".agents/**",
-            "agent/**",
-            ".claude/**",
-            ".cursor/**",
-            "*.db",
-            "*.zip",
-            "*.apk",
-            ".env",
+            ".git/**", ".pytest_cache/**", "**/__pycache__/**", "uploads/**",
+            "android/**", "tools/gradle-8.9/**", "node_modules/**", ".agent/**",
+            ".agents/**", "agent/**", ".claude/**", ".cursor/**", "*.db",
+            "*.zip", "*.apk", ".env",
         ],
         copy=True,
     )
@@ -121,7 +112,11 @@ def ai_web():
     timeout=1800,
 )
 def warm_models():
-    """Warm every model in the locked moderation/face stack."""
+    """Warm every model/dependency in the locked moderation/face stack.
+
+    A failed component raises after reporting all failures, turning this command
+    into a deployment/release gate rather than a diagnostic that can be ignored.
+    """
     os.chdir("/root/littlenet")
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     os.environ["LITTLENET_AI_SERVER"] = "1"
@@ -175,7 +170,19 @@ def warm_models():
         DeepFace.build_model("Facenet512")
     run("deepface_facenet512", face)
 
+    def scene_detect():
+        from scenedetect import SceneManager, open_video
+        from scenedetect.detectors import ContentDetector
+        # Constructor/import validation catches incompatible OpenCV/PySceneDetect
+        # deployments without requiring a persistent sample video in production.
+        _ = SceneManager(); _ = ContentDetector(threshold=27)
+        return {"available": callable(open_video)}
+    run("pyscenedetect", scene_detect)
+
     model_cache.commit()
+    failed = {name: value for name, value in results.items() if not value.get("ok")}
+    if failed:
+        raise RuntimeError(f"LittleNet AI warmup failed: {failed}")
     return results
 
 
