@@ -1,4 +1,4 @@
-import os,tempfile,subprocess
+import math,os,tempfile,subprocess
 from .common import env_flag,normalize_signals,timed_call,timeout_seconds
 
 
@@ -84,8 +84,8 @@ def _yolo_objects(path):
     if _YOLO is None:_YOLO=YOLO(weights)
     results=_YOLO.predict(source=path,verbose=False,device=0 if _runtime_device()=='cuda' else 'cpu',conf=0.20)
     weapon_score=0.0;danger_score=0.0;detections=[]
-    weapon_terms=('gun','pistol','rifle','revolver','firearm','weapon','knife','dagger','sword','machete','bow and arrow','crossbow')
-    danger_terms=('grenade','bomb','explosive','chainsaw')
+    weapon_terms=('gun','pistol','rifle','revolver','firearm','weapon','knife','dagger','sword','machete','bow and arrow','crossbow','axe','hatchet','cleaver')
+    danger_terms=('grenade','bomb','explosive','chainsaw','dynamite','land mine','landmine')
     for result in results or []:
         names=getattr(result,'names',{}) or {}
         boxes=getattr(result,'boxes',None)
@@ -152,32 +152,54 @@ def _retired_video_audio_contract(ap=None):
     return None
 
 
+def _video_sample_count(path,max_frames=None):
+    """Choose dense, bounded sampling so short unsafe scenes are much harder to miss."""
+    if max_frames is not None:
+        try:return max(1,int(max_frames))
+        except (TypeError,ValueError):pass
+    duration=video_duration_seconds(path)
+    try:interval=max(0.5,float(os.getenv('LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS','3')))
+    except ValueError:interval=3.0
+    try:cap=max(6,int(os.getenv('LITTLENET_VIDEO_MAX_FRAMES','60')))
+    except ValueError:cap=60
+    # Always inspect several points; for longer clips aim for roughly one frame
+    # per configured interval. A 180-second reel therefore samples ~60 frames.
+    desired=max(6,int(math.ceil(max(duration,1.0)/interval))+1)
+    return min(cap,desired)
+
+
 def _video_frames(path,max_frames):
     import cv2
+    from .policy import decide
     cap=cv2.VideoCapture(path);total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     idxs=[int(i*max(total-1,0)/max(max_frames-1,1)) for i in range(min(max_frames,max(total,1)))];outs=[]
     for idx in idxs:
         cap.set(cv2.CAP_PROP_POS_FRAMES,idx);good,frame=cap.read()
         if not good:continue
         fd,tmp=tempfile.mkstemp(suffix='.jpg');os.close(fd);cv2.imwrite(tmp,frame)
-        try:outs.append(check_image(tmp))
+        try:
+            signals=check_image(tmp);outs.append(signals)
+            # Hard-block evidence is enough to reject the whole video; avoid
+            # spending GPU time on the remaining frames once it is conclusive.
+            if decide(signals).action=='BLOCK':break
         finally:
             try:os.unlink(tmp)
             except OSError:pass
     cap.release();return outs
 
 
-def check_video(path,max_frames=6):
+def check_video(path,max_frames=None):
     from .remote_client import enabled,moderate_file
     if enabled():
         try:return normalize_signals(moderate_file('VIDEO',path),category='VIDEO')
         except Exception:return normalize_signals({'category':'VIDEO','total_safety_failure':True,'errors':['remote_ai_unavailable']},category='VIDEO')
     try:
-        outs=timed_call('video_frames',lambda:_video_frames(path,max_frames),timeout_seconds('video_frames',240))
+        requested=_video_sample_count(path,max_frames)
+        outs=timed_call('video_frames',lambda:_video_frames(path,requested),timeout_seconds('video_frames',240))
         if not outs:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['no_video_frames']},category='VIDEO')
         keys=['adult_score','sexual_score','weapon_score','violence_score','general_score'];out={k:max(float(x.get(k,0)) for x in outs) for k in keys};out['toxicity_score']=0
         out['partial_safety_failure']=any(x.get('partial_safety_failure') for x in outs);out['total_safety_failure']=all(x.get('total_safety_failure') for x in outs);out['errors']=[err for x in outs for err in x.get('errors',[])]
-        out['model_signals']={'sampled_frames':len(outs),'frames':[x.get('model_signals',{}) for x in outs]}
+        out['model_signals']={'sampled_frames':len(outs),'requested_frames':requested,'frames':[x.get('model_signals',{}) for x in outs]}
         out['category']='ADULT' if max(out['adult_score'],out['sexual_score'])>=.4 else ('WEAPON' if out['weapon_score']>=.45 else 'VIDEO')
         return normalize_signals(out,category='VIDEO')
     except Exception as exc:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['video_timeout' if 'timeout' in str(exc) else 'video_processing']},category='VIDEO')
