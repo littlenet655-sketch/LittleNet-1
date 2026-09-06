@@ -1,18 +1,36 @@
 /**
  * LittleNet compulsory doom-scroll break.
  *
- * Home + Reels count viewed items in the browser. After the threshold is hit,
- * scrolling is locked and an age-matched quiz must be answered before the child
- * can continue. The server owns the question age band, answer validation and XP.
+ * PostgreSQL owns the view counter and the required quiz latch. The browser only
+ * reports concrete post/reel IDs after they become substantially visible. Refresh,
+ * new tabs, or JavaScript state resets cannot clear an already-required break.
  */
 
 const FeedQuiz = (() => {
+  // Kept as a UI/source-contract fallback only. The authoritative interval is
+  // returned by the server and is never counted in browser memory.
   const QUIZ_INTERVAL = 4;
-  let postsSinceLastQuiz = 0;
   let currentQuizId = null;
   let quizAnswered = false;
   let gateOpen = false;
   let previousOverflow = '';
+
+  function _csrf() {
+    return document.querySelector('meta[name="csrf-token"]')?.content || '';
+  }
+
+  async function _json(url, options = {}) {
+    const res = await fetch(url, { credentials: 'same-origin', ...options });
+    let data = {};
+    try { data = await res.json(); } catch (_) { data = {}; }
+    if (!res.ok) {
+      const err = new Error(data.error || `request failed (${res.status})`);
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
+  }
 
   function _lockScroll() {
     if (gateOpen) return;
@@ -30,30 +48,62 @@ const FeedQuiz = (() => {
     document.body.classList.remove('littlenet-quiz-locked');
   }
 
-  /** Call whenever a feed/reel item becomes substantially visible. */
-  function onPostViewed() {
+  function _postId(target) {
+    const raw = target?.dataset?.postCard || target?.dataset?.doubleLike || target?.dataset?.postId || '';
+    const id = Number.parseInt(String(raw), 10);
+    return Number.isFinite(id) && id > 0 ? id : null;
+  }
+
+  /** Called whenever a real feed/reel item becomes substantially visible. */
+  async function onPostViewed(target) {
     if (gateOpen) return;
-    postsSinceLastQuiz++;
-    if (postsSinceLastQuiz >= QUIZ_INTERVAL) {
-      postsSinceLastQuiz = 0;
-      _showQuizGate();
+    const postId = typeof target === 'number' ? target : _postId(target);
+    if (!postId) return;
+
+    try {
+      const state = await _json('/quiz/api/feed-view/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf() },
+        body: JSON.stringify({ post_id: postId }),
+      });
+      // The server is authoritative. It may report a smaller parent-configured
+      // interval, but it can never be larger than the LittleNet safety default.
+      const interval = Number(state.interval || QUIZ_INTERVAL);
+      void interval;
+      if (state.required) await _showQuizGate();
+    } catch (_) {
+      // A child must not be able to bypass the intervention by making the view
+      // counter endpoint unavailable. Fail closed and offer Retry only.
+      _lockScroll();
+      _injectRetryGate('LittleNet could not verify your brain-break status. Reconnect and retry to continue.');
+    }
+  }
+
+  async function _syncRequiredState() {
+    try {
+      const state = await _json('/quiz/api/feed-quiz/status/');
+      if (state.required) await _showQuizGate();
+    } catch (_) {
+      _lockScroll();
+      _injectRetryGate('LittleNet could not verify your brain-break status. Reconnect and retry to continue.');
     }
   }
 
   async function _showQuizGate() {
-    if (gateOpen) return;
     _lockScroll();
+    await _loadRequiredQuiz();
+  }
+
+  async function _loadRequiredQuiz() {
     try {
-      const res = await fetch('/api/feed-quiz/', { credentials: 'same-origin' });
-      if (!res.ok) throw new Error('quiz unavailable');
-      const data = await res.json();
-      if (!data.available) throw new Error('no quiz available');
+      const data = await _json('/quiz/api/feed-quiz/');
+      if (!data.available || !data.required) throw new Error('no required quiz available');
       currentQuizId = data.quiz_id;
       quizAnswered = false;
       _injectBlockingCard(data);
-    } catch (e) {
+    } catch (_) {
       // Safety/product rule: the intervention is compulsory. If the quiz service
-      // cannot supply a question, keep the gate closed and offer only Retry.
+      // cannot supply the required question, keep the gate closed and offer Retry.
       _injectRetryGate();
     }
   }
@@ -70,22 +120,31 @@ const FeedQuiz = (() => {
     return overlay;
   }
 
-  function _injectRetryGate() {
+  function _injectRetryGate(message = 'Your next age-based quiz is loading. Answer it to continue scrolling.') {
+    _lockScroll();
     const overlay = _overlayShell();
     const card = document.createElement('div');
     card.className = 'feed-quiz-card fq-visible';
     card.style.cssText = 'width:min(520px,100%);background:#fff;border-radius:24px;padding:24px;box-shadow:0 28px 70px rgba(0,0,0,.28);';
     card.innerHTML = `
       <div class="fq-header"><span class="fq-badge">🧠 Brain Break</span></div>
-      <p class="fq-question">Your next age-based quiz is loading. Answer it to continue scrolling.</p>
+      <p class="fq-question">${_escape(message)}</p>
       <button type="button" class="fq-option fq-retry" style="width:100%;">Retry quiz</button>
     `;
     overlay.appendChild(card);
-    card.querySelector('.fq-retry').addEventListener('click', () => {
-      overlay.remove();
-      // Keep scroll locked while fetching again.
-      gateOpen = false;
-      _showQuizGate();
+    card.querySelector('.fq-retry').addEventListener('click', async () => {
+      card.querySelector('.fq-retry').disabled = true;
+      try {
+        const state = await _json('/quiz/api/feed-quiz/status/');
+        if (!state.required) {
+          overlay.remove();
+          _unlockScroll();
+          return;
+        }
+        await _loadRequiredQuiz();
+      } catch (_) {
+        _injectRetryGate('Still unable to verify the compulsory brain break. Please reconnect and retry.');
+      }
     });
   }
 
@@ -128,19 +187,17 @@ const FeedQuiz = (() => {
 
   async function _submitAnswer(answer, data, card, overlay) {
     if (quizAnswered) return;
+    if (Number(data.quiz_id) !== Number(currentQuizId)) return;
     quizAnswered = true;
     card.querySelectorAll('.fq-option').forEach(b => { b.disabled = true; b.classList.add('fq-disabled'); });
     card.querySelectorAll('.fq-option').forEach(b => { if (b.dataset.answer === answer) b.classList.add('fq-selected'); });
 
     try {
-      const csrf = document.querySelector('meta[name="csrf-token"]')?.content || '';
-      const res = await fetch('/api/feed-quiz/answer/', {
-        method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': csrf },
+      const result = await _json('/quiz/api/feed-quiz/answer/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-CSRFToken': _csrf() },
         body: JSON.stringify({ quiz_id: data.quiz_id, answer }),
       });
-      if (!res.ok) throw new Error('answer rejected');
-      const result = await res.json();
 
       card.querySelectorAll('.fq-option').forEach(b => {
         if (b.dataset.answer === result.correct_answer) b.classList.add('fq-correct');
@@ -158,8 +215,9 @@ const FeedQuiz = (() => {
         fb.innerHTML = `💡 Good try! The correct answer was <b>${_escape(result.correct_answer)}</b>${result.explanation ? `<div class="fq-explanation">📖 ${_escape(result.explanation)}</div>` : ''}`;
       }
 
-      // Any submitted answer satisfies the intervention; XP is awarded only for correct answers.
-      setTimeout(() => { overlay.remove(); _unlockScroll(); }, result.explanation ? 2800 : 1800);
+      // Any accepted answer satisfies the intervention; XP is awarded only for
+      // correct answers. The server has already cleared the PostgreSQL latch.
+      setTimeout(() => { overlay.remove(); currentQuizId = null; _unlockScroll(); }, result.explanation ? 2800 : 1800);
     } catch (e) {
       quizAnswered = false;
       card.querySelectorAll('.fq-option').forEach(b => { b.disabled = false; b.classList.remove('fq-disabled'); });
@@ -185,24 +243,33 @@ const FeedQuiz = (() => {
 
   function init() {
     if (!('IntersectionObserver' in window)) return;
+    const selector = '.ig-post, .reel:not(.feed-quiz-reel)';
+    const initialTargets = [...document.querySelectorAll(selector)];
+    if (!initialTargets.length) return;
+
+    // Catch an obligation latched in another tab before any new view can advance.
+    _syncRequiredState();
+
     const seen = new WeakSet();
     const observer = new IntersectionObserver((entries) => {
       entries.forEach(e => {
         if (e.isIntersecting && e.intersectionRatio >= .65 && !seen.has(e.target)) {
-          seen.add(e.target); onPostViewed();
+          seen.add(e.target);
+          onPostViewed(e.target);
         }
       });
     }, { threshold: [0.65] });
-    document.querySelectorAll('.ig-post, .reel:not(.feed-quiz-reel)').forEach(el => observer.observe(el));
+    initialTargets.forEach(el => observer.observe(el));
+
     const mo = new MutationObserver(mutations => {
       mutations.forEach(m => m.addedNodes.forEach(n => {
         if (n.nodeType === 1) {
-          if (n.matches?.('.ig-post, .reel:not(.feed-quiz-reel)')) observer.observe(n);
-          n.querySelectorAll?.('.ig-post, .reel:not(.feed-quiz-reel)').forEach(el => observer.observe(el));
+          if (n.matches?.(selector)) observer.observe(n);
+          n.querySelectorAll?.(selector).forEach(el => observer.observe(el));
         }
       }));
     });
-    const feed = document.querySelector('.ig-feed, .feed, .reels-page, #reels-container');
+    const feed = document.querySelector('.ig-feed, .feed, .reels-page, #reels-container, .page');
     if (feed) mo.observe(feed, { childList:true, subtree:true });
   }
 
