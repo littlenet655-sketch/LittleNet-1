@@ -51,6 +51,16 @@ CREATE TABLE IF NOT EXISTS child_xp (
 -- Track quiz source (AI-generated vs curated)
 ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS source VARCHAR(10) NOT NULL DEFAULT 'SEED';
 
+-- Server-persistent compulsory feed/reel brain-break state. These columns make
+-- the obligation survive refresh, tab changes, login/session renewal, and JS
+-- counter resets. viewed_post_ids is reset only after a required answer is
+-- accepted by the server.
+ALTER TABLE child_quiz_progress ADD COLUMN IF NOT EXISTS quiz_required BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE child_quiz_progress ADD COLUMN IF NOT EXISTS required_quiz_id INTEGER REFERENCES quizzes(quiz_id) ON DELETE SET NULL;
+ALTER TABLE child_quiz_progress ADD COLUMN IF NOT EXISTS required_at TIMESTAMP;
+ALTER TABLE child_quiz_progress ADD COLUMN IF NOT EXISTS viewed_post_ids JSONB NOT NULL DEFAULT '[]'::jsonb;
+CREATE INDEX IF NOT EXISTS idx_child_quiz_required ON child_quiz_progress(child_id) WHERE quiz_required=TRUE;
+
 -- Parent verification and approval extensions
 ALTER TABLE parent_child_map ADD COLUMN IF NOT EXISTS verification_token VARCHAR(255);
 ALTER TABLE parent_child_map ADD COLUMN IF NOT EXISTS approval_status VARCHAR(64) DEFAULT 'PENDING_APPROVAL';

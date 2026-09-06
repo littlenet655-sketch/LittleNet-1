@@ -1,17 +1,41 @@
 from flask import Blueprint,render_template,request,redirect,session,jsonify
 from extensions import limiter
 from decorators import child_required,parent_required
-from quiz.service import quizzes,reset,learning_challenges,learning_points,next_feed_quiz,record_feed_answer
+from quiz.service import (
+    quizzes,reset,learning_challenges,learning_points,next_feed_quiz,record_feed_answer,
+    record_feed_view,feed_quiz_state,required_feed_quiz,complete_required_feed_quiz,
+)
 from parent.service import owns,children
 from database.connection import fetch_one,fetch_all,execute
 
 quiz_bp=Blueprint('quiz',__name__,template_folder='templates')
 
+
+def _quiz_json(q):
+    if not q:return {'available':False}
+    return {
+        'available':True,
+        'required':True,
+        'quiz_id':q['quiz_id'],
+        'category':q.get('category',''),
+        'question':q['question'],
+        'options':[q['option_a'],q['option_b'],q['option_c'],q['option_d']],
+    }
+
+
 @quiz_bp.route('/quiz/start/')
 @limiter.limit('45 per minute')
 @child_required
 def start():
-    qs=quizzes(session['user_id'],2)
+    # A latched doom-scroll break is server-owned. Always resume the exact same
+    # required question after refresh/new tab instead of creating a new session quiz.
+    state=feed_quiz_state(session['user_id'])
+    if state['required']:
+        q=required_feed_quiz(session['user_id'])
+        if not q:return render_template('quiz_result.html',error='Your required age-group quiz is temporarily unavailable. Please retry; the break remains locked.'),503
+        qs=[q]
+    else:
+        qs=quizzes(session['user_id'],2)
     if not qs:return render_template('quiz_result.html',error='No age-group questions available yet.')
     session['quiz_ids']=[q['quiz_id'] for q in qs];session['quiz_index']=0;session['quiz_score']=0
     return render_template('quiz_card.html',quiz=qs[0],question_number=1,total_questions=len(qs))
@@ -25,6 +49,12 @@ def submit():
     try:posted=int(request.form.get('quiz_id',0))
     except:return redirect('/quiz/start/')
     if posted!=expected:return ('Invalid quiz state',400)
+    # If this is the server-latched brain break, the submitted id must also be
+    # the PostgreSQL assignment; session/cookie manipulation cannot swap it.
+    state=feed_quiz_state(session['user_id'])
+    if state['required']:
+        q_required=required_feed_quiz(session['user_id'])
+        if not q_required or int(q_required['quiz_id'])!=posted:return ('Invalid required quiz state',409)
     q=fetch_one('SELECT * FROM quizzes WHERE quiz_id=%s',(expected,));ans=request.form.get('answer','');correct=bool(q and ans==q['correct_answer'])
     execute('INSERT INTO child_quiz_attempts(child_id,quiz_id,selected_answer,is_correct) VALUES(%s,%s,%s,%s)',(session['user_id'],expected,ans,correct))
     session['quiz_score']=session.get('quiz_score',0)+(1 if correct else 0);idx+=1;session['quiz_index']=idx
@@ -58,40 +88,81 @@ def report():
 @parent_required
 def save_settings_alias():return settings()
 
-# ── Feed Quiz API ─────────────────────────────────────────────────────────────
+# ── Server-persistent Feed Quiz API ───────────────────────────────────────────
 
+@quiz_bp.route('/quiz/api/feed-view/',methods=['POST'])
+@limiter.limit('120 per minute')
+@child_required
+def api_feed_view():
+    """Record one substantially viewed safe post/reel in PostgreSQL."""
+    data=request.get_json(silent=True) or {}
+    try:post_id=int(data.get('post_id',0))
+    except:return jsonify(error='invalid post_id'),400
+    if post_id<=0:return jsonify(error='invalid post_id'),400
+    state=record_feed_view(session['user_id'],post_id)
+    return jsonify(
+        accepted=bool(state.get('accepted')),
+        posts_seen=int(state.get('posts_seen') or 0),
+        interval=int(state.get('interval') or 4),
+        required=bool(state.get('required')),
+    )
+
+
+@quiz_bp.route('/quiz/api/feed-quiz/status/')
+@limiter.limit('60 per minute')
+@child_required
+def api_feed_quiz_status():
+    state=feed_quiz_state(session['user_id'])
+    return jsonify(
+        required=bool(state['required']),
+        posts_seen=int(state['posts_seen']),
+        interval=int(state['interval']),
+        quiz_id=state['quiz_id'],
+    )
+
+
+# Keep the original paths as compatibility aliases, but the browser uses the
+# /quiz/... paths because those are the only app-wide routes intentionally
+# reachable while a compulsory quiz latch is active.
 @quiz_bp.route('/api/feed-quiz/')
+@quiz_bp.route('/quiz/api/feed-quiz/')
 @limiter.limit('45 per minute')
 @child_required
 def api_feed_quiz():
-    """Return ONE unseen quiz question for the feed quiz card."""
-    q = next_feed_quiz(session['user_id'])
+    """Return the exact server-latched required question."""
+    state=feed_quiz_state(session['user_id'])
+    if not state['required']:
+        return jsonify(available=False,required=False)
+    q=required_feed_quiz(session['user_id'])
     if not q:
-        return jsonify(available=False)
-    return jsonify(
-        available=True,
-        quiz_id=q['quiz_id'],
-        category=q.get('category',''),
-        question=q['question'],
-        options=[q['option_a'],q['option_b'],q['option_c'],q['option_d']],
-    )
+        return jsonify(available=False,required=True),503
+    return jsonify(**_quiz_json(q))
+
 
 @quiz_bp.route('/api/feed-quiz/answer/',methods=['POST'])
+@quiz_bp.route('/quiz/api/feed-quiz/answer/',methods=['POST'])
 @limiter.limit('45 per minute')
 @child_required
 def api_feed_quiz_answer():
-    """Submit answer for an inline feed quiz. Returns correctness + XP."""
-    data = request.get_json(silent=True) or {}
+    """Submit only the exact PostgreSQL-latched feed quiz, then clear the gate."""
+    data=request.get_json(silent=True) or {}
     try: quiz_id = int(data.get('quiz_id',0))
     except: return jsonify(error='invalid quiz_id'),400
     answer = str(data.get('answer','')).strip()
     if not answer: return jsonify(error='answer required'),400
+    q=required_feed_quiz(session['user_id'])
+    if not q:return jsonify(error='quiz_not_required'),409
+    if int(q['quiz_id'])!=quiz_id:return jsonify(error='required_quiz_mismatch'),409
+
     res = record_feed_answer(session['user_id'], quiz_id, answer)
     is_correct = res[0]
     correct_answer = res[1]
     xp = res[2]
     explanation = res[3] if len(res) > 3 else ""
-    # Streak: count consecutive correct feed answers in session
+    if not complete_required_feed_quiz(session['user_id'],quiz_id):
+        return jsonify(error='quiz_completion_conflict'),409
+
+    # Streak is a reward/UI detail, not a safety gate, so session storage is fine.
     streak = session.get('quiz_streak', 0)
     if is_correct:
         streak += 1
@@ -114,6 +185,7 @@ def api_feed_quiz_answer():
         bonus_xp=bonus_xp,
         streak=streak,
         explanation=explanation,
+        required=False,
     )
 
 @quiz_bp.route('/api/feed-quiz/explain/<int:quiz_id>/', methods=['POST', 'GET'])
