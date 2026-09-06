@@ -39,6 +39,7 @@ image = (
         "deepface>=0.0.93,<0.1",
         "tensorflow>=2.16,<2.19",
         "tf-keras>=2.16,<2.19",
+        "openai-whisper>=20250625",
         "opencv-python-headless==4.11.0.86",
         "Flask==3.1.2",
         "python-dotenv==1.1.1",
@@ -52,11 +53,12 @@ image = (
             "LITTLENET_AI_SERVER": "1",
             "LITTLENET_DEVICE": "cuda",
             "LITTLENET_MODEL_CACHE": "/cache/models",
+            "LITTLENET_WHISPER_MODEL": "base",
             "HF_HOME": "/cache/huggingface",
             "HF_HUB_CACHE": "/cache/huggingface/hub",
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
-            "LITTLENET_DEPLOY_VERSION": "3",
+            "LITTLENET_DEPLOY_VERSION": "4",
         }
     )
     .add_local_dir(
@@ -155,6 +157,12 @@ def warm_models():
         DeepFace.build_model("Facenet512")
 
     run("deepface_facenet512", face)
+
+    def whisper_model():
+        import whisper
+        whisper.load_model("base", download_root="/cache/models/whisper")
+
+    run("whisper_base", whisper_model)
     model_cache.commit()
     return results
 

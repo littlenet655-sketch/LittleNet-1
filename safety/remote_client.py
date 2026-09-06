@@ -1,7 +1,7 @@
 """Client for optional split LittleNet AI inference service.
 
 The web app can run with only requirements-core.txt and delegate heavy inference
-(YOLO/NSFW/Whisper/DeepFace) to a separate service.  If AI_SERVICE_URL is not
+(YOLO/NSFW/Whisper/DeepFace) to a separate service. If AI_SERVICE_URL is not
 set the original local inference path remains available.
 """
 import json
@@ -74,6 +74,31 @@ def face_verify(reference, path: str) -> dict:
         )
     r.raise_for_status()
     return r.json()
+
+
+def face_adult_verify(path: str) -> dict:
+    """Run guardian liveness + adult-age analysis on the heavy AI service."""
+    with open(path, "rb") as fh:
+        r = requests.post(
+            _base() + "/ai/face/adult",
+            files={"file": (Path(path).name, fh)},
+            headers=_headers(), timeout=_timeout(),
+        )
+    r.raise_for_status()
+    data = r.json()
+    if not data.get("ok"):
+        return {
+            "is_adult": False,
+            "estimated_age": None,
+            "method": "REMOTE_AI",
+            "reason": data.get("reason", "adult_face_verification_failed"),
+        }
+    return data.get("result") or {
+        "is_adult": False,
+        "estimated_age": None,
+        "method": "REMOTE_AI",
+        "reason": "adult_face_verification_empty",
+    }
 
 
 def health() -> dict:
