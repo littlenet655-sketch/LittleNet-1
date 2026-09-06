@@ -17,9 +17,25 @@ def decide(signals:dict, safety_level='STRICT', adult_threshold=0.40):
     if category in HARD_TEXT_CATEGORIES or signals.get('deterministic_grooming') or signals.get('deterministic_severe_abuse'):
         reason='grooming/coercion hard blocked' if category=='GROOMING' or signals.get('deterministic_grooming') else 'severe abuse/threat hard blocked'
         return Decision('BLOCK',100.0,reason)
-    if total_failure: return Decision('BLOCK',100.0,'AI safety unavailable: fail closed')
-    if adult >= adult_threshold or category in ADULT_CATEGORIES: return Decision('BLOCK',max(adult*100,90),'18+ content hard blocked')
-    if weapon>=.45 or category=='WEAPON':return Decision('BLOCK',max(weapon*100,85),'weapon/dangerous object')
+    if total_failure:return Decision('BLOCK',100.0,'AI safety unavailable: fail closed')
+    if adult>=adult_threshold or category in ADULT_CATEGORIES:return Decision('BLOCK',max(adult*100,90),'18+ content hard blocked')
+
+    # Do not rely only on the legacy weapon_score mapping. Inspect raw YOLO
+    # detections as well so OpenImages labels such as Axe, Handgun and Kitchen
+    # knife receive the same child-safety policy. Medium-confidence evidence goes
+    # to Parent Review instead of being silently allowed.
+    try:
+        from .yolo_policy import classify_signals
+        yolo=classify_signals(signals)
+    except Exception:
+        yolo={'score':0.0,'block':False,'review':False,'dangerous':[]}
+    weapon=max(weapon,float(yolo.get('score',0) or 0))
+    if yolo.get('block') or weapon>=.45 or category=='WEAPON':
+        label=((yolo.get('dangerous') or [{}])[0].get('label') or 'dangerous object')
+        return Decision('BLOCK',max(weapon*100,85),f'weapon/dangerous object: {label}')
+    if yolo.get('review'):
+        label=((yolo.get('dangerous') or [{}])[0].get('label') or 'dangerous object')
+        return Decision('REVIEW',max(weapon*100,50),f'possible dangerous object requires parent review: {label}')
 
     block_t,review_t={'STANDARD':(.78,.58),'STRICT':(.68,.48),'VERY_STRICT':(.58,.38)}.get(safety_level,(.68,.48))
     risk=max(violence,toxicity,float(signals.get('general_score',0)))
