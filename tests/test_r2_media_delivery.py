@@ -70,11 +70,19 @@ def test_non_r2_reference_is_never_deleted(monkeypatch):
     storage.delete_reference('uploads/images/local.png')
 
 
-def test_app_authorizes_before_signing_and_never_public_caches_uploads():
+def test_app_uses_canonical_visibility_before_signing_and_never_public_caches_uploads():
     app = _text('app.py')
     signing = app.index("if stored.startswith('uploads/r2/')")
-    authorization = app.index("if not any([p,m,f]) and not is_avatar")
-    assert authorization < signing
+    post_auth = app.index("from services.social import post_visible_to, story_visible_to")
+    message_auth = app.index("if not can_interact(m['sender_child_id'],m['receiver_child_id'])")
+    profile_auth = app.index("from child.service import can_discover_child")
+    recognized_guard = app.index("if not any([p,m,f]) and not default_avatar")
+    assert post_auth < signing
+    assert message_auth < signing
+    assert profile_auth < signing
+    assert recognized_guard < signing
+    assert "visible=story_visible_to(uid,p['post_id']) if p.get('is_story') else post_visible_to(uid,p['post_id'])" in app
+    assert "filename.startswith('profile_pictures/')" not in app
     assert 'signed_download_url(stored)' in app
     assert "response.headers['Cache-Control'] = 'private, no-store, max-age=0'" in app
     assert "public, max-age=86400" not in app
