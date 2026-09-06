@@ -49,7 +49,7 @@ def _signals_from_transcript(transcript):
         sig['general_score'] = max(float(sig.get('general_score', 0) or 0), 1.0)
         sig['category'] = 'AUDIO_PII'
         sig['pii_detected'] = True
-        sig['pii_types'] = pii.get('types') or pii.get('matches') or []
+        sig['pii_types'] = pii.get('categories') or []
     return normalize_signals(sig, category='AUDIO')
 
 
