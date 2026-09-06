@@ -22,20 +22,56 @@ def owns(parent_id, child_id):
     ''', (parent_id, child_id, parent_id, parent_id)))
 
 def pending_follows(parent_id):
-    return fetch_all('''
-        SELECT f.child_id, u1.full_name requester_name, f.following_child_id, u2.full_name target_name 
-        FROM followers f 
-        JOIN users u1 ON u1.user_id = f.child_id 
-        JOIN users u2 ON u2.user_id = f.following_child_id 
-        WHERE f.approved = FALSE 
-          AND f.child_id IN (
-              SELECT m.child_id 
-              FROM parent_child_map m
-              JOIN users p ON p.user_id = %s
-              WHERE m.parent_id = %s OR m.verified_parent_id = %s OR LOWER(m.parent_email) = LOWER(p.email)
-          ) 
-        ORDER BY f.created_at
-    ''', (parent_id, parent_id, parent_id))
+    """Return actionable and waiting two-parent friendship stages for this parent."""
+    owned='''SELECT m.child_id FROM parent_child_map m JOIN users p ON p.user_id=%s
+             WHERE m.parent_id=%s OR m.verified_parent_id=%s OR LOWER(m.parent_email)=LOWER(p.email)'''
+    return fetch_all(f'''
+        SELECT * FROM (
+          SELECT f.child_id, f.following_child_id,
+                 u1.full_name requester_name, u2.full_name target_name,
+                 f.approval_stage,
+                 TRUE AS actionable,
+                 'OUTGOING' AS approval_direction,
+                 'Your child sent this request. Approve it before the other family sees an approval request.' AS stage_help,
+                 f.created_at
+          FROM followers f
+          JOIN users u1 ON u1.user_id=f.child_id
+          JOIN users u2 ON u2.user_id=f.following_child_id
+          WHERE f.approved=FALSE AND f.approval_stage='REQUESTED'
+            AND f.child_id IN ({owned})
+
+          UNION ALL
+
+          SELECT f.child_id, f.following_child_id,
+                 u2.full_name requester_name, u1.full_name target_name,
+                 f.approval_stage,
+                 TRUE AS actionable,
+                 'INCOMING' AS approval_direction,
+                 'The other child’s parent already approved. Approve this incoming friendship for your child.' AS stage_help,
+                 f.created_at
+          FROM followers f
+          JOIN users u1 ON u1.user_id=f.child_id
+          JOIN users u2 ON u2.user_id=f.following_child_id
+          WHERE f.approved=FALSE AND f.approval_stage='RECEIVER_PARENT_PENDING'
+            AND f.child_id IN ({owned})
+
+          UNION ALL
+
+          SELECT f.child_id, f.following_child_id,
+                 u1.full_name requester_name, u2.full_name target_name,
+                 f.approval_stage,
+                 FALSE AS actionable,
+                 'WAITING' AS approval_direction,
+                 'You approved this request. It is waiting for the other child’s parent.' AS stage_help,
+                 f.created_at
+          FROM followers f
+          JOIN users u1 ON u1.user_id=f.child_id
+          JOIN users u2 ON u2.user_id=f.following_child_id
+          WHERE f.approved=FALSE AND f.approval_stage='SENDER_PARENT_APPROVED'
+            AND f.child_id IN ({owned})
+        ) q
+        ORDER BY actionable DESC, created_at ASC
+    ''', (parent_id,parent_id,parent_id, parent_id,parent_id,parent_id, parent_id,parent_id,parent_id))
 
 
 def get_parent_weekly_digest(parent_id, child_id):
@@ -46,7 +82,6 @@ def get_parent_weekly_digest(parent_id, child_id):
     if not owns(parent_id, child_id):
         return None
 
-    # Check for existing digest generated this week
     existing = fetch_one('''
         SELECT * FROM parent_weekly_digests
         WHERE child_id = %s AND week_start_date >= CURRENT_DATE - INTERVAL '7 days'
@@ -57,7 +92,6 @@ def get_parent_weekly_digest(parent_id, child_id):
         data = existing.get('digest_data')
         return json.loads(data) if isinstance(data, str) else data
 
-    # Aggregate telemetry for last 7 days
     usage_row = fetch_one('''
         SELECT COALESCE(SUM(duration_minutes), 0) as mins FROM child_usage_logs
         WHERE child_id = %s AND usage_date >= CURRENT_DATE - INTERVAL '7 days'
@@ -95,7 +129,6 @@ def get_parent_weekly_digest(parent_id, child_id):
     digest_res = get_ai_client().synthesize_parent_digest(raw_stats)
     digest_dict = digest_res.model_dump()
 
-    # Cache into parent_weekly_digests table
     import json
     try:
         execute('''
