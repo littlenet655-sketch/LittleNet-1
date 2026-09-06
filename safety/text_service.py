@@ -1,11 +1,26 @@
-import os,re
+import os,re,unicodedata
 from .common import env_flag,normalize_signals,timed_call,timeout_seconds
 
+# Exact/near-exact high-risk phrases. These deterministic rules are deliberately
+# narrow: the ML sexual-explicit score handles broader context while these rules
+# guarantee obvious sexual solicitation cannot pass if a model is unavailable.
 ADULT_TERMS={
-    'porn','pornography','nude','nudes','sex video','xxx','send nudes','sexual photo',
-    'explicit photo','onlyfans','sexting','send me a nude','take your clothes off',
-    'show me your body','show your body','naked pic','naked photo','private parts'
+    'porn','pornography','nude','nudes','sex video','sex tape','xxx','send nudes',
+    'sexual photo','sexual picture','explicit photo','explicit picture','onlyfans',
+    'sexting','send me a nude','send nude','take your clothes off','remove your clothes',
+    'show me your body','show your body','naked pic','naked picture','naked photo',
+    'private parts','show me your private parts','send a sexy pic','send sexy pics',
+    'send a hot pic','send hot pics','adult video','adult content','nsfw','18+ video',
+    '18+ content','dirty picture','dirty pics','bedroom pic','without clothes'
 }
+ADULT_PATTERNS=(
+    r"\bsend\s+(?:me\s+)?(?:a\s+)?(?:nude|nudes|naked|sexy|hot|explicit|private)\s*(?:pic|pics|picture|pictures|photo|photos|selfie|selfies)?\b",
+    r"\bshow\s+(?:me\s+)?(?:your\s+)?(?:body|private parts|chest|breasts?|genitals?)\b",
+    r"\b(?:take|remove|pull)\s+(?:off\s+)?(?:your\s+)?clothes\b",
+    r"\b(?:naked|nude|explicit|sexual|sexy)\s+(?:pic|pics|picture|pictures|photo|photos|video|videos|selfie|selfies)\b",
+    r"\b(?:watch|send|share)\s+(?:a\s+)?(?:porn|porno|xxx|adult|18\+)\s*(?:video|videos|clip|clips|content)?\b",
+    r"\b(?:sext|sexting|cybersex)\b",
+)
 PROFANE={'fuck','bitch','asshole'}
 BULLYING_TERMS={
     'kill yourself','nobody likes you','you are ugly','you are stupid','you are useless',
@@ -31,27 +46,45 @@ GROOMING_PATTERNS=(
     r"\badd me on (?:snap|snapchat|instagram|telegram|whatsapp)\b",
 )
 
-_DETOX=None;_HF_TEXT=None
+_DETOX=None;_DETOX_NAME=None;_HF_TEXT=None
+
+
+def _normalized_text(text):
+    """Normalize common Unicode/spacing obfuscation before deterministic rules."""
+    value=unicodedata.normalize('NFKC',text or '').lower()
+    value=re.sub(r'[._*~`|]+',' ',value)
+    value=re.sub(r'\s+',' ',value).strip()
+    return value
+
 
 def _detox_scores(text):
-    global _DETOX
+    global _DETOX,_DETOX_NAME
     try:
         import torch
-        if hasattr(torch, 'serialization') and hasattr(torch.serialization, 'add_safe_globals'):
-            _orig_load = torch.load
-            def _safe_load(*args, **kwargs):
-                if 'weights_only' not in kwargs:
-                    kwargs['weights_only'] = False
-                return _orig_load(*args, **kwargs)
-            torch.load = _safe_load
+        if hasattr(torch,'serialization') and hasattr(torch.serialization,'add_safe_globals'):
+            _orig_load=torch.load
+            def _safe_load(*args,**kwargs):
+                if 'weights_only' not in kwargs:kwargs['weights_only']=False
+                return _orig_load(*args,**kwargs)
+            torch.load=_safe_load
     except Exception:
         pass
     from detoxify import Detoxify
-    model_name=os.getenv('LITTLENET_DETOXIFY_MODEL','original').strip() or 'original'
-    if _DETOX is None:
-        try:_DETOX=Detoxify(model_name)
-        except Exception:_DETOX=Detoxify('original')
-    return _DETOX.predict(text) if text else {}
+    # ``original`` does not expose sexual_explicit. LittleNet needs that head,
+    # so production defaults to multilingual and falls back to unbiased only.
+    model_name=os.getenv('LITTLENET_DETOXIFY_MODEL','multilingual').strip() or 'multilingual'
+    if model_name not in {'multilingual','unbiased'}:
+        model_name='multilingual'
+    if _DETOX is None or _DETOX_NAME!=model_name:
+        try:
+            _DETOX=Detoxify(model_name);_DETOX_NAME=model_name
+        except Exception:
+            _DETOX=Detoxify('unbiased');_DETOX_NAME='unbiased'
+    scores=_DETOX.predict(text) if text else {}
+    if text and 'sexual_explicit' not in scores:
+        raise RuntimeError('detoxify_missing_sexual_explicit_head')
+    return scores
+
 
 def _optional_hf_scores(text):
     if not env_flag('LITTLENET_ENABLE_TEXT_CLASSIFIER'):return None
@@ -63,17 +96,19 @@ def _optional_hf_scores(text):
         _HF_TEXT=pipeline('text-classification',model=model_id,top_k=None,device=-1)
     rows=_HF_TEXT(text[:4000])
     if rows and isinstance(rows[0],list):rows=rows[0]
-    harmful=0.0;details={}
+    harmful=0.0;sexual=0.0;details={}
     for row in rows or []:
         label=str(row.get('label','')).lower();score=float(row.get('score',0) or 0);details[label]=score
         if any(k in label for k in ('toxic','hate','bully','harass','self-harm','self_harm','unsafe')):harmful=max(harmful,score)
-    return {'toxicity':harmful,'labels':details}
+        if any(k in label for k in ('sexual','explicit','porn','nsfw','adult')):sexual=max(sexual,score)
+    return {'toxicity':harmful,'sexual':sexual,'labels':details}
+
 
 def check_text(text:str):
-    from .remote_client import enabled, moderate_text
-    text=(text or '').strip();low=text.lower()
+    from .remote_client import enabled,moderate_text
+    text=(text or '').strip();low=_normalized_text(text)
 
-    adult=1.0 if any(t in low for t in ADULT_TERMS) else 0.0
+    adult=1.0 if any(t in low for t in ADULT_TERMS) or any(re.search(p,low) for p in ADULT_PATTERNS) else 0.0
     profanity=1.0 if any(re.search(r'\b'+re.escape(t)+r'\b',low) for t in PROFANE) else 0.0
     bullying=.90 if any(t in low for t in BULLYING_TERMS) else 0.0
     severe=1.0 if any(t in low for t in SEVERE_ABUSE_TERMS) else 0.0
@@ -93,6 +128,7 @@ def check_text(text:str):
             elif bullying:remote['category']='CYBERBULLYING'
             remote['deterministic_grooming']=bool(grooming)
             remote['deterministic_severe_abuse']=bool(severe)
+            remote['deterministic_sexual']=bool(adult)
             return normalize_signals(remote,category='TEXT')
         except Exception:
             remote_failed=True
@@ -103,15 +139,20 @@ def check_text(text:str):
     if text:
         try:
             scores=timed_call('detoxify',lambda:_detox_scores(text),timeout_seconds('detoxify',90));ran+=1
-            toxicity=max([toxicity]+[float(v) for v in scores.values()])
+            toxicity=max([toxicity]+[float(v) for k,v in scores.items() if k!='sexual_explicit'])
             sexual=max(float(scores.get('sexual_explicit',0) or 0),adult)
+            extras['detoxify_model']=_DETOX_NAME
             extras['detoxify_scores']={k:float(v) for k,v in scores.items()}
-        except Exception as exc:errors.append('detoxify_timeout' if 'timeout' in str(exc) else 'detoxify')
+        except Exception as exc:
+            errors.append('detoxify_timeout' if 'timeout' in str(exc).lower() else ('detoxify_missing_sexual_head' if 'sexual_explicit' in str(exc) else 'detoxify'))
         if env_flag('LITTLENET_ENABLE_TEXT_CLASSIFIER'):
             try:
                 h=timed_call('text_classifier',lambda:_optional_hf_scores(text),timeout_seconds('text_classifier',90));ran+=1
-                if h:toxicity=max(toxicity,float(h.get('toxicity',0)));extras['text_classifier_scores']=h.get('labels',{})
-            except Exception as exc:errors.append('text_classifier_timeout' if 'timeout' in str(exc) else 'text_classifier')
+                if h:
+                    toxicity=max(toxicity,float(h.get('toxicity',0)))
+                    sexual=max(sexual,float(h.get('sexual',0)))
+                    extras['text_classifier_scores']=h.get('labels',{})
+            except Exception as exc:errors.append('text_classifier_timeout' if 'timeout' in str(exc).lower() else 'text_classifier')
 
     if grooming:category='GROOMING'
     elif severe:category='SEVERE_ABUSE'
@@ -124,6 +165,7 @@ def check_text(text:str):
         'adult_score':sexual,'sexual_score':sexual,'violence_score':severe,'weapon_score':0,
         'toxicity_score':toxicity,'general_score':max(sexual,toxicity,severe),'category':category,
         'deterministic_grooming':bool(grooming),'deterministic_severe_abuse':bool(severe),
+        'deterministic_sexual':bool(adult),
         'total_safety_failure':bool(text) and ran==0 and not deterministic,
         'partial_safety_failure':bool(text) and bool(errors) and (ran>0 or deterministic),
         'errors':errors,**extras
