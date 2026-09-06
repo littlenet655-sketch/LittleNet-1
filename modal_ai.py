@@ -49,7 +49,9 @@ image = (
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
             "LITTLENET_YOLO_WEIGHTS": "/root/littlenet/yolov8n-oiv7.pt",
-            "LITTLENET_DEPLOY_VERSION": "5",
+            "LITTLENET_YOLO_REVIEW_THRESHOLD": "0.20",
+            "LITTLENET_YOLO_BLOCK_THRESHOLD": "0.45",
+            "LITTLENET_DEPLOY_VERSION": "6",
         }
     )
     .add_local_dir(
@@ -120,7 +122,10 @@ def warm_models():
 
     def run(name, fn):
         try:
-            fn(); results[name] = {"ok": True}
+            detail = fn()
+            results[name] = {"ok": True}
+            if detail is not None:
+                results[name]["detail"] = detail
         except Exception as exc:
             results[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -140,8 +145,12 @@ def warm_models():
 
     def yolo():
         from ultralytics import YOLO
+        from safety.yolo_policy import dangerous_label_coverage
         model = YOLO("/root/littlenet/yolov8n-oiv7.pt")
-        _ = model.names
+        matched = dangerous_label_coverage(model.names)
+        if len(matched) < 3:
+            raise RuntimeError(f"YOLO checkpoint exposes insufficient dangerous-object labels: {matched}")
+        return {"dangerous_labels": matched}
     run("yolo_oiv7", yolo)
 
     def face():
