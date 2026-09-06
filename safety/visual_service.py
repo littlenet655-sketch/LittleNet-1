@@ -1,6 +1,11 @@
 import math,os,tempfile,subprocess
 from .common import env_flag,normalize_signals,timed_call,timeout_seconds
 
+CLIP_MODEL_ID='openai/clip-vit-base-patch32'
+CLIP_MODEL_REVISION='3d74acf'
+FALCON_NSFW_MODEL_ID='Falconsai/nsfw_image_detection'
+FALCON_NSFW_REVISION='0436797'
+
 
 def _runtime_device():
     requested=os.getenv('LITTLENET_DEVICE','auto').lower()
@@ -20,9 +25,9 @@ def _clip_score_impl(image_path):
     from PIL import Image
     from transformers import CLIPModel,CLIPProcessor
     if _CLIP is None:
-        _CLIP=CLIPModel.from_pretrained('openai/clip-vit-base-patch32');device=_runtime_device()
+        _CLIP=CLIPModel.from_pretrained(CLIP_MODEL_ID,revision=CLIP_MODEL_REVISION);device=_runtime_device()
         if device=='cuda':_CLIP=_CLIP.to(device)
-        _CLIP.eval();_CLIP_PROC=CLIPProcessor.from_pretrained('openai/clip-vit-base-patch32')
+        _CLIP.eval();_CLIP_PROC=CLIPProcessor.from_pretrained(CLIP_MODEL_ID,revision=CLIP_MODEL_REVISION)
     labels=['normal child-friendly content','nudity or sexually explicit content','physical violence','weapon gun knife dangerous object','smoking drugs or alcohol']
     inp=_CLIP_PROC(text=labels,images=Image.open(image_path).convert('RGB'),return_tensors='pt',padding=True);device=_runtime_device()
     if device=='cuda':inp={k:v.to(device) if hasattr(v,'to') else v for k,v in inp.items()}
@@ -47,7 +52,7 @@ def _nudenet(path):
 def _falconsai(path):
     global _NSFW
     from transformers import pipeline
-    if _NSFW is None:_NSFW=pipeline('image-classification',model='Falconsai/nsfw_image_detection',device=0 if _runtime_device()=='cuda' else -1)
+    if _NSFW is None:_NSFW=pipeline('image-classification',model=FALCON_NSFW_MODEL_ID,revision=FALCON_NSFW_REVISION,device=0 if _runtime_device()=='cuda' else -1)
     rs=_NSFW(path)
     return max([float(x['score']) for x in rs if str(x['label']).lower()=='nsfw'] or [0])
 
@@ -61,11 +66,12 @@ def _opennsfw2(path):
 def _extra_hf_nsfw(path):
     if not env_flag('LITTLENET_ENABLE_EXTRA_NSFW'):return None
     model_id=os.getenv('LITTLENET_EXTRA_NSFW_MODEL','').strip()
-    if not model_id:raise RuntimeError('extra_nsfw_model_missing')
+    revision=os.getenv('LITTLENET_EXTRA_NSFW_REVISION','').strip()
+    if not model_id or not revision:raise RuntimeError('extra_nsfw_model_or_revision_missing')
     global _EXTRA_HF
     if _EXTRA_HF is None:
         from transformers import pipeline
-        _EXTRA_HF=pipeline('image-classification',model=model_id,device=0 if _runtime_device()=='cuda' else -1)
+        _EXTRA_HF=pipeline('image-classification',model=model_id,revision=revision,device=0 if _runtime_device()=='cuda' else -1)
     rows=_EXTRA_HF(path);score=0.0
     for row in rows or []:
         label=str(row.get('label','')).lower()
@@ -162,8 +168,6 @@ def _video_sample_count(path,max_frames=None):
     except ValueError:interval=3.0
     try:cap=max(6,int(os.getenv('LITTLENET_VIDEO_MAX_FRAMES','60')))
     except ValueError:cap=60
-    # Always inspect several points; for longer clips aim for roughly one frame
-    # per configured interval. A 180-second reel therefore samples ~60 frames.
     desired=max(6,int(math.ceil(max(duration,1.0)/interval))+1)
     return min(cap,desired)
 
@@ -179,8 +183,6 @@ def _video_frames(path,max_frames):
         fd,tmp=tempfile.mkstemp(suffix='.jpg');os.close(fd);cv2.imwrite(tmp,frame)
         try:
             signals=check_image(tmp);outs.append(signals)
-            # Hard-block evidence is enough to reject the whole video; avoid
-            # spending GPU time on the remaining frames once it is conclusive.
             if decide(signals).action=='BLOCK':break
         finally:
             try:os.unlink(tmp)

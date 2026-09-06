@@ -15,7 +15,8 @@ os.environ["LITTLENET_AI_SERVER"] = "1"
 from flask import Flask, jsonify, request
 
 from safety.text_service import check_text
-from safety.visual_service import check_image, check_video
+from safety.visual_service import check_image
+from safety.video_service import check_video
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024

@@ -8,6 +8,11 @@ on:
         required: true
         type: boolean
         default: false
+      migrate_database:
+        description: "Apply LittleNet PostgreSQL schema/upgrades before web preflight"
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
@@ -28,7 +33,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install Modal CLI
-        run: python -m pip install --upgrade "modal>=1.1,<2"
+        run: python -m pip install --upgrade "modal>=1.5,<2"
 
       - name: Verify Modal credentials exist
         shell: bash
@@ -40,6 +45,17 @@ jobs:
       - name: Deploy AI service
         run: modal deploy modal_ai.py --stream-logs
 
+      - name: Warm and validate every AI model
+        run: modal run modal_ai.py
+
       - name: Deploy optional web service
         if: ${{ inputs.deploy_web }}
         run: modal deploy modal_web.py --stream-logs
+
+      - name: Apply database schema/upgrades
+        if: ${{ inputs.deploy_web && inputs.migrate_database }}
+        run: modal run modal_web.py --init-db
+
+      - name: Run web/DB/AI/Presidio preflight
+        if: ${{ inputs.deploy_web }}
+        run: modal run modal_web.py --preflight
