@@ -1,6 +1,7 @@
 import os,tempfile,subprocess
 from .common import env_flag,normalize_signals,timed_call,timeout_seconds
 
+
 def _runtime_device():
     requested=os.getenv('LITTLENET_DEVICE','auto').lower()
     try:
@@ -9,7 +10,10 @@ def _runtime_device():
         if requested=='cpu':return 'cpu'
         return 'cuda' if torch.cuda.is_available() else 'cpu'
     except Exception:return 'cpu'
-_CLIP=None;_CLIP_PROC=None;_NUDE=None;_NSFW=None;_OPENNSFW2=None;_EXTRA_HF=None
+
+
+_CLIP=None;_CLIP_PROC=None;_NUDE=None;_NSFW=None;_OPENNSFW2=None;_EXTRA_HF=None;_YOLO=None
+
 
 def _clip_score_impl(image_path):
     global _CLIP,_CLIP_PROC
@@ -25,9 +29,11 @@ def _clip_score_impl(image_path):
     probs=_CLIP(**inp).logits_per_image.softmax(dim=1)[0].detach().cpu().tolist()
     return {'adult':probs[1],'sexual':probs[1],'violence':probs[2],'weapon':probs[3],'general':max(probs[1:])}
 
+
 def _clip_score(image_path):
     try:return timed_call('clip',lambda:_clip_score_impl(image_path),timeout_seconds('clip',90))
     except Exception:return None
+
 
 def _nudenet(path):
     global _NUDE
@@ -37,6 +43,7 @@ def _nudenet(path):
     risky={'FEMALE_BREAST_EXPOSED','FEMALE_GENITALIA_EXPOSED','MALE_GENITALIA_EXPOSED','ANUS_EXPOSED','BUTTOCKS_EXPOSED'}
     return max([float(d.get('score',0)) for d in ds if d.get('class') in risky] or [0])
 
+
 def _falconsai(path):
     global _NSFW
     from transformers import pipeline
@@ -44,13 +51,14 @@ def _falconsai(path):
     rs=_NSFW(path)
     return max([float(x['score']) for x in rs if str(x['label']).lower()=='nsfw'] or [0])
 
+
 def _opennsfw2(path):
     if not env_flag('LITTLENET_ENABLE_OPENNSFW2'):return None
     import opennsfw2
     return float(opennsfw2.predict_image(path))
 
+
 def _extra_hf_nsfw(path):
-    """Feature-flagged additional image classifier (e.g. LAION-derived NSFW model)."""
     if not env_flag('LITTLENET_ENABLE_EXTRA_NSFW'):return None
     model_id=os.getenv('LITTLENET_EXTRA_NSFW_MODEL','').strip()
     if not model_id:raise RuntimeError('extra_nsfw_model_missing')
@@ -64,6 +72,40 @@ def _extra_hf_nsfw(path):
         if any(k in label for k in ('nsfw','porn','sexual','adult','unsafe')):score=max(score,float(row.get('score',0) or 0))
     return score
 
+
+def _yolo_objects(path):
+    """Run the bundled YOLO model and return dangerous-object evidence.
+
+    The repo ships YOLO weights, so this never relies on a network model download.
+    It is intentionally an object/danger detector; NSFW remains handled by the
+    dedicated nudity classifiers above.
+    """
+    global _YOLO
+    from ultralytics import YOLO
+    weights=(os.getenv('LITTLENET_YOLO_WEIGHTS') or '').strip()
+    if not weights:
+        weights='yolov8n-oiv7.pt' if os.path.exists('yolov8n-oiv7.pt') else 'yolov8n.pt'
+    if not os.path.exists(weights):raise RuntimeError('yolo_weights_missing')
+    if _YOLO is None:_YOLO=YOLO(weights)
+    results=_YOLO.predict(source=path,verbose=False,device=0 if _runtime_device()=='cuda' else 'cpu',conf=0.20)
+    weapon_score=0.0;danger_score=0.0;detections=[]
+    weapon_terms=('gun','pistol','rifle','revolver','firearm','weapon','knife','dagger','sword','machete','bow and arrow','crossbow')
+    danger_terms=('grenade','bomb','explosive','chainsaw')
+    for result in results or []:
+        names=getattr(result,'names',{}) or {}
+        boxes=getattr(result,'boxes',None)
+        if boxes is None:continue
+        for box in boxes:
+            try:
+                cls_id=int(box.cls[0].item());conf=float(box.conf[0].item());label=str(names.get(cls_id,cls_id)).lower()
+            except Exception:
+                continue
+            if any(term in label for term in weapon_terms):weapon_score=max(weapon_score,conf)
+            if any(term in label for term in danger_terms):danger_score=max(danger_score,conf)
+            if conf>=.20:detections.append({'label':label,'confidence':round(conf,4)})
+    return {'weapon':max(weapon_score,danger_score),'danger':danger_score,'detections':detections[:25]}
+
+
 def check_image(path):
     from .remote_client import enabled,moderate_file
     if enabled():
@@ -74,6 +116,10 @@ def check_image(path):
         try:
             score=float(timed_call(name,fn,timeout_seconds(name,90)));ran+=1;adult=max(adult,score);sexual=max(sexual,score);details[name]=score
         except Exception as exc:errors.append(name+'_timeout' if 'timeout' in str(exc) else name)
+    try:
+        y=timed_call('yolo',lambda:_yolo_objects(path),timeout_seconds('yolo',90));ran+=1
+        weapon=max(weapon,float(y.get('weapon',0) or 0));general=max(general,weapon);details['yolo']=y
+    except Exception as exc:errors.append('yolo_timeout' if 'timeout' in str(exc) else 'yolo')
     c=_clip_score(path)
     if c:ran+=1;adult=max(adult,c['adult']);sexual=max(sexual,c.get('sexual',0));violence=max(violence,c['violence']);weapon=max(weapon,c.get('weapon',0));general=max(general,c['general']);details['clip']=c
     else:errors.append('clip')
@@ -88,6 +134,7 @@ def check_image(path):
     result={'adult_score':adult,'sexual_score':sexual,'violence_score':violence,'weapon_score':weapon,'toxicity_score':0,'general_score':max(general,adult,sexual,violence,weapon),'category':'ADULT' if max(adult,sexual)>=.4 else ('WEAPON' if weapon>=.45 else 'IMAGE'),'total_safety_failure':ran==0,'partial_safety_failure':ran>0 and bool(errors),'errors':errors,'model_signals':details}
     return normalize_signals(result,category='IMAGE')
 
+
 def video_duration_seconds(path):
     try:
         r=subprocess.run(['ffprobe','-v','error','-show_entries','format=duration','-of','default=noprint_wrappers=1:nokey=1',path],capture_output=True,text=True,timeout=15,check=True);return float((r.stdout or '0').strip() or 0)
@@ -96,16 +143,6 @@ def video_duration_seconds(path):
             import cv2;c=cv2.VideoCapture(path);fps=c.get(cv2.CAP_PROP_FPS) or 0;frames=c.get(cv2.CAP_PROP_FRAME_COUNT) or 0;c.release();return frames/fps if fps else 0
         except Exception:return 0
 
-def _audio_from_video(path):
-    import shutil
-    if not shutil.which('ffmpeg'):
-        return None
-    fd,out=tempfile.mkstemp(suffix='.wav');os.close(fd)
-    try:subprocess.run(['ffmpeg','-y','-loglevel','error','-i',path,'-vn','-ac','1','-ar','16000',out],check=True,timeout=90);return out
-    except Exception:
-        try:os.unlink(out)
-        except OSError:pass
-        return None
 
 def _video_frames(path,max_frames):
     import cv2
@@ -121,6 +158,7 @@ def _video_frames(path,max_frames):
             except OSError:pass
     cap.release();return outs
 
+
 def check_video(path,max_frames=6):
     from .remote_client import enabled,moderate_file
     if enabled():
@@ -131,16 +169,7 @@ def check_video(path,max_frames=6):
         if not outs:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['no_video_frames']},category='VIDEO')
         keys=['adult_score','sexual_score','weapon_score','violence_score','general_score'];out={k:max(float(x.get(k,0)) for x in outs) for k in keys};out['toxicity_score']=0
         out['partial_safety_failure']=any(x.get('partial_safety_failure') for x in outs);out['total_safety_failure']=all(x.get('total_safety_failure') for x in outs);out['errors']=[err for x in outs for err in x.get('errors',[])]
-        ap=_audio_from_video(path)
-        if ap:
-            try:
-                from .audio_service import check_audio;a=check_audio(ap)
-                for k in ['adult_score','sexual_score','toxicity_score','general_score']:out[k]=max(float(out.get(k,0)),float(a.get(k,0)))
-                out['transcript']=a.get('transcript','');out['partial_safety_failure']=out['partial_safety_failure'] or bool(a.get('partial_safety_failure'));out['errors']+=a.get('errors',[])
-            finally:
-                try:os.unlink(ap)
-                except OSError:pass
-        else:out['partial_safety_failure']=True;out['errors'].append('ffmpeg_audio_unavailable')
+        out['model_signals']={'sampled_frames':len(outs),'frames':[x.get('model_signals',{}) for x in outs]}
         out['category']='ADULT' if max(out['adult_score'],out['sexual_score'])>=.4 else ('WEAPON' if out['weapon_score']>=.45 else 'VIDEO')
         return normalize_signals(out,category='VIDEO')
     except Exception as exc:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['video_timeout' if 'timeout' in str(exc) else 'video_processing']},category='VIDEO')
