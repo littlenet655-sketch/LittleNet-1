@@ -3,7 +3,8 @@ from database.connection import execute, fetch_one
 from .common import normalize_signals
 from .policy import decide
 from .text_service import check_text
-from .visual_service import check_image, check_video
+from .visual_service import check_image
+from .video_service import check_video
 
 
 def safety_level(child_id):
