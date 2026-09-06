@@ -1,18 +1,7 @@
 """Optional Modal deployment for LittleNet's Flask/Jinja web application.
 
-This keeps the *web compute* on Modal as well as the AI service. PostgreSQL
-remains external (Railway/Neon/Supabase/etc.), because a Modal Volume is not a
-relational database.
-
-Typical sequence:
-    modal deploy modal_ai.py
-    # create littlenet-web-secrets with DATABASE_URL/SECRET_KEY/AI_* values
-    modal deploy modal_web.py
-    modal run modal_web.py::init_database
-
-Uploads are mounted on a persistent Modal Volume. This web function is capped at
-one container to avoid concurrent write semantics on that Volume in the college
-project build.
+PostgreSQL remains external (Neon/etc.). Private media is stored in R2; the
+legacy uploads volume remains only for compatibility with local/demo assets.
 """
 from pathlib import Path
 import os
@@ -31,35 +20,26 @@ web_secret = modal.Secret.from_name(
 web_image = (
     modal.Image.debian_slim(python_version="3.11")
     .apt_install("ffmpeg")
-    .pip_install_from_requirements(str(ROOT / "requirements-core.txt"))
+    .pip_install_from_requirements(str(ROOT / "requirements-safety.txt"))
+    .run_commands("python -m spacy download en_core_web_sm")
     .workdir("/root/littlenet")
     .env(
         {
             "COOKIE_SECURE": "1",
             "LITTLENET_DEVICE": "cpu",
-            "LITTLENET_DEPLOY_VERSION": "3",
+            "LITTLENET_ENABLE_PRESIDIO": "1",
+            "LITTLENET_PRESIDIO_SPACY_MODEL": "en_core_web_sm",
+            "LITTLENET_DEPLOY_VERSION": "4",
         }
     )
     .add_local_dir(
         str(ROOT),
         remote_path="/root/littlenet",
         ignore=[
-            ".git/**",
-            ".pytest_cache/**",
-            "**/__pycache__/**",
-            "uploads/**",
-            "android/**",
-            "tools/gradle-8.9/**",
-            "node_modules/**",
-            ".agent/**",
-            ".agents/**",
-            "agent/**",
-            ".claude/**",
-            ".cursor/**",
-            "*.db",
-            "*.zip",
-            "*.apk",
-            ".env",
+            ".git/**", ".pytest_cache/**", "**/__pycache__/**", "uploads/**",
+            "android/**", "tools/gradle-8.9/**", "node_modules/**", ".agent/**",
+            ".agents/**", "agent/**", ".claude/**", ".cursor/**", "*.db",
+            "*.zip", "*.apk", ".env",
         ],
         copy=True,
     )
@@ -75,7 +55,6 @@ web_image = (
     timeout=300,
     startup_timeout=120,
     scaledown_window=600,
-    # Scale to zero when idle; the next request may pay a web cold-start penalty.
     min_containers=0,
     max_containers=1,
 )
@@ -91,16 +70,10 @@ def web():
 
     @flask_app.after_request
     def persist_upload_changes(response):
-        # DB state is already durable in PostgreSQL. Only filesystem changes need
-        # a Volume commit. One container is used so there are no competing web
-        # writers to the same Volume in this college-project deployment.
         if request.method in {"POST", "PUT", "PATCH", "DELETE"} and request.files:
             try:
                 uploads.commit()
             except Exception:
-                # A failed commit must not turn an already-completed DB response
-                # into a 500. The next write/readiness check will surface storage
-                # trouble; moderation itself remains fail-closed independently.
                 flask_app.logger.exception("Modal uploads Volume commit failed")
         return response
 
@@ -109,7 +82,7 @@ def web():
 
 @app.function(image=web_image, secrets=[web_secret], timeout=300)
 def init_database():
-    """Create/upgrade schema and idempotent seed data on the external Postgres DB."""
+    """Create/upgrade schema on the external PostgreSQL database."""
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/init_db.py"], check=True)
     return {"ok": True}
@@ -117,20 +90,26 @@ def init_database():
 
 @app.function(image=web_image, secrets=[web_secret], timeout=120)
 def seed_quizzes():
-    """Seed 165+ curated quiz questions into the live DB. Safe to re-run."""
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/seed_quizzes.py"], check=True)
     return {"ok": True}
 
 
-
 @app.function(image=web_image, secrets=[web_secret], timeout=120)
 def web_preflight():
-    """Verify database connectivity and remote AI readiness from Modal's network."""
+    """Verify DB, remote AI and local Presidio availability from Modal."""
     os.chdir("/root/littlenet")
     from database.connection import fetch_one
     from safety.remote_client import health
+    from safety.presidio_adapter import analyze_pii
 
     db = fetch_one("SELECT 1 ok")
     ai = health()
-    return {"ok": bool(db and db["ok"] == 1 and ai.get("ok")), "database": True, "ai": ai}
+    pii = analyze_pii("test@example.com")
+    pii_ok = bool(pii.get("available") and "EMAIL_ADDRESS" in pii.get("categories", []))
+    return {
+        "ok": bool(db and db["ok"] == 1 and ai.get("ok") and pii_ok),
+        "database": True,
+        "ai": ai,
+        "presidio": pii_ok,
+    }
