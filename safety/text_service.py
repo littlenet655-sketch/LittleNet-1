@@ -120,12 +120,11 @@ def check_text(text:str):
     else:category='TEXT'
 
     deterministic=adult>0 or bullying>0 or profanity>0 or severe>0 or grooming>0
-    total_failure=bool(text) and ran==0 and not deterministic
     result={
         'adult_score':sexual,'sexual_score':sexual,'violence_score':severe,'weapon_score':0,
         'toxicity_score':toxicity,'general_score':max(sexual,toxicity,severe),'category':category,
         'deterministic_grooming':bool(grooming),'deterministic_severe_abuse':bool(severe),
-        'total_safety_failure':total_failure,
+        'total_safety_failure':bool(text) and ran==0 and not deterministic,
         'partial_safety_failure':bool(text) and bool(errors) and (ran>0 or deterministic),
         'errors':errors,**extras
     }
