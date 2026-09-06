@@ -1,68 +1,48 @@
 {% extends 'base.html' %}
 {% block title %}LittleNet: Safe Social Network for Kids{% endblock %}
-
 {% block content %}
 {% import '_icons.html' as ico %}
 
 <div class="auth-shell">
   <div class="auth-card">
-
-    <!-- Brand Header -->
     <div class="auth-brand-wrap">
-      <div class="auth-logo-badge" style="background: none; box-shadow: none; padding: 0;">
-        <img src="/static/icons/app_logo.png" alt="LittleNet Logo" style="width: 64px; height: 64px; border-radius: 16px; object-fit: cover; box-shadow: 0 8px 24px rgba(0, 149, 246, 0.28);">
+      <div class="auth-logo-badge" style="background:none;box-shadow:none;padding:0;">
+        <img src="/static/icons/app_logo.png" alt="LittleNet Logo" style="width:64px;height:64px;border-radius:16px;object-fit:cover;box-shadow:0 8px 24px rgba(0,149,246,.28);">
       </div>
       <h1 class="brand auth-title">LittleNet</h1>
       <p class="auth-subtitle" id="mode-subtitle">
-        {% if mode=='parent' %}Parent supervision, screen-time & safety controls
-        {%- elif mode=='admin' %}Safety moderator & platform admin sign-in
-        {%- else %}A safe, AI-guided social world for children{% endif %}
+        {% if mode=='parent' %}Parent supervision, screen-time &amp; safety controls
+        {% elif mode=='admin' %}Safety moderator &amp; platform admin sign-in
+        {% else %}A safe, AI-guided social world for children{% endif %}
       </p>
     </div>
 
-    <!-- Mode Selector Pills (Kids Mode vs Parent Mode) -->
     {% if mode!='admin' %}
     <div class="mode-pill-toggle" role="tablist" aria-label="Select login mode">
-      <a href="/login/?mode=kids"
-         class="pill-btn {% if mode!='parent' %}active kid-active{% endif %}"
-         id="tab-kids"
-         role="tab"
-         aria-selected="{{ 'true' if mode!='parent' else 'false' }}">
-        {{ico.icon('user',16,'pill-icon')}}
-        <span>Kids Mode</span>
+      <a href="/login/?mode=kids" class="pill-btn {% if mode!='parent' %}active kid-active{% endif %}" id="tab-kids" role="tab" aria-selected="{{ 'true' if mode!='parent' else 'false' }}">
+        {{ ico.icon('user',16,'pill-icon') }} <span>Kids Mode</span>
       </a>
-      <a href="/login/?mode=parent"
-         class="pill-btn {% if mode=='parent' %}active parent-active{% endif %}"
-         id="tab-parent"
-         role="tab"
-         aria-selected="{{ 'true' if mode=='parent' else 'false' }}">
-        {{ico.icon('shield',16,'pill-icon')}}
-        <span>Parent Mode</span>
+      <a href="/login/?mode=parent" class="pill-btn {% if mode=='parent' %}active parent-active{% endif %}" id="tab-parent" role="tab" aria-selected="{{ 'true' if mode=='parent' else 'false' }}">
+        {{ ico.icon('shield',16,'pill-icon') }} <span>Parent Mode</span>
       </a>
     </div>
     {% endif %}
 
-    <!-- Error Alert -->
     {% set display_error = error or request.args.get('error') %}
     {% if display_error %}
     <div class="auth-alert auth-alert-error" role="alert">
-      <svg class="alert-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
+      <svg class="alert-icon" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 8v5"/><path d="M12 16h.01"/></svg>
       <span>{{ display_error }}</span>
     </div>
     {% endif %}
 
-    <!-- Pending Approval Banner for Demo / Viva -->
     {% if approval_token %}
-    <div class="auth-alert auth-alert-pending">
-      <div class="pending-title">{{ico.icon('clock',15)}} Parent Approval Required</div>
-      <p class="pending-desc">This account is awaiting parent identity verification. For demo/viva testing, approve instantly:</p>
-      <a href="/approve/{{ approval_token }}/" class="btn primary pending-btn">
-        {{ico.icon('shield',15)}} Approve Account Now
-      </a>
+    <div class="auth-alert auth-alert-pending" role="status">
+      <div class="pending-title">{{ ico.icon('clock',15) }} Parent verification required</div>
+      <p class="pending-desc">This child account is waiting for its linked parent or guardian to finish the required verification step. The account stays locked until that verification is completed.</p>
     </div>
     {% endif %}
 
-    <!-- Login Form -->
     <form method="post" action="/login/" id="auth-form" class="auth-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="mode" id="auth-mode-input" value="{{ mode or 'kids' }}">
@@ -72,142 +52,45 @@
           {% if mode=='parent' %}Parent Email Address{% elif mode=='admin' %}Admin Email Address{% else %}Username or Child Email{% endif %}
         </label>
         <div class="input-wrap">
-          <span class="input-icon">{{ico.icon('user',17)}}</span>
-          <input type="text"
-                 name="email"
-                 id="auth-identifier"
-                 class="auth-input"
-                 placeholder="{% if mode=='parent' %}parent@example.com{% elif mode=='admin' %}admin@example.com{% else %}Enter username or child email{% endif %}"
-                 required
-                 autocapitalize="none"
-                 autocorrect="off"
-                 spellcheck="false"
-                 autocomplete="username">
+          <span class="input-icon">{{ ico.icon('user',17) }}</span>
+          <input type="text" name="email" id="auth-identifier" class="auth-input" placeholder="{% if mode=='parent' %}parent@example.com{% elif mode=='admin' %}admin@example.com{% else %}Enter username or child email{% endif %}" required autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="username">
         </div>
       </div>
 
       <div class="auth-field">
         <label for="auth-password" class="field-label">Password</label>
         <div class="input-wrap">
-          <span class="input-icon">{{ico.icon('lock',17)}}</span>
-          <input type="password"
-                 name="password"
-                 id="auth-password"
-                 class="auth-input"
-                 placeholder="Enter your password"
-                 required
-                 minlength="6"
-                 autocapitalize="none"
-                 autocorrect="off"
-                 spellcheck="false"
-                 autocomplete="current-password">
-          <button type="button"
-                  id="toggle-pwd-btn"
-                  class="pwd-toggle-btn"
-                  aria-label="Toggle password visibility">
-            <span class="pwd-icon-show">{{ico.icon('eye',17)}}</span>
-            <span class="pwd-icon-hide" hidden>{{ico.icon('eye-off',17)}}</span>
+          <span class="input-icon">{{ ico.icon('lock',17) }}</span>
+          <input type="password" name="password" id="auth-password" class="auth-input" placeholder="Enter your password" required minlength="6" autocapitalize="none" autocorrect="off" spellcheck="false" autocomplete="current-password">
+          <button type="button" id="toggle-pwd-btn" class="pwd-toggle-btn" aria-label="Show or hide password">
+            <span class="pwd-icon-show">{{ ico.icon('eye',17) }}</span>
+            <span class="pwd-icon-hide" hidden>{{ ico.icon('eye-off',17) }}</span>
           </button>
         </div>
       </div>
 
-      <button type="submit" class="btn primary auth-submit-btn" id="auth-submit-btn">
-        <span>Log In</span>
-        <span class="btn-arrow">&rarr;</span>
-      </button>
+      <button type="submit" class="btn primary auth-submit-btn" id="auth-submit-btn"><span>Log In</span><span class="btn-arrow">&rarr;</span></button>
     </form>
 
-    <!-- Biometric Face ID Login (Kids Mode) -->
     <div id="face-login-wrap" {% if mode=='parent' or mode=='admin' %}style="display:none;"{% endif %}>
-      <div class="auth-divider">
-        <span>OR</span>
-      </div>
-      <a href="/face-login/" class="face-login-btn">
-        {{ico.icon('camera',17)}}
-        <span>Instant Face ID Login</span>
-      </a>
+      <div class="auth-divider"><span>OR</span></div>
+      <a href="/face-login/" class="face-login-btn">{{ ico.icon('camera',17) }} <span>Face ID Login</span></a>
     </div>
 
-    <!-- Sign-Up Links -->
     {% if mode=='admin' %}
-    <div class="auth-signup-box">
-      <span class="signup-text">Admin & moderator accounts are provisioned directly by the platform team &mdash; there is no self sign-up here.</span>
-    </div>
+    <div class="auth-signup-box"><span class="signup-text">Admin and moderator accounts are provisioned by the platform team.</span></div>
     {% else %}
     <div class="auth-signup-box">
-      {% if mode=='kids' %}
-      <span class="signup-text">New to LittleNet? Ask your parent to set up your account.</span>
-      <div class="signup-links">
-        <a href="/register-parent/" class="signup-link parent-link">
-          {{ico.icon('shield',13,'link-bullet')}} I'm a parent &mdash; sign up
-        </a>
-      </div>
-      {% else %}
-      <span class="signup-text">New to LittleNet?</span>
-      <div class="signup-links">
-        <a href="/register-parent/" class="signup-link parent-link">
-          {{ico.icon('shield',13,'link-bullet')}} Parent Sign Up
-        </a>
-      </div>
-      <p class="signup-hint">Children never create their own account. Add your child from the Parent Mode dashboard after you sign up.</p>
-      {% endif %}
+      <span class="signup-text">{% if mode=='parent' %}New to LittleNet?{% else %}Need a child account? A parent creates and verifies it first.{% endif %}</span>
+      <div class="signup-links"><a href="/register-parent/" class="signup-link parent-link">{{ ico.icon('shield',13,'link-bullet') }} Parent Sign Up</a></div>
+      {% if mode=='parent' %}<p class="signup-hint">After signing up, create and manage child accounts from Parent Mode.</p>{% endif %}
     </div>
     {% endif %}
 
-    <!-- Demo Test Logins (collapsed by default so the real login stays the focus) -->
-    {% if mode!='admin' %}
-    <details class="demo-quick-box">
-      <summary class="demo-quick-summary">
-        <span class="demo-quick-badge">Demo logins</span>
-        <span class="demo-quick-sub">for testing &amp; review</span>
-        <svg class="demo-quick-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg>
-      </summary>
-      <div class="demo-quick-grid">
-        <button type="button" class="demo-chip demo-chip-kid" data-fill-demo-id="Akshu" data-fill-demo-pwd="Akshu@123" data-fill-demo-mode="kids" title="Child: Akshu">
-          <span class="chip-avatar">{{ico.icon('user',16)}}</span>
-          <div class="chip-info">
-            <span class="chip-title">Akshu</span>
-            <span class="chip-role">Kids Feed</span>
-          </div>
-        </button>
-        <button type="button" class="demo-chip demo-chip-parent" data-fill-demo-id="akshaykammar31@gmail.com" data-fill-demo-pwd="Parent@123" data-fill-demo-mode="parent" title="Parent: Akshay">
-          <span class="chip-avatar">{{ico.icon('shield',16)}}</span>
-          <div class="chip-info">
-            <span class="chip-title">Akshay</span>
-            <span class="chip-role">Parent Controls</span>
-          </div>
-        </button>
-        <button type="button" class="demo-chip demo-chip-kid" data-fill-demo-id="ait_star_student" data-fill-demo-pwd="Child@123" data-fill-demo-mode="kids" title="Child: Star Student">
-          <span class="chip-avatar">{{ico.icon('sparkles',16)}}</span>
-          <div class="chip-info">
-            <span class="chip-title">Star Student</span>
-            <span class="chip-role">Kids Feed</span>
-          </div>
-        </button>
-        <button type="button" class="demo-chip demo-chip-parent" data-fill-demo-id="mentor_parent@ait.edu" data-fill-demo-pwd="Parent@123" data-fill-demo-mode="parent" title="Parent: Mentor">
-          <span class="chip-avatar">{{ico.icon('book',16)}}</span>
-          <div class="chip-info">
-            <span class="chip-title">Mentor Parent</span>
-            <span class="chip-role">Parent Dashboard</span>
-          </div>
-        </button>
-      </div>
-    </details>
-    {% endif %}
-
-    {% if mode!='admin' %}
-    <!-- Moderator / Admin Access -->
     <div class="auth-admin-link">
-      <a href="/admin-login/">
-        {{ico.icon('lock',13)}} Safety Moderator &amp; Admin Portal
-      </a>
+      {% if mode!='admin' %}<a href="/admin-login/">{{ ico.icon('lock',13) }} Safety Moderator &amp; Admin Portal</a>
+      {% else %}<a href="/login/">{{ ico.icon('user',13) }} Back to regular sign-in</a>{% endif %}
     </div>
-    {% else %}
-    <div class="auth-admin-link">
-      <a href="/login/">{{ico.icon('user',13)}} Back to regular sign-in</a>
-    </div>
-    {% endif %}
-
   </div>
 </div>
 {% endblock %}
