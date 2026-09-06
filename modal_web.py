@@ -37,7 +37,7 @@ web_image = (
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
-            "LITTLENET_DEPLOY_VERSION": "5",
+            "LITTLENET_DEPLOY_VERSION": "6",
         }
     )
     .add_local_dir(
@@ -51,6 +51,7 @@ web_image = (
         ],
         copy=True,
     )
+    .run_commands("cd /root/littlenet && python tools/install_mediapipe_assets.py")
 )
 
 
@@ -110,7 +111,7 @@ def seed_quizzes():
 
 @app.function(image=web_image, secrets=[web_secret], timeout=120)
 def web_preflight():
-    """Verify DB, remote AI and local Presidio availability from Modal."""
+    """Verify DB, remote AI, local Presidio and vendored liveness assets."""
     os.chdir("/root/littlenet")
     from database.connection import fetch_one
     from safety.remote_client import health
@@ -120,11 +121,16 @@ def web_preflight():
     ai = health()
     pii = analyze_pii("test@example.com")
     pii_ok = bool(pii.get("available") and "EMAIL_ADDRESS" in pii.get("categories", []))
+    vendor = Path("static/vendor/mediapipe")
+    liveness_assets = all((vendor / name).exists() for name in (
+        "vision_bundle.mjs", "face_landmarker.task", "wasm/vision_wasm_internal.wasm"
+    ))
     return {
-        "ok": bool(db and db["ok"] == 1 and ai.get("ok") and pii_ok),
+        "ok": bool(db and db["ok"] == 1 and ai.get("ok") and pii_ok and liveness_assets),
         "database": bool(db and db["ok"] == 1),
         "ai": ai,
         "presidio": pii_ok,
+        "mediapipe_liveness_assets": liveness_assets,
     }
 
 

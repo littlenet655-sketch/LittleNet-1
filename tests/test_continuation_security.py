@@ -11,6 +11,7 @@ def test_parent_flow_is_email_then_otp_then_live_adult_activation():
     api = text('auth/api.py')
     otp = text('auth/parent_email_otp.py')
     live = text('auth/templates/parent_liveness_verify.html')
+    live_js = text('static/js/parent_liveness_mediapipe.js')
     assert "request.path.rstrip('/')!='/register-parent'" in api
     assert "'PARENT',%s,'PENDING_APPROVAL'" in otp
     assert 'pending_parent_email_verified' in api
@@ -19,7 +20,10 @@ def test_parent_flow_is_email_then_otp_then_live_adult_activation():
     assert "UPDATE users SET account_status='ACTIVE'" in api
     assert "UPDATE users SET account_status='ACTIVE'" not in otp
     assert 'verify_adult_face' in api
-    assert 'navigator.mediaDevices.getUserMedia' in live
+    assert '/static/js/parent_liveness_mediapipe.js' in live
+    assert 'navigator.mediaDevices.getUserMedia' in live_js
+    assert 'FaceLandmarker.createFromOptions' in live_js
+    assert "'eyeBlinkLeft'" in live_js and "'eyeBlinkRight'" in live_js
     assert 'selfie_data' in live
 
 
@@ -37,10 +41,15 @@ def test_parent_otp_is_hashed_expiring_and_rate_limited():
 
 def test_parent_liveness_has_no_demo_or_manual_capture_bypass():
     live = text('auth/templates/parent_liveness_verify.html')
+    live_js = text('static/js/parent_liveness_mediapipe.js')
     assert 'Demo Liveness' not in live
     assert 'drawFallbackSelfie' not in live
     assert 'manualCaptureBtn' not in live
-    assert 'navigator.mediaDevices.getUserMedia' in live
+    assert 'navigator.mediaDevices.getUserMedia' in live_js
+    assert 'brightness' not in live_js.lower()
+    assert "phase = 'WAIT_OPEN'" in live_js
+    assert "phase = 'WAIT_CLOSED'" in live_js
+    assert "phase = 'WAIT_REOPEN'" in live_js
 
 
 def test_server_face_path_remains_anti_spoof_fail_closed():

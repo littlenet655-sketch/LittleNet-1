@@ -84,13 +84,26 @@ def list_messages():
     # Sort conversations by unread first
     conv_list.sort(key=lambda x: (not x['is_unread'], x['time_ago'] == ''))
 
+    # Notes are social presence, so they must not expose arbitrary child accounts.
+    # Only ACTIVE two-parent-approved friends appear; muted/blocked peers are hidden.
     peers = fetch_all('''
-        SELECT u.user_id, u.username, u.full_name, cp.profile_picture, cp.bio
-        FROM users u
+        SELECT DISTINCT u.user_id, u.username, u.full_name, cp.profile_picture, cp.bio, u.created_at
+        FROM followers f
+        JOIN users u ON u.user_id = CASE WHEN f.child_id=%s THEN f.following_child_id ELSE f.child_id END
         JOIN child_profiles cp ON cp.child_id = u.user_id
-        WHERE u.role = 'CHILD' AND u.user_id != %s
+        WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'
+          AND (f.child_id=%s OR f.following_child_id=%s)
+          AND u.role='CHILD' AND u.account_status='ACTIVE' AND u.user_id<>%s
+          AND NOT EXISTS(
+            SELECT 1 FROM blocked_users b
+            WHERE (b.blocker_id=%s AND b.blocked_id=u.user_id)
+               OR (b.blocker_id=u.user_id AND b.blocked_id=%s)
+          )
+          AND NOT EXISTS(
+            SELECT 1 FROM muted_users mu WHERE mu.muter_id=%s AND mu.muted_id=u.user_id
+          )
         ORDER BY u.created_at DESC LIMIT 8
-    ''', (uid,))
+    ''', (uid, uid, uid, uid, uid, uid, uid))
 
     sample_notes = ["Ready for...", "Vibe 🎵", "Coding 💻", "Exploring 🌟", "Reading 📚", "Game on! 🎮"]
     notes_tray = []

@@ -163,35 +163,45 @@ def create_app():
         uid=session.get('user_id');role=session.get('role')
         if not uid:return ('Unauthorized',401)
         stored='uploads/'+filename
-        p=fetch_one('SELECT child_id,moderation_status,is_safe FROM posts WHERE media_path=%s OR story_music_path=%s',(stored,stored))
+
+        p=fetch_one('SELECT post_id,child_id,moderation_status,is_safe,is_story FROM posts WHERE media_path=%s OR story_music_path=%s',(stored,stored))
         if p:
             if role=='CHILD':
-                if (p['moderation_status']!='ALLOWED' or not p['is_safe']) and uid!=p['child_id']:return ('Unavailable',404)
-                hidden=fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(uid,p['child_id'],p['child_id'],uid))
-                if hidden:return ('Unavailable',404)
+                # Cheap fail-fast check before the full category/age/friend policy query.
+                if p['moderation_status']!='ALLOWED' and uid!=p['child_id']:return ('Unavailable',404)
+                from services.social import post_visible_to, story_visible_to
+                visible=story_visible_to(uid,p['post_id']) if p.get('is_story') else post_visible_to(uid,p['post_id'])
+                if not visible:return ('Unavailable',404)
             elif role=='PARENT':
                 if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,p['child_id'])):return ('Forbidden',403)
             elif role!='ADMIN':return ('Forbidden',403)
+
         m=fetch_one('SELECT sender_child_id,receiver_child_id,moderation_status FROM child_messages WHERE media_path=%s',(stored,))
         if m:
             if role=='CHILD':
                 if uid not in {m['sender_child_id'],m['receiver_child_id']}:return ('Forbidden',403)
+                from services.social import can_interact
+                if not can_interact(m['sender_child_id'],m['receiver_child_id']):return ('Unavailable',404)
                 if m['moderation_status']!='ALLOWED' and uid!=m['sender_child_id']:return ('Unavailable',404)
             elif role=='PARENT':
                 if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,m['sender_child_id'])):return ('Forbidden',403)
                 if m['moderation_status']!='REVIEW':return ('Unavailable',404)
             elif role!='ADMIN':return ('Forbidden',403)
-        f=fetch_one('SELECT child_id FROM child_profiles WHERE profile_picture=%s',(stored,))
-        if f and role=='CHILD':
-            hidden=fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(uid,f['child_id'],f['child_id'],uid))
-            if hidden:return ('Unavailable',404)
-        if f and role=='PARENT' and not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,f['child_id'])):return ('Forbidden',403)
-        if f and role not in {'CHILD','PARENT','ADMIN'}:return ('Forbidden',403)
-        is_avatar=filename.startswith('profile_pictures/')
-        if not any([p,m,f]) and not is_avatar:return ('Unavailable',404)
 
-        # R2 references never exist on local disk. Authorization above must run
-        # first; only then issue a short-lived private signed URL.
+        f=fetch_one('SELECT child_id FROM child_profiles WHERE profile_picture=%s',(stored,))
+        if f:
+            if role=='CHILD':
+                from child.service import can_discover_child
+                if not can_discover_child(uid,f['child_id']):return ('Unavailable',404)
+            elif role=='PARENT':
+                if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,f['child_id'])):return ('Forbidden',403)
+            elif role!='ADMIN':return ('Forbidden',403)
+
+        default_avatar=filename=='profile_pictures/download.webp'
+        if not any([p,m,f]) and not default_avatar:return ('Unavailable',404)
+
+        # R2 references never exist on local disk. All canonical visibility checks
+        # above must pass before LittleNet issues a short-lived private signed URL.
         if stored.startswith('uploads/r2/'):
             try:
                 from services.object_storage import signed_download_url
