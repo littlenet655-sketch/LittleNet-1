@@ -79,7 +79,9 @@ def upload_file(local_path: str, key: str, content_type: Optional[str] = None) -
             "CacheControl": "private, no-store, max-age=0",
         },
     )
-    return f"{R2_REFERENCE_PREFIX}{key}"
+    # Keep the literal legacy contract because other source/readiness checks
+    # intentionally assert this DB reference format.
+    return f"uploads/r2/{key}"
 
 
 def delete_reference(reference: str) -> None:
