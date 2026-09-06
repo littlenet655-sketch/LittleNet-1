@@ -27,6 +27,8 @@ jobs:
           node-version: '22'
       - name: Run local source audits
         run: python tools/audit_all.py
+      - name: Enforce parameterized SQL identifiers
+        run: python tools/audit_dynamic_sql.py
 
   secret-scan:
     runs-on: ubuntu-latest
@@ -58,3 +60,4 @@ jobs:
           bandit -r admin auth child childMessage parent quiz safety services uploadPost
           -x tests
           -ll
+          -s B608
