@@ -21,8 +21,6 @@ def follow_child(a,b):
         VALUES(%s,%s,FALSE,'REQUESTED') ON CONFLICT(child_id,following_child_id) DO NOTHING""",(a,b))
 
 def unfollow_child(a,b):
-    # Delete both directions explicitly; the DB trigger also mirrors cleanup so this
-    # remains safe for old callers and active as well as pending friendships.
     execute('DELETE FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)',(a,b,b,a))
 
 
@@ -44,7 +42,7 @@ def discoverable_child_ids(cid):
           FROM child_profiles cp
           LEFT JOIN parent_child_map pcm ON pcm.child_id=cp.child_id
           WHERE cp.child_id=%s LIMIT 1
-        ), active_friends AS (
+        ), approved_friends AS (
           SELECT following_child_id friend_id FROM followers
             WHERE child_id=%s AND approved=TRUE AND approval_stage='ACTIVE'
           UNION
@@ -56,7 +54,7 @@ def discoverable_child_ids(cid):
           SELECT child_id FROM followers WHERE following_child_id=%s AND approved=FALSE
         ), network AS (
           SELECT DISTINCT CASE WHEN f.child_id=af.friend_id THEN f.following_child_id ELSE f.child_id END candidate_id
-          FROM active_friends af
+          FROM approved_friends af
           JOIN followers f ON f.approved=TRUE AND f.approval_stage='ACTIVE'
              AND (f.child_id=af.friend_id OR f.following_child_id=af.friend_id)
         )
@@ -78,7 +76,7 @@ def discoverable_child_ids(cid):
                 AND LOWER(TRIM(cp.school_name))=LOWER(TRIM(COALESCE((SELECT school_name FROM viewer LIMIT 1),'')))
                 AND LOWER(TRIM(cp.current_class))=LOWER(TRIM(COALESCE((SELECT current_class FROM viewer LIMIT 1),'')))
              )
-             OR u.user_id IN (SELECT friend_id FROM active_friends)
+             OR u.user_id IN (SELECT friend_id FROM approved_friends)
              OR u.user_id IN (SELECT peer_id FROM pending_peers)
              OR u.user_id IN (SELECT candidate_id FROM network WHERE candidate_id<>%s)
           )''',(cid,cid,cid,cid,cid,cid,cid,cid,cid,cid))
@@ -152,7 +150,5 @@ def replace_profile_tags(cid,skills,interests,ambitions):
         execute('INSERT INTO child_ambitions(child_id,ambition_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
 
 def recommended_posts(cid,limit=30,offset=0):
-    # Candidate visibility is filtered before semantic ranking. AI personalization
-    # can reorder safe posts but can never bypass age/Parent Mode/safety rules.
     from services.recommendation import personalized_posts
     return personalized_posts(cid,limit,offset)
