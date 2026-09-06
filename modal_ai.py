@@ -48,10 +48,19 @@ image = (
             "HF_HUB_CACHE": "/cache/huggingface/hub",
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
+            "LITTLENET_DETOXIFY_MODEL": "multilingual",
+            "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "3",
+            "LITTLENET_VIDEO_MAX_FRAMES": "60",
             "LITTLENET_YOLO_WEIGHTS": "/root/littlenet/yolov8n-oiv7.pt",
             "LITTLENET_YOLO_REVIEW_THRESHOLD": "0.20",
             "LITTLENET_YOLO_BLOCK_THRESHOLD": "0.45",
-            "LITTLENET_DEPLOY_VERSION": "6",
+            "LITTLENET_NUDENET_REVIEW_THRESHOLD": "0.20",
+            "LITTLENET_NUDENET_BLOCK_THRESHOLD": "0.45",
+            "LITTLENET_FALCONSAI_REVIEW_THRESHOLD": "0.40",
+            "LITTLENET_FALCONSAI_BLOCK_THRESHOLD": "0.70",
+            "LITTLENET_CLIP_REVIEW_THRESHOLD": "0.40",
+            "LITTLENET_CLIP_BLOCK_THRESHOLD": "0.65",
+            "LITTLENET_DEPLOY_VERSION": "7",
         }
     )
     .add_local_dir(
@@ -117,6 +126,7 @@ def warm_models():
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     os.environ["LITTLENET_AI_SERVER"] = "1"
     os.environ["LITTLENET_DEVICE"] = "cuda"
+    os.environ["LITTLENET_DETOXIFY_MODEL"] = "multilingual"
 
     results = {}
 
@@ -129,7 +139,14 @@ def warm_models():
         except Exception as exc:
             results[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
-    run("detoxify", lambda: __import__("detoxify").Detoxify("original"))
+    def detoxify_explicit():
+        from detoxify import Detoxify
+        model=Detoxify("multilingual")
+        scores=model.predict("Hello, this is a normal LittleNet safety warmup sentence.")
+        if "sexual_explicit" not in scores:
+            raise RuntimeError("Detoxify multilingual model is missing sexual_explicit output")
+        return {"labels": sorted(scores.keys())}
+    run("detoxify_multilingual_explicit", detoxify_explicit)
     run("nudenet", lambda: __import__("nudenet").NudeDetector())
 
     def clip():
