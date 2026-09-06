@@ -1,0 +1,53 @@
+name: Validate LittleNet Staging
+
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: "HTTPS LittleNet staging URL, without a trailing slash"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  browser-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      E2E_BASE_URL: ${{ inputs.base_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install latest Playwright test runner
+        run: npm install --no-save @playwright/test@latest
+      - name: Install Chromium runtime
+        run: npx playwright install --with-deps chromium
+      - name: Run LittleNet release smoke suite
+        run: npx playwright test --project=chromium
+      - name: Upload Playwright evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-release-evidence
+          path: |
+            playwright-report
+            test-results
+          if-no-files-found: ignore
+          retention-days: 14
+
+  zap-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: OWASP ZAP baseline scan
+        uses: zaproxy/action-baseline@v0.15.0
+        with:
+          target: ${{ inputs.base_url }}
+          fail_action: true
+          allow_issue_writing: false
+          artifact_name: zap-release-evidence
