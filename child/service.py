@@ -138,7 +138,10 @@ def counts(cid):
     return {'posts':fetch_one("SELECT COUNT(*) n FROM posts WHERE child_id=%s AND is_story=FALSE AND moderation_status='ALLOWED' AND is_safe=TRUE",(cid,))['n'],'followers':friends,'following':friends}
 
 def replace_profile_tags(cid,skills,interests,ambitions):
-    for table in ['child_skills','child_interests','child_ambitions']:execute(f'DELETE FROM {table} WHERE child_id=%s',(cid,))
+    # Keep SQL identifiers static. Values remain parameterized below.
+    execute('DELETE FROM child_skills WHERE child_id=%s',(cid,))
+    execute('DELETE FROM child_interests WHERE child_id=%s',(cid,))
+    execute('DELETE FROM child_ambitions WHERE child_id=%s',(cid,))
     for value in [x.strip() for x in skills if x.strip()]:execute('INSERT INTO child_skills(child_id,skill_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
     for value in [x.strip() for x in interests if x.strip()]:execute('INSERT INTO child_interests(child_id,interest_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
     for value in [x.strip() for x in ambitions if x.strip()]:execute('INSERT INTO child_ambitions(child_id,ambition_name,approved) VALUES(%s,%s,FALSE)',(cid,value))
