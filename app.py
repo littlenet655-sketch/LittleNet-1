@@ -139,6 +139,7 @@ def create_app():
                 if hidden:return ('Unavailable',404)
             elif role=='PARENT':
                 if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,p['child_id'])):return ('Forbidden',403)
+            elif role!='ADMIN':return ('Forbidden',403)
         m=fetch_one('SELECT sender_child_id,receiver_child_id,moderation_status FROM child_messages WHERE media_path=%s',(stored,))
         if m:
             if role=='CHILD':
@@ -147,14 +148,30 @@ def create_app():
             elif role=='PARENT':
                 if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,m['sender_child_id'])):return ('Forbidden',403)
                 if m['moderation_status']!='REVIEW':return ('Unavailable',404)
-            else:return ('Forbidden',403)
+            elif role!='ADMIN':return ('Forbidden',403)
         f=fetch_one('SELECT child_id FROM child_profiles WHERE profile_picture=%s',(stored,))
         if f and role=='CHILD':
             hidden=fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(uid,f['child_id'],f['child_id'],uid))
             if hidden:return ('Unavailable',404)
         if f and role=='PARENT' and not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,f['child_id'])):return ('Forbidden',403)
+        if f and role not in {'CHILD','PARENT','ADMIN'}:return ('Forbidden',403)
         is_avatar=filename.startswith('profile_pictures/')
         if not any([p,m,f]) and not is_avatar:return ('Unavailable',404)
+
+        # R2 references never exist on local disk. Authorization above must run
+        # first; only then issue a short-lived private signed URL.
+        if stored.startswith('uploads/r2/'):
+            try:
+                from services.object_storage import signed_download_url
+                response=redirect(signed_download_url(stored),302)
+                response.headers['Cache-Control']='private, no-store, max-age=0'
+                response.headers['Pragma']='no-cache'
+                response.headers['Expires']='0'
+                return response
+            except Exception:
+                app.logger.exception('Authorized R2 media could not be signed')
+                return ('Media unavailable',503)
+
         target_dir='uploads'
         if not os.path.exists(os.path.join('uploads',filename)):
             demo_file=os.path.join('static','demo',filename)
@@ -215,12 +232,22 @@ def create_app():
         if request.path.startswith('/static/'):
             response.headers['Cache-Control'] = 'public, max-age=604800, immutable'
         elif request.path.startswith('/uploads/'):
-            response.headers['Cache-Control'] = 'public, max-age=86400'
+            response.headers['Cache-Control'] = 'private, no-store, max-age=0'
+            response.headers['Pragma'] = 'no-cache'
+            response.headers['Expires'] = '0'
         response.headers.setdefault('X-Content-Type-Options','nosniff')
         response.headers.setdefault('X-Frame-Options','DENY')
         response.headers.setdefault('Referrer-Policy','same-origin')
         response.headers.setdefault('Permissions-Policy','camera=(self), microphone=(self), geolocation=()')
-        response.headers.setdefault('Content-Security-Policy',"default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+        try:
+            import os
+            account=(os.getenv('R2_ACCOUNT_ID') or '').strip()
+            r2_origin=f'https://{account}.r2.cloudflarestorage.com' if account else ''
+        except Exception:
+            r2_origin=''
+        img_src="'self' data: blob:"+(f' {r2_origin}' if r2_origin else '')
+        media_src="'self' blob:"+(f' {r2_origin}' if r2_origin else '')
+        response.headers.setdefault('Content-Security-Policy',f"default-src 'self'; img-src {img_src}; media-src {media_src}; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
         if request.is_secure:response.headers.setdefault('Strict-Transport-Security','max-age=31536000; includeSubDomains')
         return response
 
