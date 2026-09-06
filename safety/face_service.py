@@ -2,6 +2,7 @@ import json, math
 from .common import timed_call,timeout_seconds
 from database.connection import fetch_one, execute
 
+
 def _embedding(img_path):
     from .remote_client import enabled, face_embedding
     if enabled(): return face_embedding(img_path)
@@ -13,10 +14,12 @@ def _embedding(img_path):
         return [float(x) for x in reps[0]['embedding']]
     return timed_call('deepface',run,timeout_seconds('deepface',120))
 
+
 def enroll(child_id,path):
     emb=_embedding(path)
     execute('''INSERT INTO face_profiles(child_id,embedding,reference_path) VALUES(%s,%s::jsonb,%s) ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding,reference_path=EXCLUDED.reference_path,updated_at=NOW()''',(child_id,json.dumps(emb),None))
     return True
+
 
 def verify(child_id,path):
     row=fetch_one('SELECT embedding FROM face_profiles WHERE child_id=%s',(child_id,))
@@ -41,13 +44,43 @@ def verify(child_id,path):
     execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,distance,reason) VALUES(%s,%s,TRUE,%s,%s)',(child_id,ok,dist,'matched' if ok else 'not_matched'))
     return ok,'matched' if ok else 'not_matched',dist
 
+
 def verify_adult_face(img_path):
-    """
-    Verifies that the facial image belongs to an adult (18+ years old)
-    using DeepFace age analysis or Gemini AI inspection with safe fallback.
-    """
+    """Estimate adult status from a live anti-spoofed selfie and fail closed."""
     import os
-    # 1. Try Gemini Vision if google.generativeai and API key are available
+
+    # First require anti-spoof/liveness from DeepFace extraction. A static,
+    # printed, or obviously spoofed face must never become a verified guardian.
+    try:
+        from deepface import DeepFace
+        faces = DeepFace.extract_faces(
+            img_path=img_path,
+            detector_backend='opencv',
+            anti_spoofing=True,
+            enforce_detection=True,
+        )
+        if not faces or not all(bool(f.get('is_real', False)) for f in faces):
+            return {'is_adult': False, 'estimated_age': None, 'method': 'ANTI_SPOOF', 'reason': 'liveness_failed'}
+    except Exception:
+        return {'is_adult': False, 'estimated_age': None, 'method': 'ANTI_SPOOF', 'reason': 'liveness_unavailable'}
+
+    # Prefer local deterministic age analysis. This is only a safety gate; the
+    # parent's declared DOB and consent are still required separately.
+    try:
+        analysis = DeepFace.analyze(
+            img_path=img_path,
+            actions=['age'],
+            detector_backend='opencv',
+            enforce_detection=True,
+        )
+        if analysis and isinstance(analysis, list):
+            age = int(round(float(analysis[0].get('age', 0))))
+            return {'is_adult': age >= 18, 'estimated_age': age, 'method': 'DEEPFACE'}
+    except Exception:
+        pass
+
+    # Optional Gemini fallback if explicitly configured. It does not override a
+    # failed anti-spoof check above.
     api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
     if api_key:
         try:
@@ -57,35 +90,19 @@ def verify_adult_face(img_path):
             model = genai.GenerativeModel('gemini-1.5-flash')
             img = Image.open(img_path)
             prompt = (
-                "Inspect this selfie. Is this person an adult (18 years or older) or a child? "
-                "Respond ONLY with a JSON object: {\"is_adult\": true, \"estimated_age\": 30}."
+                'Estimate whether the person is 18 or older. '
+                'Return only JSON like {"is_adult": true, "estimated_age": 30}.'
             )
             resp = model.generate_content([prompt, img])
             text = resp.text.strip()
             if '{' in text and '}' in text:
                 data = json.loads(text[text.find('{'):text.rfind('}')+1])
                 return {
-                    'is_adult': bool(data.get('is_adult', True)),
-                    'estimated_age': data.get('estimated_age', 30),
-                    'method': 'GEMINI_VISION'
+                    'is_adult': bool(data.get('is_adult', False)),
+                    'estimated_age': data.get('estimated_age'),
+                    'method': 'GEMINI_VISION',
                 }
         except Exception:
             pass
 
-    # 2. Try DeepFace age analysis
-    try:
-        from deepface import DeepFace
-        analysis = DeepFace.analyze(img_path=img_path, actions=['age'], detector_backend='opencv', enforce_detection=False)
-        if analysis and isinstance(analysis, list) and len(analysis) > 0:
-            age = analysis[0].get('age', 25)
-            return {
-                'is_adult': age >= 18,
-                'estimated_age': age,
-                'method': 'DEEPFACE'
-            }
-    except Exception:
-        pass
-
-    # 3. Fallback verified
-    return {'is_adult': True, 'estimated_age': 32, 'method': 'FALLBACK_VERIFIED'}
-
+    return {'is_adult': False, 'estimated_age': None, 'method': 'UNAVAILABLE', 'reason': 'age_verification_unavailable'}
