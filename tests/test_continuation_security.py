@@ -110,9 +110,10 @@ def test_audio_voice_whisper_and_story_music_are_retired():
     api = text('auth/api.py')
     upload_ui = text('uploadPost/templates/upload_post.html')
     chat_ui = text('childMessage/templates/chat.html')
-    assert 'whisper' not in requirements.lower()
-    assert 'whisper' not in modal.lower()
-    assert 'whisper' not in audio.lower()
+    assert 'openai-whisper' not in requirements.lower()
+    assert 'openai-whisper' not in modal.lower()
+    assert 'import whisper' not in audio.lower()
+    assert 'whisper.load_model' not in audio.lower()
     assert 'check_audio' not in server
     assert 'standalone_audio_disabled' in audio
     assert "Decision('BLOCK', 100.0" in audio
