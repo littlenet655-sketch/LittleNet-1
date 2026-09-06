@@ -19,7 +19,12 @@ web_secret = modal.Secret.from_name(
 
 web_image = (
     modal.Image.debian_slim(python_version="3.11")
-    .apt_install("ffmpeg")
+    .apt_install("ffmpeg", "curl", "ca-certificates")
+    .run_commands(
+        "curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.34.1/dbmate-linux-amd64",
+        "chmod +x /usr/local/bin/dbmate",
+        "dbmate --version",
+    )
     .pip_install_from_requirements(str(ROOT / "requirements-safety.txt"))
     .run_commands("python -m spacy download en_core_web_sm")
     .workdir("/root/littlenet")
@@ -29,7 +34,10 @@ web_image = (
             "LITTLENET_DEVICE": "cpu",
             "LITTLENET_ENABLE_PRESIDIO": "1",
             "LITTLENET_PRESIDIO_SPACY_MODEL": "en_core_web_sm",
-            "LITTLENET_DEPLOY_VERSION": "4",
+            "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
+            "DBMATE_NO_DUMP_SCHEMA": "true",
+            "DBMATE_STRICT": "true",
+            "LITTLENET_DEPLOY_VERSION": "5",
         }
     )
     .add_local_dir(
@@ -82,10 +90,15 @@ def web():
 
 @app.function(image=web_image, secrets=[web_secret], timeout=300)
 def init_database():
-    """Create/upgrade schema on the external PostgreSQL database."""
+    """Bootstrap legacy schema safely, then apply all new dbmate migrations."""
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/init_db.py"], check=True)
-    return {"ok": True}
+    subprocess.run(
+        ["dbmate", "--strict", "--no-dump-schema", "--migrations-dir", "db/migrations", "up"],
+        check=True,
+        env=os.environ.copy(),
+    )
+    return {"ok": True, "migration_engine": "dbmate", "legacy_bootstrap": True}
 
 
 @app.function(image=web_image, secrets=[web_secret], timeout=120)
