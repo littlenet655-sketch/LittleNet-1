@@ -268,7 +268,25 @@
     });
   }
 
-  if(document.body.dataset.role==='CHILD')setInterval(async()=>{try{const r=await fetch('/api/usage/heartbeat/',{method:'POST',headers:{'X-CSRFToken':csrf()}});if(!r.ok)return;const j=await r.json();if(j.quiet_hours&&j.redirect){location.href=j.redirect;return;}if(j.locked){location.href='/child/dashboard/';}}catch{}},30000);
+  function pollWhileVisible(poll,interval,onHidden){
+    let timer=null,running=false,pending=false;
+    const schedule=()=>{clearTimeout(timer);timer=document.hidden?null:setTimeout(run,interval);};
+    const run=async()=>{
+      if(document.hidden)return;
+      if(running){pending=true;return;}
+      running=true;
+      try{await poll();}finally{running=false;if(pending&&!document.hidden){pending=false;run();}else schedule();}
+    };
+    document.addEventListener('visibilitychange',()=>{if(document.hidden){clearTimeout(timer);timer=null;pending=false;onHidden?.();}else run();});
+    run();
+  }
+
+  if(document.body.dataset.role==='CHILD'){
+    // End the usage segment while hidden; visibility resumes with a fresh segment.
+    let childHeartbeatRequest=Promise.resolve();
+    const childHeartbeat=active=>childHeartbeatRequest=childHeartbeatRequest.then(async()=>{try{const r=await fetch('/api/usage/heartbeat/',{method:'POST',headers:{'X-CSRFToken':csrf(),'Content-Type':'application/json'},body:JSON.stringify({active}),keepalive:!active});if(!r.ok||!active)return;const j=await r.json();if(j.quiet_hours&&j.redirect){location.href=j.redirect;return;}if(j.locked){location.href='/child/dashboard/';}}catch{}});
+    pollWhileVisible(()=>childHeartbeat(true),30000,()=>childHeartbeat(false));
+  }
 
   if(document.body.dataset.role==='PARENT') {
     const badge=$('[data-parent-alert-count]');
@@ -290,8 +308,7 @@
         if(latest)lastLatest=Math.max(lastLatest,latest);
       }catch{}
     };
-    pollParentAlerts();
-    setInterval(pollParentAlerts,10000);
+    if(badge||alertsLink)pollWhileVisible(pollParentAlerts,45000);
   }
 
   const upload=$('form[data-safe-upload]');
@@ -582,25 +599,9 @@
     navigateTo(location.pathname + location.search, false);
   });
 
-  // Warm-up prefetch for primary tabs after page loads
   window.addEventListener('load', () => {
-    setTimeout(() => {
-      const primaryTabs = [
-        '/child/dashboard/',
-        '/discover/',
-        '/reels/',
-        '/child/profile/',
-        '/parent/overview/',
-        '/parent/safety/',
-        '/parent/screen-time/',
-        '/parent/controls/'
-      ];
-      primaryTabs.forEach(prefetchUrl);
-    }, 400);
-
     if('serviceWorker' in navigator){
       navigator.serviceWorker.register('/sw.js').catch(()=>{});
     }
   });
 })();
-

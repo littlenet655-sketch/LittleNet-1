@@ -23,6 +23,31 @@ def _get_pool():
     return _pool
 
 
+def _discard_connection(pool, conn):
+    """Remove a connection that must never be reused by the pool."""
+    try:
+        pool.putconn(conn, close=True)
+    except Exception:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
+def _connection_is_usable(conn):
+    """Clear stale transactions and verify that the server is reachable."""
+    if conn.closed:
+        return False
+    try:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute('SELECT 1')
+        conn.rollback()
+        return True
+    except Exception:
+        return False
+
+
 class PooledConnectionWrapper:
     """Wraps a pooled psycopg2 connection so conn.close() returns it to pool."""
     def __init__(self, pool, conn):
@@ -33,16 +58,20 @@ class PooledConnectionWrapper:
     def close(self):
         if not self._closed:
             self._closed = True
-            if self._pool and not self._pool.closed:
+            if not self._pool or self._pool.closed:
                 try:
-                    if not self._conn.closed:
-                        self._conn.rollback()
-                    self._pool.putconn(self._conn)
+                    self._conn.close()
                 except Exception:
-                    try:
-                        self._pool.putconn(self._conn, close=True)
-                    except Exception:
-                        pass
+                    pass
+                return
+            try:
+                if self._conn.closed:
+                    raise RuntimeError('connection is closed')
+                self._conn.rollback()
+            except Exception:
+                _discard_connection(self._pool, self._conn)
+            else:
+                self._pool.putconn(self._conn)
 
     def __getattr__(self, name):
         return getattr(self._conn, name)
@@ -57,11 +86,12 @@ class PooledConnectionWrapper:
 def get_db_connection():
     try:
         pool = _get_pool()
-        raw_conn = pool.getconn()
-        if raw_conn.closed:
-            pool.putconn(raw_conn, close=True)
+        for _ in range(2):
             raw_conn = pool.getconn()
-        return PooledConnectionWrapper(pool, raw_conn)
+            if _connection_is_usable(raw_conn):
+                return PooledConnectionWrapper(pool, raw_conn)
+            _discard_connection(pool, raw_conn)
+        raise RuntimeError('pooled database connections failed validation')
     except Exception:
         # Fallback to direct connection if pool initialization or exhaustion occurs
         import psycopg2

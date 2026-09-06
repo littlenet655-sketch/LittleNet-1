@@ -75,7 +75,8 @@ web_image = (
     timeout=300,
     startup_timeout=120,
     scaledown_window=600,
-    min_containers=1,
+    # Scale to zero when idle; the next request may pay a web cold-start penalty.
+    min_containers=0,
     max_containers=1,
 )
 @modal.wsgi_app()

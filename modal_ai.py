@@ -54,7 +54,6 @@ image = (
             "LITTLENET_MODEL_CACHE": "/cache/models",
             "HF_HOME": "/cache/huggingface",
             "HF_HUB_CACHE": "/cache/huggingface/hub",
-            "TRANSFORMERS_CACHE": "/cache/huggingface/transformers",
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
             "LITTLENET_DEPLOY_VERSION": "3",

@@ -4,7 +4,7 @@ from extensions import limiter
 from decorators import child_required
 from child.service import *
 from services.social import visible_posts,active_stories,story_visible_to,parent_notify,visible_profile_posts,can_interact,_age_group
-from services.usage import lock_state,heartbeat,minutes_today
+from services.usage import lock_state,heartbeat,minutes_today,start_session,close_session
 from quiz.service import quiz_due
 from database.connection import execute,fetch_one,fetch_all
 from safety.moderation_service import evaluate,record
@@ -430,10 +430,18 @@ def upload_profile_picture():
 @child_bp.route('/api/usage/heartbeat/',methods=['POST'])
 @child_required
 def usage_heartbeat():
+    active=(request.get_json(silent=True) or {}).get('active',True)
+    if not isinstance(active,bool):return jsonify(error='invalid active state'),400
+    key=session.get('usage_session_key')
+    if not active:
+        if key:close_session(key)
+        session.pop('usage_session_key',None)
+        return jsonify(ok=True,active=False)
     quiet=quiet_hours_state(session['user_id'])
     if quiet['active']:
         return jsonify(ok=True,locked=False,quiet_hours=True,quiet_start=quiet['start'],quiet_end=quiet['end'],redirect='/quiet-hours/')
-    if session.get('usage_session_key'):heartbeat(session['usage_session_key'])
+    if not key or heartbeat(key) is None:
+        session['usage_session_key']=str(start_session(session['user_id'])['session_key'])
     locked,remaining=lock_state(session['user_id'])
     return jsonify(ok=True,locked=locked,remaining_minutes=remaining,quiet_hours=False,redirect='/child/dashboard/' if not locked else None)
 

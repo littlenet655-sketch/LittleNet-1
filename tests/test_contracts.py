@@ -209,6 +209,8 @@ def test_modal_ai_deployment_is_gpu_cached_and_scales_to_zero():
     assert 'scaledown_window=300' in text
     assert '@modal.wsgi_app()' in text
     assert 'warm_models' in text
+    assert 'HF_HOME' in text
+    assert 'TRANSFORMERS_CACHE' not in text
 
 
 def test_modal_web_deployment_persists_uploads_and_uses_external_db():
@@ -218,6 +220,7 @@ def test_modal_web_deployment_persists_uploads_and_uses_external_db():
     assert 'DATABASE_URL' in text
     assert 'uploads.commit()' in text
     assert 'max_containers=1' in text
+    assert 'min_containers=0' in text
     assert '@modal.wsgi_app()' in text
     assert 'init_database' in text
 
@@ -413,7 +416,30 @@ def test_parent_safety_alerts_update_live_in_parent_mode():
     js=(root/'static/js/littlenet.js').read_text(encoding='utf-8')
     assert "/api/parent/notifications/unread/" in routes
     assert 'data-parent-alert-count' in base
-    assert 'pollParentAlerts' in js and 'setInterval(pollParentAlerts,10000)' in js
+    assert 'pollParentAlerts' in js and 'pollWhileVisible(pollParentAlerts,45000)' in js
+    assert "document.addEventListener('visibilitychange'" in js
+
+
+def test_background_polling_and_invalid_prefetches_are_disabled():
+    root=Path(__file__).resolve().parents[1]
+    js=(root/'static/js/littlenet.js').read_text(encoding='utf-8')
+    assert "pollWhileVisible(()=>childHeartbeat(true),30000,()=>childHeartbeat(false))" in js
+    assert "pollWhileVisible(pollParentAlerts,45000)" in js
+    assert 'keepalive:!active' in js
+    assert '/parent/overview/' not in js
+    assert '/parent/screen-time/' not in js
+
+    child=(root/'child/routes.py').read_text(encoding='utf-8')
+    assert "if not active:" in child
+    assert "close_session(key)" in child
+    assert "start_session(session['user_id'])" in child
+
+
+def test_parent_settings_handles_parent_without_children():
+    root=Path(__file__).resolve().parents[1]
+    template=(root/'parent/templates/parent_settings.html').read_text(encoding='utf-8')
+    assert '{% if child %}\n  <!-- Active Child Banner -->' in template
+    assert '</form>\n  {% endif %}' in template
 
 
 def test_for_you_feed_has_ai_semantic_ranking_with_safe_fallback():

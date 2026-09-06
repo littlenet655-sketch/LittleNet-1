@@ -25,6 +25,7 @@ def heartbeat(session_key):
     if row['started_at'].date()<now.date():
         midnight=datetime.combine(now.date(),time.min);_log_session(row,midnight);execute('UPDATE child_usage_sessions SET started_at=%s,last_seen_at=%s WHERE usage_session_id=%s',(midnight,now,row['usage_session_id']))
     else:execute('UPDATE child_usage_sessions SET last_seen_at=%s WHERE usage_session_id=%s',(now,row['usage_session_id']))
+    return True
 
 
 def close_session(session_key):
