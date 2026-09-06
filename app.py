@@ -1,5 +1,5 @@
 from werkzeug.middleware.proxy_fix import ProxyFix
-from flask import Flask,send_from_directory,session,request,jsonify,redirect,render_template
+from flask import Flask,send_from_directory,session,request,jsonify,redirect,render_template,g
 from config import Config
 from extensions import csrf,limiter
 from auth.routes import auth_bp
@@ -49,6 +49,38 @@ def create_app():
 
     for bp in [auth_bp,api_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp]:
         app.register_blueprint(bp)
+
+    @app.before_request
+    def capture_r2_delete_targets():
+        """Remember private R2 objects that a successful child delete must purge.
+
+        The cloud delete happens in the after-request path only after the route has
+        successfully deleted the DB row. A failed request therefore never destroys
+        media that the database still references.
+        """
+        if request.method!='POST' or session.get('role')!='CHILD' or not session.get('user_id'):
+            return None
+        path=request.path.rstrip('/')
+        post_id=None;story_only=False
+        try:
+            if path.startswith('/delete-post/'):
+                post_id=int(path.split('/')[-1])
+            elif path.startswith('/api/delete-story/'):
+                post_id=int(path.split('/')[-1]);story_only=True
+        except (TypeError,ValueError):
+            return None
+        if not post_id:return None
+        sql='SELECT media_path,story_music_path FROM posts WHERE post_id=%s AND child_id=%s'
+        params=(post_id,session['user_id'])
+        if story_only:sql+=" AND is_story=TRUE"
+        row=fetch_one(sql,params)
+        if not row:return None
+        refs=[]
+        for ref in (row.get('media_path'),row.get('story_music_path')):
+            if ref and str(ref).startswith('uploads/r2/'):
+                refs.append(str(ref))
+        if refs:g.r2_delete_refs=refs
+        return None
 
     @app.before_request
     def signup_preflight():
@@ -209,6 +241,17 @@ def create_app():
 
     @app.after_request
     def security_headers(response):
+        # Purge private R2 objects only after the owning child delete endpoint
+        # successfully removed its database row. R2 is private, so a failed purge
+        # leaves an unreachable orphan rather than exposing the media publicly.
+        refs=getattr(g,'r2_delete_refs',[]) if request.method=='POST' and response.status_code<400 else []
+        if refs:
+            try:
+                from services.object_storage import delete_reference
+                for ref in refs:delete_reference(ref)
+            except Exception:
+                app.logger.exception('R2 object cleanup failed after successful media deletion')
+
         # Parent-created child accounts are converted from email-only activation
         # to the camera + liveness guardian verification flow. The legacy email
         # sent inside create_child_by_parent becomes unusable after this state
