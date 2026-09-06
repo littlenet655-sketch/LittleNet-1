@@ -173,7 +173,14 @@ CREATE TABLE IF NOT EXISTS parent_quiz_settings (
  quiz_frequency INTEGER NOT NULL DEFAULT 5 CHECK(quiz_frequency BETWEEN 1 AND 50), mandatory_quiz BOOLEAN NOT NULL DEFAULT FALSE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS child_quiz_progress (
- progress_id SERIAL PRIMARY KEY, child_id INTEGER UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, posts_seen INTEGER NOT NULL DEFAULT 0, last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+ progress_id SERIAL PRIMARY KEY,
+ child_id INTEGER UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+ posts_seen INTEGER NOT NULL DEFAULT 0,
+ quiz_required BOOLEAN NOT NULL DEFAULT FALSE,
+ required_quiz_id INTEGER REFERENCES quizzes(quiz_id) ON DELETE SET NULL,
+ required_at TIMESTAMP,
+ viewed_post_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+ last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS child_quiz_attempts (
  attempt_id BIGSERIAL PRIMARY KEY, child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, quiz_id INTEGER NOT NULL REFERENCES quizzes(quiz_id) ON DELETE CASCADE,
@@ -241,52 +248,35 @@ CREATE INDEX IF NOT EXISTS idx_child_ambitions_child_approved ON child_ambitions
 CREATE INDEX IF NOT EXISTS idx_saved_posts_child ON saved_posts(child_id);
 CREATE INDEX IF NOT EXISTS idx_story_views_post_child ON story_views(post_id,child_id);
 
-
-CREATE TABLE IF NOT EXISTS admin_audit_logs (
- audit_id BIGSERIAL PRIMARY KEY,
- admin_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
- action VARCHAR(80) NOT NULL,
- target_type VARCHAR(40),
- target_id BIGINT,
- details JSONB NOT NULL DEFAULT '{}'::jsonb,
- created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_admin_audit_created ON admin_audit_logs(created_at DESC);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_quizzes_question_age_unique ON quizzes(question,age_group);
-
--- AI & Personalized Learning Tables
-CREATE TABLE IF NOT EXISTS child_personalized_quiz_pool (
-  pool_id SERIAL PRIMARY KEY,
-  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  quiz_id INTEGER NOT NULL REFERENCES quizzes(quiz_id) ON DELETE CASCADE,
-  reason_for_selection VARCHAR(100),
-  served BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  UNIQUE(child_id, quiz_id)
-);
-CREATE INDEX IF NOT EXISTS idx_child_pool_unserved ON child_personalized_quiz_pool(child_id) WHERE served=FALSE;
-
-CREATE TABLE IF NOT EXISTS child_vocabulary_progress (
-  progress_id SERIAL PRIMARY KEY,
-  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  word VARCHAR(100) NOT NULL,
-  language VARCHAR(20) NOT NULL,
-  times_seen INTEGER DEFAULT 1,
-  times_correct INTEGER DEFAULT 0,
-  last_tested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  next_review_due TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  mastery_level VARCHAR(20) DEFAULT 'LEARNING',
-  UNIQUE(child_id, word, language)
-);
-
-CREATE TABLE IF NOT EXISTS parent_weekly_digests (
-  digest_id SERIAL PRIMARY KEY,
-  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
-  parent_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE,
-  week_start_date DATE NOT NULL,
-  headline VARCHAR(255),
-  digest_data JSONB NOT NULL DEFAULT '{}'::jsonb,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-CREATE INDEX IF NOT EXISTS idx_parent_digests_child ON parent_weekly_digests(child_id, week_start_date DESC);
+-- Idempotent seed data.
+INSERT INTO users(username,full_name,email,password_hash,role,account_status) VALUES
+('admin','LittleNet Admin','admin@littlenet.local',crypt('Admin@123',gen_salt('bf')),'ADMIN','ACTIVE')
+ON CONFLICT(username) DO NOTHING;
+INSERT INTO users(username,full_name,email,password_hash,role,age,account_status) VALUES
+('parent_demo','Demo Parent','parent@littlenet.local',crypt('Parent@123',gen_salt('bf')),'PARENT',NULL,'ACTIVE'),
+('child_demo','Demo Child','child@littlenet.local',crypt('Child@123',gen_salt('bf')),'CHILD',10,'ACTIVE')
+ON CONFLICT(username) DO NOTHING;
+INSERT INTO child_profiles(child_id,parent_id,full_name,date_of_birth,age,school_name,location,current_class,bio)
+SELECT c.user_id,p.user_id,c.full_name,CURRENT_DATE-INTERVAL '10 years',10,'LittleNet Demo School','Bengaluru','5','I love science, drawing and coding.' FROM users c JOIN users p ON p.username='parent_demo' WHERE c.username='child_demo' ON CONFLICT(child_id) DO NOTHING;
+INSERT INTO parent_child_map(child_id,parent_id,parent_name,parent_email,approved,approved_at)
+SELECT c.user_id,p.user_id,p.full_name,p.email,TRUE,CURRENT_TIMESTAMP FROM users c JOIN users p ON p.username='parent_demo' WHERE c.username='child_demo' ON CONFLICT(child_id,parent_email) DO NOTHING;
+INSERT INTO child_time_limits(child_id,daily_limit_minutes,strict_mode) SELECT user_id,60,FALSE FROM users WHERE username='child_demo' ON CONFLICT(child_id) DO NOTHING;
+INSERT INTO parent_safety_settings(child_id,parent_id,safety_level) SELECT c.user_id,p.user_id,'STRICT' FROM users c JOIN users p ON p.username='parent_demo' WHERE c.username='child_demo' ON CONFLICT(child_id) DO NOTHING;
+INSERT INTO parent_control_settings(child_id,parent_id) SELECT c.user_id,p.user_id FROM users c JOIN users p ON p.username='parent_demo' WHERE c.username='child_demo' ON CONFLICT(child_id) DO NOTHING;
+INSERT INTO parent_quiz_settings(parent_id,child_id,quiz_frequency,mandatory_quiz) SELECT p.user_id,c.user_id,5,TRUE FROM users c JOIN users p ON p.username='parent_demo' WHERE c.username='child_demo' ON CONFLICT(child_id) DO NOTHING;
+INSERT INTO quizzes(category,question,option_a,option_b,option_c,option_d,correct_answer,age_group) VALUES
+('Science','Which planet is known as the Red Planet?','Earth','Mars','Jupiter','Venus','Mars','9-11'),
+('Math','What is 9 × 7?','56','63','72','49','63','9-11'),
+('Internet Safety','What should you do if a stranger asks for your password?','Share it','Ignore and tell a trusted adult','Post it','Send a screenshot','Ignore and tell a trusted adult','9-11'),
+('Science','What do plants need to make food?','Sunlight','Plastic','Metal','Glass','Sunlight','6-8'),
+('General Knowledge','How many days are in a week?','5','6','7','8','7','6-8'),
+('Internet Safety','Which is safest online?','Tell your home address','Use a strong private password','Meet strangers alone','Share school details','Use a strong private password','6-8'),
+('Technology','What does CPU stand for?','Central Processing Unit','Computer Personal Unit','Central Power Utility','Core Program User','Central Processing Unit','12-13'),
+('Internet Safety','What is phishing?','A sport','A fake attempt to steal information','A coding language','A safe password','A fake attempt to steal information','12-13'),
+('Math','Solve 12²','124','144','122','164','144','12-13') ON CONFLICT DO NOTHING;
+INSERT INTO learning_challenges(title,description,challenge_type,prompt,expected_answer,age_group,points) VALUES
+('Safety Star','Pick the safest choice when someone asks for your password.','CYBER_SAFETY','What should you do?','Tell a trusted adult','6-8',10),
+('Pattern Explorer','Complete this number pattern.','PUZZLE','2, 4, 6, 8, ?','10','9-11',15),
+('Privacy Pro','Explain one way to protect personal information online.','ACTIVITY','Type one safe action.','','12-13',20),
+('Digital Mentor','Write one rule you would teach a younger child about online safety.','ACTIVITY','Type your rule.','','14-18',25)
+ON CONFLICT DO NOTHING;
