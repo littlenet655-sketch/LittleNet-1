@@ -15,6 +15,7 @@ try:
     with conn.cursor() as cur:
         cur.execute((root/'database/schema.sql').read_text())
         cur.execute((root/'database/upgrade.sql').read_text())
+        cur.execute((root/'database/friendship_upgrade.sql').read_text())
         if args.seed:cur.execute((root/'database/seed.sql').read_text())
     conn.commit();print('LittleNet database schema initialized.'+(' Demo seed applied.' if args.seed else ''))
 except Exception:
