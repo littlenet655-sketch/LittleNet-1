@@ -49,6 +49,21 @@ def verify_adult_face(img_path):
     """Estimate adult status from a live anti-spoofed selfie and fail closed."""
     import os
 
+    # In split deployments the lightweight web image intentionally has no
+    # DeepFace/TensorFlow. Delegate this expensive verification to the protected
+    # AI service, which runs the exact same local implementation below.
+    from .remote_client import enabled, face_adult_verify
+    if enabled():
+        try:
+            return face_adult_verify(img_path)
+        except Exception:
+            return {
+                'is_adult': False,
+                'estimated_age': None,
+                'method': 'REMOTE_AI',
+                'reason': 'adult_face_service_unavailable',
+            }
+
     # First require anti-spoof/liveness from DeepFace extraction. A static,
     # printed, or obviously spoofed face must never become a verified guardian.
     try:
