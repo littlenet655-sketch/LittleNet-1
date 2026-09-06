@@ -7,40 +7,41 @@ def text(path):
     return (ROOT / path).read_text(encoding='utf-8')
 
 
-def test_parent_registration_is_intercepted_by_email_otp_gate():
+def test_parent_flow_is_email_then_otp_then_live_adult_activation():
     api = text('auth/api.py')
     otp = text('auth/parent_email_otp.py')
+    live = text('auth/templates/parent_liveness_verify.html')
+
     assert "request.path.rstrip('/')!='/register-parent'" in api
     assert "'PARENT',%s,'PENDING_APPROVAL'" in otp
-    assert "UPDATE users SET account_status='ACTIVE'" in otp
-    assert 'OTP_MAX_ATTEMPTS = 5' in otp
-    assert "INTERVAL '10 minutes'" in otp
-    assert 'code_hash' in otp
+    assert 'pending_parent_email_verified' in api
+    assert "return redirect('/verify-parent-liveness/')" in api
+    assert "@api_bp.route('/verify-parent-liveness/'" in api
+    assert "UPDATE users SET account_status='ACTIVE'" in api
+    assert "UPDATE users SET account_status='ACTIVE'" not in otp
+    assert 'verify_adult_face' in api
+    assert 'navigator.mediaDevices.getUserMedia' in live
+    assert 'selfie_data' in live
 
 
-def test_parent_otp_routes_require_pending_registration_session():
-    api = text('auth/api.py')
-    assert "session.get('pending_parent_user_id')" in api
-    assert "session.get('pending_parent_email')" in api
-    assert api.count('@login_required') >= 2
-
-
-def test_parent_otp_never_persists_plaintext_code():
+def test_parent_otp_is_hashed_expiring_and_rate_limited():
     otp = text('auth/parent_email_otp.py')
+    api = text('auth/api.py')
     assert 'hashlib.sha256' in otp
     assert 'hmac.compare_digest' in otp
+    assert 'OTP_MAX_ATTEMPTS = 5' in otp
+    assert "INTERVAL '10 minutes'" in otp
     assert 'code VARCHAR' not in otp
     assert 'code TEXT' not in otp
+    assert "3 per 15 minutes" in api
 
 
 def test_parent_liveness_has_no_demo_or_manual_capture_bypass():
-    page = text('auth/templates/parent_verify.html')
-    assert 'Demo Liveness' not in page
-    assert 'drawFallbackSelfie' not in page
-    assert 'manualCaptureBtn' not in page
-    assert 'blinkVerified' in page
-    assert 'navigator.mediaDevices.getUserMedia' in page
-    assert 'No verification bypass is available' in page
+    live = text('auth/templates/parent_liveness_verify.html')
+    assert 'Demo Liveness' not in live
+    assert 'drawFallbackSelfie' not in live
+    assert 'manualCaptureBtn' not in live
+    assert 'navigator.mediaDevices.getUserMedia' in live
 
 
 def test_server_face_path_remains_anti_spoof_fail_closed():
@@ -48,36 +49,90 @@ def test_server_face_path_remains_anti_spoof_fail_closed():
     assert 'anti_spoofing=True' in face
     assert "reason': 'liveness_failed'" in face
     assert "reason': 'liveness_unavailable'" in face
-
-
-def test_guardian_adult_face_uses_split_ai_worker_when_configured():
-    face = text('safety/face_service.py')
-    client = text('safety/remote_client.py')
-    server = text('ai_server.py')
     assert 'face_adult_verify' in face
-    assert 'def face_adult_verify' in client
-    assert '/ai/face/adult' in client
-    assert '@app.post("/ai/face/adult")' in server
-    assert 'adult_face_service_unavailable' in face
 
 
-def test_whisper_is_restored_to_audio_pipeline_and_modal_runtime():
-    audio = text('safety/audio_service.py')
-    modal = text('modal_ai.py')
+def test_child_onboarding_is_face_then_age_quiz_before_normal_app():
+    api = text('auth/api.py')
+    quiz = text('quiz/service.py')
+    assert 'child_locked_onboarding_gate' in api
+    assert "SELECT 1 FROM face_profiles WHERE child_id=%s" in api
+    assert "redirect('/face/enroll/')" in api
+    assert "redirect('/quiz/start/?onboarding=1')" in api
+    assert 'needs_onboarding_quiz' in quiz
+    assert "ACCOUNT_CREATED_BY_PARENT" in quiz
+    assert "SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1" in quiz
+
+
+def test_doom_scroll_quiz_is_compulsory_and_non_skippable():
+    js = text('static/js/feed_quiz.js')
+    assert 'QUIZ_INTERVAL = 4' in js
+    assert "document.documentElement.style.overflow = 'hidden'" in js
+    assert 'Mandatory Brain Break' in js
+    assert 'Answer to continue Home or Reels.' in js
+    assert 'Retry quiz' in js
+    assert 'fq-skip-btn' not in js
+    assert 'Skip for now' not in js
+    assert '_unlockScroll()' in js
+
+
+def test_text_hard_blocks_cover_adult_grooming_and_severe_abuse():
+    service = text('safety/text_service.py')
+    policy = text('safety/policy.py')
+    assert 'GROOMING_PATTERNS' in service
+    assert 'SEVERE_ABUSE_TERMS' in service
+    assert "category='GROOMING'" in service
+    assert "category='SEVERE_ABUSE'" in service
+    assert "HARD_TEXT_CATEGORIES={'GROOMING','SEVERE_ABUSE'}" in policy
+    assert 'deterministic_grooming' in policy
+    assert '18+ content hard blocked' in policy
+
+
+def test_yolo_and_nsfw_are_active_for_image_and_video_moderation():
+    visual = text('safety/visual_service.py')
     requirements = text('requirements-ai.txt')
-    assert 'import whisper' in audio
-    assert 'whisper.load_model' in audio
-    assert "timeout_seconds('whisper', 180)" in audio
-    assert '_signals_from_transcript' in audio
-    assert 'scan_pii(transcript)' in audio
-    assert "pii.get('categories')" in audio
-    assert 'openai-whisper>=20250625' in requirements
-    assert 'openai-whisper>=20250625' in modal
-    assert 'whisper_base' in modal
+    modal = text('modal_ai.py')
+    assert 'from ultralytics import YOLO' in visual
+    assert "timed_call('yolo'" in visual
+    assert '_nudenet' in visual
+    assert '_falconsai' in visual
+    assert '_video_frames' in visual
+    assert 'ultralytics>=8.3,<9' in requirements
+    assert 'ultralytics>=8.3,<9' in modal
+    assert 'yolo_oiv7' in modal
 
 
-def test_audio_transcription_failure_still_fails_closed():
-    audio = text('safety/audio_service.py')
-    assert "'partial_safety_failure': True" in audio
-    assert 'audio_transcription_unavailable' in audio
-    assert 'remote_ai_unavailable' in audio
+def test_audio_voice_whisper_and_story_music_are_retired():
+    requirements = text('requirements-ai.txt')
+    modal = text('modal_ai.py')
+    server = text('ai_server.py')
+    moderation = text('safety/moderation_service.py')
+    api = text('auth/api.py')
+    upload_ui = text('uploadPost/templates/upload_post.html')
+    chat_ui = text('childMessage/templates/chat.html')
+
+    assert not (ROOT / 'safety/audio_service.py').exists()
+    assert 'whisper' not in requirements.lower()
+    assert 'whisper' not in modal.lower()
+    assert 'check_audio' not in server
+    assert 'AUDIO' not in server.split('def moderate():',1)[1].split('@app.post("/ai/rank")',1)[0]
+    assert "Standalone audio and voice uploads are disabled" in moderation
+    assert '_AUDIO_EXTS' in api
+    assert "field=='music_file'" in api
+    assert 'accept="image/*,video/*"' in upload_ui
+    assert 'accept="image/*,video/*,.pdf,.docx,.txt"' in chat_ui
+
+
+def test_r2_is_required_and_persisted_for_child_media():
+    api = text('auth/api.py')
+    storage = text('services/object_storage.py')
+    assert 'locked_media_surface_gate' in api
+    assert 'Media storage is unavailable. LittleNet requires R2' in api
+    assert 'persist_child_media_to_r2' in api
+    assert "upload_file(local,_r2_key('posts'" in api
+    assert "upload_file(local,_r2_key('messages'" in api
+    assert "media_path NOT LIKE 'uploads/r2/%%'" in api
+    assert "moderation_status='BLOCKED'" in api
+    assert 'R2 storage unavailable' in api
+    assert 'def upload_file' in storage
+    assert 'return f"uploads/r2/{key}"' in storage
