@@ -10,8 +10,8 @@ def test_discovery_scope_has_no_global_minor_fallback():
     s=text('child/service.py')
     assert 'def discoverable_child_ids' in s
     assert "same school AND same class" in s
-    assert "LOWER(TRIM(cp.school_name))" in s
-    assert "LOWER(TRIM(cp.current_class))" in s
+    assert "TRIM(LOWER(cp.school_name))" in s
+    assert "TRIM(LOWER(cp.current_class))" in s
     assert "approval_stage='ACTIVE'" in s
     assert 'approved_friends AS' in s
     assert 'pending_peers AS' in s
