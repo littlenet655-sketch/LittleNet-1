@@ -20,7 +20,7 @@ def _transcribe_local(path):
         _WHISPER = whisper.load_model(**kwargs)
         _WHISPER_MODEL_NAME = model_name
 
-    result = _WHISPER.transcribe(path, fp16=False if not _whisper_cuda_available() else None)
+    result = _WHISPER.transcribe(path, fp16=_whisper_cuda_available())
     if not isinstance(result, dict):
         return ''
     return str(result.get('text') or '').strip()
