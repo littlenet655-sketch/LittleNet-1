@@ -1,4 +1,5 @@
-import os,tempfile,zipfile,xml.etree.ElementTree as ET
+import os,tempfile,zipfile
+from defusedxml import ElementTree as ET
 from .text_service import check_text
 from .visual_service import check_image
 
