@@ -359,12 +359,11 @@ def quiz_due(cid):
 
 
 def bump(cid):
-    """Legacy counter helper retained for compatibility; viewport events are authoritative."""
-    execute(
-        '''INSERT INTO child_quiz_progress(child_id,posts_seen) VALUES(%s,1)
-           ON CONFLICT(child_id) DO UPDATE SET posts_seen=child_quiz_progress.posts_seen+1,last_updated=NOW()''',
-        (cid,)
-    )
+    """Legacy compatibility hook; viewport post/reel IDs are authoritative now."""
+    # Intentionally do not increment here. Feed/Reels routes call this helper on
+    # page load, and counting page loads would let refreshes distort the safety
+    # interval. ``record_feed_view`` is the only function allowed to add views.
+    return feed_quiz_state(cid)
 
 
 def reset(cid):
