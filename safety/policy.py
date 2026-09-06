@@ -17,8 +17,8 @@ def decide(signals:dict, safety_level='STRICT', adult_threshold=0.40):
     if category in HARD_TEXT_CATEGORIES or signals.get('deterministic_grooming') or signals.get('deterministic_severe_abuse'):
         reason='grooming/coercion hard blocked' if category=='GROOMING' or signals.get('deterministic_grooming') else 'severe abuse/threat hard blocked'
         return Decision('BLOCK',100.0,reason)
-    if total_failure:return Decision('BLOCK',100.0,'AI safety unavailable: fail closed')
-    if adult>=adult_threshold or category in ADULT_CATEGORIES:return Decision('BLOCK',max(adult*100,90),'18+ content hard blocked')
+    if total_failure: return Decision('BLOCK',100.0,'AI safety unavailable: fail closed')
+    if adult >= adult_threshold or category in ADULT_CATEGORIES:return Decision('BLOCK',max(adult*100,90),'18+ content hard blocked')
 
     # Do not rely only on the legacy weapon_score mapping. Inspect raw YOLO
     # detections as well so OpenImages labels such as Axe, Handgun and Kitchen
