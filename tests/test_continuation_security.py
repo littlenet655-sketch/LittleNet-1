@@ -18,6 +18,13 @@ def test_parent_registration_is_intercepted_by_email_otp_gate():
     assert 'code_hash' in otp
 
 
+def test_parent_otp_routes_require_pending_registration_session():
+    api = text('auth/api.py')
+    assert "session.get('pending_parent_user_id')" in api
+    assert "session.get('pending_parent_email')" in api
+    assert api.count('@login_required') >= 2
+
+
 def test_parent_otp_never_persists_plaintext_code():
     otp = text('auth/parent_email_otp.py')
     assert 'hashlib.sha256' in otp
@@ -43,6 +50,17 @@ def test_server_face_path_remains_anti_spoof_fail_closed():
     assert "reason': 'liveness_unavailable'" in face
 
 
+def test_guardian_adult_face_uses_split_ai_worker_when_configured():
+    face = text('safety/face_service.py')
+    client = text('safety/remote_client.py')
+    server = text('ai_server.py')
+    assert 'face_adult_verify' in face
+    assert 'def face_adult_verify' in client
+    assert '/ai/face/adult' in client
+    assert '@app.post("/ai/face/adult")' in server
+    assert 'adult_face_service_unavailable' in face
+
+
 def test_whisper_is_restored_to_audio_pipeline_and_modal_runtime():
     audio = text('safety/audio_service.py')
     modal = text('modal_ai.py')
@@ -52,6 +70,7 @@ def test_whisper_is_restored_to_audio_pipeline_and_modal_runtime():
     assert "timeout_seconds('whisper', 180)" in audio
     assert '_signals_from_transcript' in audio
     assert 'scan_pii(transcript)' in audio
+    assert "pii.get('categories')" in audio
     assert 'openai-whisper>=20250625' in requirements
     assert 'openai-whisper>=20250625' in modal
     assert 'whisper_base' in modal
