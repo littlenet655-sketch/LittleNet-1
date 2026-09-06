@@ -13,6 +13,7 @@ def test_discovery_scope_has_no_global_minor_fallback():
     assert "LOWER(TRIM(cp.school_name))" in s
     assert "LOWER(TRIM(cp.current_class))" in s
     assert "approval_stage='ACTIVE'" in s
+    assert 'approved_friends AS' in s
     assert 'pending_peers AS' in s
     assert 'network AS' in s
     assert 'LittleNet Classmate' not in s
@@ -42,7 +43,7 @@ def test_discover_posts_are_not_platform_global():
 
 def test_child_cannot_advance_parent_friendship_approval():
     s=text('child/routes.py')
-    block=s[s.index('def accept_follow_request(requester_id):'):s.index("@child_bp.route('/child/follow-requests/<int:requester_id>/decline/')")]
+    block=s[s.index('def accept_follow_request(requester_id):'):s.index('def decline_follow_request(requester_id):')]
     assert "Parent approval required" in block
     assert ',403' in block
     assert 'UPDATE followers SET approved=TRUE' not in block
