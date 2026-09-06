@@ -2,8 +2,10 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg libglib2.0-0 libgomp1 ca-certificates && rm -rf /var/lib/apt/lists/*
-COPY requirements-core.txt requirements-ai.txt ./
-RUN pip install --upgrade pip setuptools wheel && pip install -r requirements-ai.txt
+COPY requirements-core.txt requirements-safety.txt requirements-text.txt requirements-ai.txt ./
+RUN pip install --upgrade pip setuptools wheel \
+    && pip install -r requirements-ai.txt -r requirements-safety.txt \
+    && python -m spacy download en_core_web_sm
 COPY . .
 RUN chmod +x /app/docker-entrypoint.sh
 EXPOSE 8080
