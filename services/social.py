@@ -22,7 +22,8 @@ def can_interact(a,b):
     if a==b:return False
     blocked=fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(a,b,b,a))
     if blocked:return False
-    return bool(fetch_one('SELECT 1 FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=TRUE',(a,b)) or fetch_one('SELECT 1 FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=TRUE',(b,a)))
+    return bool(fetch_one('''SELECT 1 FROM followers WHERE approved=TRUE AND approval_stage='ACTIVE'
+      AND ((child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)) LIMIT 1''',(a,b,b,a)))
 
 
 def visible_posts(viewer_id, reels=False, limit=20, offset=0):
@@ -36,7 +37,7 @@ def visible_posts(viewer_id, reels=False, limit=20, offset=0):
       WHERE ((p.moderation_status='ALLOWED' AND p.is_safe=TRUE) OR (p.child_id=%s AND p.moderation_status='REVIEW')) AND p.is_story=FALSE AND p.is_reel=%s
         AND p.content_category = ANY(%s)
         AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
-        AND (p.child_id=%s OR p.child_id IN (SELECT following_child_id FROM followers WHERE child_id=%s AND approved=TRUE))
+        AND (p.child_id=%s OR p.child_id IN (SELECT following_child_id FROM followers WHERE child_id=%s AND approved=TRUE AND approval_stage='ACTIVE'))
         AND p.child_id NOT IN (
           SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
           UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
@@ -62,7 +63,7 @@ def active_stories(viewer_id):
           AND p.content_category = ANY(%s)
           AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
           AND (p.child_id=%s OR p.child_id IN (
-              SELECT following_child_id FROM followers WHERE child_id=%s AND approved=TRUE
+              SELECT following_child_id FROM followers WHERE child_id=%s AND approved=TRUE AND approval_stage='ACTIVE'
           ))
           AND p.child_id NOT IN (
               SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
@@ -81,13 +82,18 @@ def story_visible_to(viewer_id,post_id):
         WHERE p.post_id=%s AND p.is_story=TRUE AND p.is_safe=TRUE AND p.moderation_status='ALLOWED'
           AND p.created_at>NOW()-INTERVAL '24 hours' AND p.content_category = ANY(%s)
           AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
-          AND (p.child_id=%s OR EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE))
+          AND (p.child_id=%s OR EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE AND f.approval_stage='ACTIVE'))
           AND NOT EXISTS(SELECT 1 FROM blocked_users b WHERE (b.blocker_id=%s AND b.blocked_id=p.child_id) OR (b.blocker_id=p.child_id AND b.blocked_id=%s))
           AND NOT EXISTS(SELECT 1 FROM muted_users m WHERE m.muter_id=%s AND m.muted_id=p.child_id)''',
         (post_id,cats,age_group,age_group,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id))
 
 
 def notify(user_id,kind,message,url=None,actor=None):
+    # Initial child-to-child request creation is private to the requesting family.
+    # The target family is surfaced only after sender-parent approval by the DB
+    # friendship transition; children are notified when friendship becomes ACTIVE.
+    if str(kind).upper()=='FOLLOW_REQUEST':
+        return None
     execute('INSERT INTO notifications(user_id,actor_id,notification_type,message,target_url) VALUES(%s,%s,%s,%s,%s)',(user_id,actor,kind,message,url))
 
 
@@ -97,8 +103,6 @@ def parent_notify(child_id,kind,message,url=None):
     for parent in parents:
         execute('''INSERT INTO parent_notifications(parent_id,child_id,notification_type,notification_message,target_url)
           VALUES(%s,%s,%s,%s,%s)''',(parent['parent_id'],child_id,kind,message,url))
-    # BLOCK/REVIEW alerts are also emailed when SMTP is configured. Never include
-    # flagged media in mail; parents inspect it only inside authenticated Parent Mode.
     safety_kind=('BLOCK' in str(kind).upper()) or ('REVIEW' in str(kind).upper())
     if safety_kind and parents:
         try:
@@ -115,7 +119,7 @@ def post_visible_to(viewer_id,post_id):
     cats=effective_categories(viewer_id);age_group=_age_group(viewer_id)
     return fetch_one("""SELECT p.* FROM posts p WHERE p.post_id=%s AND (p.moderation_status='ALLOWED' OR (p.child_id=%s AND p.moderation_status='REVIEW')) AND p.is_safe=TRUE
       AND p.content_category = ANY(%s) AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
-      AND (p.child_id=%s OR EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE))
+      AND (p.child_id=%s OR EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE AND f.approval_stage='ACTIVE'))
       AND p.child_id NOT IN (
         SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
         UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
@@ -136,22 +140,17 @@ def is_post_shareable_to(post_id, sender_id, receiver_id):
     Guarantees that direct messaging cannot bypass recipient's age group or parental category controls.
     """
     if not can_interact(sender_id, receiver_id):
-        return False, "Approved connection required"
+        return False, "Both parents must approve this friendship before sharing or messaging."
     p_sender = post_visible_to(sender_id, post_id)
     if not p_sender:
         return False, "Post unavailable"
     if p_sender.get('moderation_status') != 'ALLOWED' or not p_sender.get('is_safe'):
         return False, "Post not approved for sharing"
-    
-    # Check recipient category controls
     cats = effective_categories(receiver_id)
     if p_sender.get('content_category') not in cats:
         return False, "Post category restricted by recipient's parent controls"
-    
-    # Check recipient age group suitability
     recip_age = _age_group(receiver_id)
     post_age = p_sender.get('audience_age_group')
     if post_age and post_age != 'ALL' and recip_age and post_age != recip_age:
         return False, "Post not suitable for recipient's age group"
-        
     return True, "OK"
