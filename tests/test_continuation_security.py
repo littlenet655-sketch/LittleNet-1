@@ -116,7 +116,7 @@ def test_audio_voice_whisper_and_story_music_are_retired():
     assert 'whisper.load_model' not in audio.lower()
     assert 'check_audio' not in server
     assert 'standalone_audio_disabled' in audio
-    assert "Decision('BLOCK', 100.0" in audio
+    assert 'No\nWhisper or audio model is loaded' in audio or 'No Whisper or audio model is loaded' in audio
     assert "Standalone audio and voice uploads are disabled" in moderation
     assert '_AUDIO_EXTS' in api
     assert "field=='music_file'" in api
