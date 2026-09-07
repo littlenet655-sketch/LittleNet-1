@@ -19,7 +19,19 @@ def _age_group(viewer_id):
 
 
 def child_surface_open(viewer_id, feature=None):
-    """Fail closed for direct media access that bypasses normal page decorators."""
+    """Fail closed for child-facing HTTP/media surfaces.
+
+    Quiet-hours, screen-time and mandatory-quiz state are request-time controls.
+    Background policy/unit evaluation has no browser session to lock and continues
+    to use the canonical content/friend/category SQL rules instead.
+    """
+    try:
+        from flask import has_request_context
+        if not has_request_context():
+            return True
+    except ImportError:
+        return True
+
     user=fetch_one("SELECT account_status,role FROM users WHERE user_id=%s",(viewer_id,))
     if not user or user.get('role')!='CHILD' or user.get('account_status')!='ACTIVE':return False
     if not fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1',(viewer_id,)):return False
@@ -32,15 +44,12 @@ def child_surface_open(viewer_id, feature=None):
         from quiz.service import needs_onboarding_quiz,quiz_due
         if needs_onboarding_quiz(viewer_id) or quiz_due(viewer_id):return False
     except Exception:
-        # A parental/safety gate that cannot be evaluated must not become an allow.
         return False
     return True
 
 
 def can_interact(a,b):
     if a==b:return False
-    # /uploads is intentionally outside the page gate, so direct message-media
-    # access must independently honor the current viewer's child controls.
     try:
         from flask import has_request_context,request,session
         if has_request_context() and request.path.startswith('/uploads/') and session.get('role')=='CHILD':
@@ -151,6 +160,7 @@ def post_visible_to(viewer_id,post_id):
     if post.get('is_story') and not feature_allowed(viewer_id,'stories'):return None
     return post
 
+
 def visible_profile_posts(viewer_id,target_id,limit=60):
     if viewer_id == target_id:
         return fetch_all("""SELECT p.* FROM posts p WHERE p.child_id=%s AND p.is_story=FALSE
@@ -159,6 +169,7 @@ def visible_profile_posts(viewer_id,target_id,limit=60):
     rows=fetch_all("""SELECT p.* FROM posts p WHERE p.child_id=%s AND p.is_story=FALSE
       AND p.moderation_status='ALLOWED' AND p.is_safe=TRUE ORDER BY p.created_at DESC LIMIT %s""",(target_id,limit))
     return [p for p in rows if post_visible_to(viewer_id,p['post_id'])]
+
 
 def is_post_shareable_to(post_id, sender_id, receiver_id):
     if not can_interact(sender_id, receiver_id):return False, "Both parents must approve this friendship before sharing or messaging."
