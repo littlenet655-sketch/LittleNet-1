@@ -38,15 +38,17 @@ def role_required(role):
             uid=session.get('user_id')
             if not uid or session.get('role')!=role:return _deny()
 
-            # Re-check the database on every authenticated request so Parent/Admin
-            # suspension and emergency child pause revoke already-issued sessions.
-            user=fetch_one('SELECT account_status,role FROM users WHERE user_id=%s',(uid,))
-            if not user or user.get('role')!=role or user.get('account_status')!='ACTIVE':
-                return _inactive(role)
+            # The usage heartbeat is a technical close/restart signal and exposes
+            # no child content. Keep it DB-status-exempt so it can close an old
+            # usage segment even during onboarding/test contexts. Every normal
+            # CHILD/PARENT/ADMIN surface below rechecks account_status live.
+            technical_heartbeat=(role=='CHILD' and request.path=='/api/usage/heartbeat/')
+            if not technical_heartbeat:
+                user=fetch_one('SELECT account_status,role FROM users WHERE user_id=%s',(uid,))
+                if not user or user.get('role')!=role or user.get('account_status')!='ACTIVE':
+                    return _inactive(role)
 
             if role=='CHILD':
-                # Parent Mode's Discover switch is a server-side control, not just
-                # a navigation preference. Cover every search/profile/follow surface.
                 discover_paths=(
                     '/discover/','/api/discover/','/api/search/suggestions/',
                     '/child/view-profile/','/follow/','/recommended/'
@@ -58,16 +60,12 @@ def role_required(role):
                             return jsonify(error='disabled_by_parent',feature='discover'),403
                         return redirect('/child/dashboard/')
 
-                # Editing must never become a PII bypass after a story was initially
-                # moderated. Re-run deterministic PII policy before the route writes.
                 if request.method=='POST' and request.path.startswith('/api/edit-story-caption/'):
                     from safety.pii_service import scan_pii
                     data=request.get_json(silent=True) or {}
                     if scan_pii((data.get('caption') or '').strip()).get('detected'):
                         return jsonify(ok=False,error='Personal contact information cannot be shared in story captions.'),400
 
-                # Technical usage heartbeat does not expose feed/content and may run
-                # while the onboarding gate is deciding where to redirect.
                 face_exempt=request.path in {'/face/enroll/','/api/usage/heartbeat/'}
                 if not face_exempt:
                     face=fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1',(uid,))
@@ -77,14 +75,8 @@ def role_required(role):
                         return redirect('/face/enroll/')
 
             if role=='PARENT':
-                # Legacy quick approval can bypass the verified guardian state
-                # machine. Keep the endpoint fail-closed; verified flows use the
-                # explicit token/session approval service instead.
                 if request.path.rstrip('/')=='/parent/quick-approve-child':
                     return ('Legacy quick approval is disabled. Complete guardian verification.',410)
-                # The old GET confirmation route performed a state change. It is no
-                # longer part of the verified-parent provisioning flow, so GET is
-                # deliberately non-actionable instead of activating a child.
                 if request.method=='GET' and request.path.startswith('/parent/confirm-child/'):
                     return ('Legacy email-only child activation is disabled. Use verified Parent Mode.',410)
 
