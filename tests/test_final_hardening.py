@@ -260,8 +260,11 @@ def test_gemini_adult_age_fallback_matrix(gemini_json, expected_is_adult, expect
 
         # DeepFace raises/fails so it falls through to Gemini
         with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key"}, clear=False):
+            mock_google = MagicMock()
+            mock_google.generativeai = mock_genai
             with patch.dict("sys.modules", {
                 "deepface": MagicMock(DeepFace=MagicMock(extract_faces=MagicMock(side_effect=RuntimeError("no face")))),
+                "google": mock_google,
                 "google.generativeai": mock_genai,
                 "PIL": MagicMock(Image=mock_image),
             }):
@@ -289,10 +292,13 @@ def test_gemini_fallback_fails_closed_on_exception_and_timeout():
         mock_model.generate_content.side_effect = TimeoutError("Gemini call timed out")
         mock_genai = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
+        mock_google = MagicMock()
+        mock_google.generativeai = mock_genai
 
         with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key"}, clear=False):
             with patch.dict("sys.modules", {
                 "deepface": MagicMock(DeepFace=MagicMock(extract_faces=MagicMock(side_effect=RuntimeError("no face")))),
+                "google": mock_google,
                 "google.generativeai": mock_genai,
                 "PIL": MagicMock(Image=MagicMock()),
             }):
