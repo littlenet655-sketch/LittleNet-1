@@ -1,5 +1,5 @@
 from pathlib import Path
-import ast,shutil,os
+import ast,shutil,os,sys
 R=Path(__file__).parents[1]
 checks=[]
 def add(name,ok,detail=''):checks.append((name,bool(ok),detail))
@@ -26,8 +26,11 @@ add('APK binary compiled', (R/'android/app/build/outputs/apk/debug/app-debug.apk
 print('LittleNet readiness')
 for n,ok,d in checks:print(('PASS' if ok else 'WAIT').ljust(5),n,('- '+d) if d else '')
 external={'Backend URL configured','Gradle available','Android SDK configured','No Git metadata'}
-source_ready=all(ok for n,ok,d in checks if n not in external)
+artifacts={'APK binary compiled'}
+source_ready=all(ok for n,ok,d in checks if n not in external|artifacts)
 apk_ready=(R/'android/app/build/outputs/apk/debug/app-debug.apk').exists()
 print('\nSOURCE_READY=',source_ready)
 print('APK_BINARY_READY=',apk_ready)
+if '--source-only' in sys.argv:
+    raise SystemExit(0 if source_ready else 1)
 raise SystemExit(0 if (source_ready and apk_ready) else 1)

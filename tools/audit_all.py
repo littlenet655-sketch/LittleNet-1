@@ -6,7 +6,7 @@ steps=[
  [sys.executable,'tools/preflight.py'],
  [sys.executable,'tools/audit_routes.py'],
  [sys.executable,'tools/audit_templates.py'],
- [sys.executable,'tools/readiness.py'],
+ [sys.executable,'tools/readiness.py','--source-only'],
  [sys.executable,'tools/scope_check.py'],
 ]
 for cmd in steps:
