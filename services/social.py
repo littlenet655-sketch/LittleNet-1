@@ -1,5 +1,5 @@
 from database.connection import fetch_all, fetch_one, execute
-from services.controls import effective_categories, controls_for_child
+from services.controls import effective_categories, controls_for_child, feature_allowed, quiet_hours_state
 
 
 def _age_group(viewer_id):
@@ -18,8 +18,35 @@ def _age_group(viewer_id):
     return '14-18'
 
 
+def child_surface_open(viewer_id, feature=None):
+    """Fail closed for direct media access that bypasses normal page decorators."""
+    user=fetch_one("SELECT account_status,role FROM users WHERE user_id=%s",(viewer_id,))
+    if not user or user.get('role')!='CHILD' or user.get('account_status')!='ACTIVE':return False
+    if not fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1',(viewer_id,)):return False
+    if feature and not feature_allowed(viewer_id,feature):return False
+    try:
+        if quiet_hours_state(viewer_id).get('active'):return False
+        from services.usage import lock_state
+        locked,_=lock_state(viewer_id)
+        if locked:return False
+        from quiz.service import needs_onboarding_quiz,quiz_due
+        if needs_onboarding_quiz(viewer_id) or quiz_due(viewer_id):return False
+    except Exception:
+        # A parental/safety gate that cannot be evaluated must not become an allow.
+        return False
+    return True
+
+
 def can_interact(a,b):
     if a==b:return False
+    # /uploads is intentionally outside the page gate, so direct message-media
+    # access must independently honor the current viewer's child controls.
+    try:
+        from flask import has_request_context,request,session
+        if has_request_context() and request.path.startswith('/uploads/') and session.get('role')=='CHILD':
+            current=int(session.get('user_id') or 0)
+            if current in {int(a),int(b)} and not child_surface_open(current,'messaging'):return False
+    except Exception:return False
     blocked=fetch_one('SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)',(a,b,b,a))
     if blocked:return False
     return bool(fetch_one('''SELECT 1 FROM followers WHERE approved=TRUE AND approval_stage='ACTIVE'
@@ -75,7 +102,7 @@ def active_stories(viewer_id):
 
 
 def story_visible_to(viewer_id,post_id):
-    if not controls_for_child(viewer_id).get('allow_stories',True):return None
+    if not child_surface_open(viewer_id,'stories'):return None
     cats=effective_categories(viewer_id);age_group=_age_group(viewer_id)
     return fetch_one('''SELECT p.*,u.full_name,cp.profile_picture FROM posts p
         JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
@@ -89,11 +116,7 @@ def story_visible_to(viewer_id,post_id):
 
 
 def notify(user_id,kind,message,url=None,actor=None):
-    # Initial child-to-child request creation is private to the requesting family.
-    # The target family is surfaced only after sender-parent approval by the DB
-    # friendship transition; children are notified when friendship becomes ACTIVE.
-    if str(kind).upper()=='FOLLOW_REQUEST':
-        return None
+    if str(kind).upper()=='FOLLOW_REQUEST':return None
     execute('INSERT INTO notifications(user_id,actor_id,notification_type,message,target_url) VALUES(%s,%s,%s,%s,%s)',(user_id,actor,kind,message,url))
 
 
@@ -109,21 +132,24 @@ def parent_notify(child_id,kind,message,url=None):
             from mailg.send_email import send_email
             from config import Config
             target=f"{Config.BASE_URL.rstrip('/')}{url or '/parent/notifications/'}"
-            for parent in parents:
-                send_email(parent['email'],'LittleNet safety alert',f"<h2>LittleNet safety alert</h2><p>{message}</p><p><a href='{target}'>Open Parent Mode</a></p>")
-        except Exception:
-            pass
+            for parent in parents:send_email(parent['email'],'LittleNet safety alert',f"<h2>LittleNet safety alert</h2><p>{message}</p><p><a href='{target}'>Open Parent Mode</a></p>")
+        except Exception:pass
 
 
 def post_visible_to(viewer_id,post_id):
+    if not child_surface_open(viewer_id):return None
     cats=effective_categories(viewer_id);age_group=_age_group(viewer_id)
-    return fetch_one("""SELECT p.* FROM posts p WHERE p.post_id=%s AND (p.moderation_status='ALLOWED' OR (p.child_id=%s AND p.moderation_status='REVIEW')) AND p.is_safe=TRUE
+    post=fetch_one("""SELECT p.* FROM posts p WHERE p.post_id=%s AND (p.moderation_status='ALLOWED' OR (p.child_id=%s AND p.moderation_status='REVIEW')) AND p.is_safe=TRUE
       AND p.content_category = ANY(%s) AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
       AND (p.child_id=%s OR EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE AND f.approval_stage='ACTIVE'))
       AND p.child_id NOT IN (
         SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
         UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
         UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)""",(post_id,viewer_id,cats,age_group,age_group,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id))
+    if not post:return None
+    if post.get('is_reel') and not feature_allowed(viewer_id,'reels'):return None
+    if post.get('is_story') and not feature_allowed(viewer_id,'stories'):return None
+    return post
 
 def visible_profile_posts(viewer_id,target_id,limit=60):
     if viewer_id == target_id:
@@ -135,22 +161,12 @@ def visible_profile_posts(viewer_id,target_id,limit=60):
     return [p for p in rows if post_visible_to(viewer_id,p['post_id'])]
 
 def is_post_shareable_to(post_id, sender_id, receiver_id):
-    """
-    Verifies that a post is safe, approved, and eligible to be shared with a recipient.
-    Guarantees that direct messaging cannot bypass recipient's age group or parental category controls.
-    """
-    if not can_interact(sender_id, receiver_id):
-        return False, "Both parents must approve this friendship before sharing or messaging."
+    if not can_interact(sender_id, receiver_id):return False, "Both parents must approve this friendship before sharing or messaging."
     p_sender = post_visible_to(sender_id, post_id)
-    if not p_sender:
-        return False, "Post unavailable"
-    if p_sender.get('moderation_status') != 'ALLOWED' or not p_sender.get('is_safe'):
-        return False, "Post not approved for sharing"
+    if not p_sender:return False, "Post unavailable"
+    if p_sender.get('moderation_status') != 'ALLOWED' or not p_sender.get('is_safe'):return False, "Post not approved for sharing"
     cats = effective_categories(receiver_id)
-    if p_sender.get('content_category') not in cats:
-        return False, "Post category restricted by recipient's parent controls"
-    recip_age = _age_group(receiver_id)
-    post_age = p_sender.get('audience_age_group')
-    if post_age and post_age != 'ALL' and recip_age and post_age != recip_age:
-        return False, "Post not suitable for recipient's age group"
+    if p_sender.get('content_category') not in cats:return False, "Post category restricted by recipient's parent controls"
+    recip_age = _age_group(receiver_id);post_age = p_sender.get('audience_age_group')
+    if post_age and post_age != 'ALL' and recip_age and post_age != recip_age:return False, "Post not suitable for recipient's age group"
     return True, "OK"
