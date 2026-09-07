@@ -251,5 +251,8 @@ def resend_parent_email_otp(user_id):
         conn.close()
 
     if not _send_code(user_id, user['email'], user['full_name'], code):
+        if os.getenv('RESEND_API_KEY'):
+            return False, 'Email delivery failed. In Resend testing mode, use the account email (littlenet655@gmail.com) or verify your domain in Resend.'
         return False, 'Email delivery is unavailable. Check SMTP configuration and try again.'
     return True, None
+
