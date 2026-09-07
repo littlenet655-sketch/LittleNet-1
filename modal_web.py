@@ -41,7 +41,7 @@ web_image = (
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
-            "LITTLENET_DEPLOY_VERSION": "10",
+            "LITTLENET_DEPLOY_VERSION": "11",
         }
     )
     .add_local_dir(
