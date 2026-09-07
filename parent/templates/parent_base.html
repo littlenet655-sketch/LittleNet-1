@@ -4,4 +4,4 @@
 <a href="/parent/safety/">{{ico.icon('shield',18)}}<span>Safety</span></a>
 <a href="/parent/time-limit/">{{ico.icon('clock',18)}}<span>Time</span></a>
 <a href="/parent/settings/">{{ico.icon('settings',18)}}<span>Settings</span></a>
-</nav><main class="parent-content">{% block content %}{% endblock %}</main><footer class="parent-footer"><div></div><form method="post" action="/switch-mode/"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="btn outline">{{ico.icon('lock',16)}} {{t('switch_mode')}}</button></form></footer></div><div class="toast-stack" aria-live="polite"></div><script src="/static/js/littlenet.js"></script></body></html>
+</nav><main class="parent-content">{% block content %}{% endblock %}</main><footer class="parent-footer"><div></div><form method="post" action="/switch-mode/"><input type="hidden" name="csrf_token" value="{{csrf_token()}}"><button class="btn outline">{{ico.icon('lock',16)}} {{t('switch_mode')}}</button></form></footer></div><div class="toast-stack" aria-live="polite"></div><script src="/static/js/navigation_guard.js"></script><script src="/static/js/littlenet.js"></script></body></html>
