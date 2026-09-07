@@ -1,49 +1,65 @@
 # LittleNet Build Status
 
-## Local source status
-The existing LittleNet repository now covers the corrected project PPT/report plus the final agreed additions without changing the Flask/Jinja/PostgreSQL architecture. No Git metadata is present in this working tree.
+_Last verified: 2026-09-07_
 
-### Current verified source evidence
-- **122/122 tests passing**
-- **110 Flask routes / 0 route-audit errors**
-- **64 templates / 0 template-audit errors**
-- **41/41 scope checks passing**
-- Python compile clean
-- JavaScript syntax clean
-- Android XML clean
-- CSP/template safety audit clean
-- No Git metadata
+## Repository/source status
 
-### Newly closed gaps
-- Server-enforced Parent Mode quiet hours with timezone support
-- Real child online/offline presence on Parent Home
-- Parent Home 7-day behavior and quiz activity metrics
-- Feed/Clips direct visibility and social interactions limited to approved relationships
-- Discover changed from global/random children to approved-network / same-school / same-parent suggestions
-- BLOCK/REVIEW in-app alerts plus best-effort SMTP email safety alerts
-- Explicit Admin post-removal action with audit logging
-- Parent/Admin review UI, model-signal bars and blurred REVIEW preview
-- Expanded quiz seed and Learn card
-- AI adapter timeouts and normalized max-score ensemble
+The current `main` branch is source-clean and submission-packaging-ready. The release pipeline is intentionally fail-closed: a live APK is produced only after the real web deployment, database, AI service and external dependencies pass their release gates.
 
-## Locked safety invariant
-Adult/sexual evidence >= 0.40 and weapon evidence >= 0.45 hard-block before ordinary risk thresholds. Total safety outage cannot ALLOW content. Partial safety failure without hard-block evidence goes to REVIEW. Kids Mode queries expose only content that has passed the required relationship, Parent Control, age/category and safety checks.
+### Verified on GitHub CI
 
-## Deployment source ready
-- `Dockerfile.web`  -  lightweight Flask/Jinja web service
-- `Dockerfile.ai` / `ai_server.py`  -  heavyweight AI service
-- `modal_ai.py`  -  optional Modal GPU deployment
-- PostgreSQL schema + idempotent upgrade
-- `/healthz` and `/readyz`
-- GitHub CI and APK build workflow
-- Android WebView source
+- Python/source audit: PASS
+- LittleNet regression suite: PASS
+- parameterized/dynamic SQL audit: PASS
+- MediaPipe pinned-asset verification: PASS
+- Gitleaks secret scan: PASS
+- `pip-audit` dependency scan: PASS
+- Bandit application scan: PASS
+- clean submission ZIP packaging: PASS
 
-## Remaining external blockers
-1. Real PostgreSQL host and production `DATABASE_URL`.
-2. Real HTTPS LittleNet backend URL.
-3. Real execution/model warm-up for NudeNet, Falconsai, CLIP, YOLO, Detoxify, Whisper and DeepFace.
-4. End-to-end tests using real safe/adult/weapon/video/audio/face samples.
-5. Android SDK/Gradle execution (or GitHub Actions) to generate the APK after the HTTPS URL exists.
-6. Physical Android camera/mic/Face Login/Live Safety test.
+Exact test/route counts change as the project is hardened; GitHub Actions is the canonical current evidence instead of old fixed counts.
 
-`SOURCE_READY=True`; `APK_BINARY_READY=False` until those external runtime steps are completed.
+## Locked release chain
+
+`.github/workflows/deploy-modal.yml` enforces this order:
+
+1. validate the public HTTPS LittleNet URL and Modal credentials
+2. deploy the protected Modal AI service
+3. warm every locked-scope model/dependency
+4. deploy the Flask/Jinja web service
+5. initialize/apply PostgreSQL migrations
+6. seed the compulsory age-banded quiz bank
+7. run DB/schema + AI + Presidio + MediaPipe liveness + mail + R2 + `BASE_URL` preflight
+8. require public `/healthz` and strict `/readyz` = `ready`
+9. run Playwright release smoke tests against the public URL
+10. only then build an Android APK injected with that same verified live URL
+
+## APK status
+
+The old repository binary `LittleNet-v1.0-submission.apk` was retired because it embedded a placeholder backend URL and could be mistaken for a final build. APK files are excluded from the source submission ZIP and ignored by Git.
+
+The canonical final APK is the GitHub Actions artifact named **`LittleNet-live-verified-apk`**, generated only after the live release job succeeds. Do not submit an APK copied from the repository source tree.
+
+## Current proven external blocker
+
+The first connected live-release run on 2026-09-07 stopped at credential validation because these GitHub Actions repository secrets are not configured:
+
+- `MODAL_TOKEN_ID`
+- `MODAL_TOKEN_SECRET`
+
+Because authentication failed before deployment, AI deploy, web deploy, DB migration, live smoke testing and live APK generation were correctly skipped. This is an account-level configuration task; it cannot be solved by committing source code.
+
+## External configuration the next successful live run will verify
+
+After the two Modal GitHub secrets exist, the workflow will expose any remaining runtime configuration issue precisely. The Modal `littlenet-web-secrets` secret must ultimately contain working values for the PostgreSQL database, Flask secret, protected AI service, public `BASE_URL`, SMTP/mail and Cloudflare R2 dependencies.
+
+## Guardian verification hardening
+
+The production guardian path is Express Guardian Verification with a live camera plus server-side anti-spoof/adult verification. The legacy deterministic Aadhaar mock is blocked on public deployments and can only be enabled explicitly on local HTTP localhost/127.0.0.1 development. Missing/malformed adult-verification output fails closed. Legacy token-only child activation is disabled.
+
+## Status summary
+
+- **Source/CI ready:** YES
+- **Clean source submission ZIP:** YES
+- **Live Modal deployment verified:** NO — blocked by missing GitHub Modal credentials
+- **Production/live-backed APK ready:** NO — generated only after live release passes

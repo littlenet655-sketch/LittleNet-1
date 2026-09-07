@@ -1,9 +1,11 @@
 # LittleNet Scope Status
 
-`python tools/scope_check.py` maps the corrected project PPT/report plus the locked final additions to source-level evidence.
+`python tools/scope_check.py` maps the corrected project scope and locked final additions to source-level evidence.
 
-Current result: **41/41 PASS**.
+Run the command for the current count; do not rely on an old hard-coded `41/41` number after new hardening checks are added.
 
-It covers Kids Mode, Feed/posts/Clips/Reels/Stories/chat, approved-only social interaction, non-global Discover, 18+ moderation, NSFW/YOLO/Whisper/NLP/cyberbullying, risk decisions, Parent Review, parent-first account flow, screen time, quiet hours, live parent alerts, safety email alerts, smart Parent Controls, parent presence/behavior/quiz metrics, age targeting, semantic AI personalization, multilingual UI, quizzes/challenges/educational Clips, Admin/Moderator post removal, behavioral analysis, live moderation, Face Login/liveness, privacy/security, PostgreSQL activity logging, Android source and Modal AI deployment.
+Current locked scope includes Kids/Parent/Admin modes; Feed/posts/Clips/Reels/Stories/chat; two-parent-approved social interaction; non-global Discover; text/PII safety; NSFW/YOLO/CLIP image/video safety; Parent Review; parent-first account flow; screen time/quiet hours; alerts; behavior/quiz metrics; age targeting/personalization; multilingual UI; learning/quiz gates; Face Login/liveness; private media; PostgreSQL audit data; Android source; and Modal deployment gates.
 
-This is a source-scope check, not a claim that the cloud models, production database, camera or final APK have already been executed on external infrastructure.
+Standalone audio/voice moderation is **not** part of the active locked runtime. Video audio is stripped before persistence.
+
+This is a source-scope check, not proof that external cloud credentials, production services, cameras or the final live APK have passed.

@@ -217,25 +217,19 @@ def parent_approve_child(token):
 
     return render_template(
         'approve_child.html', valid=True, child=check['child'], parent=check['parent'],
-        verification=check.get('verification', {'status': 'VERIFIED', 'masked_id': 'XXXX-XXXX-5678'}), token=token
+        verification=check.get('verification', {'status': 'UNVERIFIED', 'masked_id': 'GUARDIAN-UNVERIFIED'}), token=token
     )
 
 
-@auth_bp.route('/approve/<token>/',methods=['GET','POST'])
+@auth_bp.route('/approve/<token>/', methods=['GET', 'POST'])
 @limiter.limit('30 per minute')
 def approve_child(token):
-    pending = fetch_one('''SELECT m.child_id,u.full_name FROM parent_child_map m JOIN users u ON u.user_id=m.child_id
-      WHERE (m.approval_token=%s OR m.verification_token=%s) AND m.approved=FALSE''', (token, token))
-    if not pending:
-        already = fetch_one('''SELECT m.child_id,u.full_name FROM parent_child_map m JOIN users u ON u.user_id=m.child_id
-          WHERE (m.approval_token=%s OR m.verification_token=%s) AND m.approved=TRUE''', (token, token))
-        if already:
-            flash(f"Account for {already['full_name']} is already approved and ready to log in!", 'success')
-            return redirect(url_for('auth.login', mode='kids'))
-        return ('Invalid or expired approval link', 400)
-    if request.method=='GET':return render_template('approve_confirm.html',token=token,child=pending)
-    row=approve_child_account(token)
-    return render_template('approved.html',token=token) if row else ('Invalid or already used approval link',400)
+    """Legacy link compatibility without token-only activation.
+
+    Old invitations are routed into the verified parent flow. A leaked or
+    replayed UUID can no longer activate a child account by itself.
+    """
+    return redirect(f'/verify-parent/{token}/', code=303)
 
 
 @auth_bp.route('/register-parent', methods=['GET', 'POST'])

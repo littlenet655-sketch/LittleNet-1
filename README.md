@@ -1,9 +1,9 @@
 # LittleNet  -  Child Centric Social Platform with AI-based Content Filtering
 
-[![Project Status: Production Live](https://img.shields.io/badge/Status-Production%20Live-brightgreen.svg)](#live-cloud-deployments)
+[![Project Status: Release Candidate](https://img.shields.io/badge/Status-Release%20Candidate-yellow.svg)](#release-status)
 [![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Android%20APK%20%7C%20Cloud%20GPU-blue.svg)](#mobile-android-apk)
-[![AI Engine: 7 Models](https://img.shields.io/badge/AI%20Engine-PyTorch%20%7C%20YOLOv8%20%7C%20Whisper%20%7C%20Toxic--BERT-orange.svg)](#multi-modal-ai-content-filtering-architecture)
-[![Database](https://img.shields.io/badge/Database-PostgreSQL%2017%20(Supabase)-3ECF8E.svg)](#database-architecture)
+[![AI Safety](https://img.shields.io/badge/AI%20Safety-Text%20%7C%20Image%20%7C%20Video-orange.svg)](#multi-modal-ai-content-filtering-architecture)
+[![Database](https://img.shields.io/badge/Database-PostgreSQL-3ECF8E.svg)](#database-architecture)
 
 ---
 
@@ -27,74 +27,32 @@
 
 Traditional platforms expose minors to severe risks including cyberbullying, mature content, online predators, and uncontrolled screen time. LittleNet solves these challenges through **real-time, multi-modal AI content filtering**, a **parent-first approval paradigm**, and **biometric child authentication**:
 
-* **Multi-Modal AI Engine**: Combines NLP toxicity analysis, computer vision object detection, adult classifier neural nets, and audio speech recognition to inspect all uploaded media before it can ever be viewed by peers.
+* **Multi-Modal AI Safety Engine**: Combines text/PII safety with visual adult-content, semantic and dangerous-object detection for TEXT/IMAGE/VIDEO before child visibility. Standalone audio moderation is disabled; video audio is stripped before persistence.
 * **Parental Command Center**: Real-time push alerts, granular screen time limits, quiet-hour lockdowns, and pending content approval queues.
 * **Kid-Safe Mobile Experience**: Native Android APK with camera-based biometric face login, educational Reels, STEM quizzes, and restricted stranger-discovery algorithms.
 
 ---
 
-## 🚀 Live Cloud Deployments
+## 🚦 Release Status
 
-The platform is permanently hosted on free-tier, high-availability serverless and GPU cloud infrastructure:
+The source and CI gates are green, but the current cloud deployment is **not yet verified live**. The latest `Deploy & Validate LittleNet Live` run stopped before deployment because GitHub Actions is missing `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
 
-| Component | Technology | Live URL | Access / Credentials |
-| :--- | :--- | :--- | :--- |
-| **Kids Social App (Web / PWA)** | Flask + Responsive PWA | **[https://littlenet655--littlenet-web-web.modal.run](https://littlenet655--littlenet-web-web.modal.run)** | Open to public web & mobile browsers |
-| **Admin & Moderator Workspace** | Flask + Live Audit Logs | **[https://littlenet655--littlenet-web-web.modal.run/admin-login/](https://littlenet655--littlenet-web-web.modal.run/admin-login/)** | **Email**: `admin@littlenet.com`<br>**Password**: `Littlenet@0ait04` |
-| **AI Inference Engine** | Modal Cloud (Nvidia Tesla T4 GPU) | **[https://littlenet655--littlenet-ai-ai-web.modal.run](https://littlenet655--littlenet-ai-ai-web.modal.run)** | Secured via `X-LittleNet-AI-Key` |
-| **Relational Database** | Supabase PostgreSQL 17 (Singapore) | `aws-0-ap-southeast-1.pooler.supabase.com:6543` | SSL Encrypted, Connection Pooling |
+The intended release stack is Flask/Jinja web on Modal, protected Modal T4 AI, external PostgreSQL and private Cloudflare R2. Public endpoints must not be called production-ready until the connected workflow completes DB migrations, model warm-up, external preflight, `/readyz`, Playwright smoke and the APK build.
 
----
+Admin/demo credentials are intentionally not committed or documented; use repository/runtime secrets.
 
 ## 📱 Mobile Android APK
 
-* **Production Binary**: [`LittleNet-v1.0-submission.apk`](file:///d:/aitprojects/LittleNet-1/LittleNet-v1.0-submission.apk)
-* **Package Name**: `com.littlenet.app`
-* **Size**: `2.24 MB`
-* **Target SDK**: Android 35 (Backward compatible down to Android 8.0 Oreo, minSdk 26)
-* **Features**:
-  - Full-screen native container with zero browser chrome
-  - Front camera access for child face login
-  - Microphone access for voice reels and audio messages
-  - Media picker with image/video upload support
-
----
+- **Package name:** `com.littlenet.app`
+- **Target SDK:** Android 35; minSdk 26
+- **Final artifact rule:** no production APK is stored in Git. The canonical APK is the GitHub Actions artifact `LittleNet-live-verified-apk`, generated only after the same HTTPS backend passes the live release gate.
+- Camera/media access supports face/liveness and image/video upload. Active voice/audio posting is outside the locked runtime.
 
 ## 🧠 Multi-Modal AI Content Filtering Architecture
 
-LittleNet employs a 7-stage neural pipeline running in a dedicated GPU container:
+The active moderation contract accepts **TEXT, IMAGE and VIDEO**. Text/PII is checked by deterministic rules plus Detoxify/Presidio. Images and sampled video frames use NudeNet, Falconsai NSFW, CLIP and an OpenImages-capable YOLO dangerous-object policy. PySceneDetect/OpenCV improves video frame selection. DeepFace/MediaPipe support face/liveness flows.
 
-```mermaid
-graph TD
-    A[Child Upload: Image / Video / Audio / Text] --> B[API Gateway: POST /ai/moderate]
-    B --> C{Content Type}
-    
-    C -->|Text / Captions / Comments| D[Toxic-BERT & Detoxify]
-    C -->|Images / Video Keyframes| E[NudeNet 3.4 & Falconsai NSFW]
-    C -->|Visual Safety / Weapons| F[YOLOv8 + OpenAI CLIP]
-    C -->|Audio Tracks / Voice Notes| G[Faster-Whisper Speech-to-Text]
-    
-    G -->|Transcribed Text| D
-    
-    D --> H[Unified Multi-Modal Risk Policy]
-    E --> H
-    F --> H
-    
-    H -->|Toxicity Score < 0.35 & Safe| I[STATUS: ALLOW - Instant Publication]
-    H -->|Borderline Score 0.35 - 0.70| J[STATUS: REVIEW - Sent to Parent Dashboard]
-    H -->|Hard Violations: Adult / Cyberbullying / Weapons| K[STATUS: BLOCK - Hard Blocked & Parent Alert Triggered]
-```
-
-### Models Utilized
-1. **Detoxify (Toxic-BERT)**: Detects cyberbullying, toxic threats, obscenity, and identity attacks in text.
-2. **NudeNet 3.4 Classifier**: Identifies explicit visual content with bounding box and score verification.
-3. **Falconsai NSFW Classifier**: High-precision transformer-based secondary visual safety check.
-4. **YOLOv8 Object Detection**: Scans for weapons, knives, and sharp dangerous objects.
-5. **OpenAI CLIP (ViT-B/32)**: Zero-shot visual content moderation against harmful semantic labels.
-6. **Faster-Whisper (Large-v3-Turbo / Base)**: Automatic speech recognition converts spoken words in videos and voice notes to text for NLP triage.
-7. **DeepFace (FaceNet512)**: Biometric face verification and liveness detection for child login without requiring memorized passwords.
-
----
+Hard adult/dangerous evidence is blocked before ordinary risk thresholds; uncertainty goes to Parent Review; a total safety outage cannot silently ALLOW content. Uploaded child videos have their audio tracks stripped before R2 persistence because standalone speech/audio moderation is intentionally disabled in the locked build.
 
 ## 📂 Complete Project Directory Structure
 
@@ -145,7 +103,7 @@ LittleNet-1/
 │   ├── service.py                 # Adaptive question selection
 │   └── templates/                 # Interactive quiz card, learning leaderboard
 ├── safety/                        # Multi-Modal AI Detection Modules
-│   ├── audio_service.py           # Faster-Whisper audio transcription
+│   ├── audio_service.py           # fail-closed compatibility stub; no active audio model
 │   ├── face_service.py            # DeepFace FaceNet512 facial recognition & liveness
 │   ├── remote_client.py           # Fail-closed HTTP client to cloud AI service
 │   └── visual_service.py          # YOLOv8 + NudeNet + CLIP composite analyzer
@@ -170,7 +128,6 @@ LittleNet-1/
 │   └── templates/                 # Upload form, full-screen vertical Reels viewer
 ├── Dockerfile.ai                  # Container definition for AI GPU deployment
 ├── Dockerfile.web                 # Container definition for Web server deployment
-├── LittleNet-v1.0-submission.apk  # Pre-compiled, installable Android APK binary
 ├── requirements-ai.txt            # GPU dependencies (torch, transformers, ultralytics)
 ├── requirements-core.txt          # Web dependencies (flask, psycopg2, bcrypt)
 └── SUBMISSION_SUMMARY.md          # 5-minute Viva & Evaluator Presentation Runbook

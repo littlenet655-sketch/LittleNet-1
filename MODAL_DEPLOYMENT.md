@@ -1,96 +1,96 @@
 # LittleNet on Modal
 
-## Recommended architecture
+_Last updated: 2026-09-07_
 
-For the college-project build, the most practical free/low-cost architecture is:
+## Architecture
 
-- **Web + social + Parent/Admin + PostgreSQL client:** Railway/another lightweight Python host.
-- **Heavy AI:** Modal Starter using the included `modal_ai.py`.
-- **Database:** PostgreSQL on Railway/Neon/Supabase; do not use a Modal Volume as a relational database.
-- **Android APK:** points only at the web service. The web service calls Modal AI internally.
+LittleNet uses a split deployment so the Flask/Jinja social application stays lightweight while heavy safety/face inference runs on Modal GPU infrastructure.
 
-This avoids forcing Torch + Transformers + TensorFlow + Whisper + DeepFace into Railway Free's small RAM limit.
+- **Web:** `modal_web.py` (Flask/Jinja)
+- **Heavy AI:** `modal_ai.py` on a T4 GPU
+- **Database:** external PostgreSQL (for example Neon)
+- **Private media:** Cloudflare R2
+- **Android:** WebView app pointing only at the verified public web URL; the web app calls protected Modal AI internally
 
-## Why Modal fits the AI part
+Standalone speech/audio moderation is intentionally outside the locked current scope. Uploaded child videos are sanitized to remove audio before persistence. Old instructions mentioning active Whisper/Faster-Whisper warm-up are obsolete.
 
-`modal_ai.py` runs the existing LittleNet AI HTTP API on a T4 GPU and keeps model caches in a Modal Volume. It exposes the endpoints used by `safety/remote_client.py` for moderation, face verification and CLIP-semantic For You ranking, so no UI/route rewrite is required.
+## AI service
 
-The AI service exposes:
+`modal_ai.py` exposes protected endpoints used by `safety/remote_client.py`, including health, TEXT/IMAGE/VIDEO moderation, face embedding/verification/adult verification and safe-candidate semantic ranking.
 
-- `GET /healthz`
-- `POST /ai/moderate`
-- `POST /ai/face/embedding`
-- `POST /ai/face/verify`
-- `POST /ai/rank` for semantic ranking of an already-safe candidate set
+The warm gate validates the current locked model/dependency stack: Detoxify multilingual sexual-explicit output, NudeNet, CLIP, Falconsai NSFW, OpenImages-capable YOLO dangerous-object coverage, DeepFace/Facenet512 and PySceneDetect.
 
-## 1. Install and authenticate Modal
+## Required GitHub Actions credentials
+
+The connected release workflow authenticates to Modal using GitHub repository secrets:
+
+```text
+MODAL_TOKEN_ID
+MODAL_TOKEN_SECRET
+```
+
+These are intentionally not committed. The 2026-09-07 live-release run proved they are currently missing from GitHub Actions. Add them in the repository Actions secrets, then rerun **Deploy & Validate LittleNet Live**.
+
+## Modal secrets
+
+Create the AI secret with the same shared secret used by the web service:
 
 ```bash
-python -m pip install -r requirements-modal.txt
-modal setup
+modal secret create littlenet-ai-secrets \
+  AI_SHARED_SECRET="<long-random-shared-secret>"
 ```
 
-## 2. Create the AI shared secret
-
-Generate a long random value, then create the Modal secret:
-
-```bash
-modal secret create littlenet-ai-secrets AI_SHARED_SECRET="replace-with-a-long-random-secret"
-```
-
-Use the **same value** as `AI_SHARED_SECRET` on the LittleNet web service.
-
-## 3. Warm/download models
-
-```bash
-modal run modal_ai.py
-```
-
-This invokes the `warm_models` function on a T4 and reports readiness for Detoxify, Faster-Whisper, NudeNet, CLIP, Falconsai NSFW, YOLO and DeepFace/Facenet512.
-
-## 4. Deploy
-
-```bash
-modal deploy modal_ai.py
-```
-
-Modal returns an HTTPS Web Function URL. Set that on the web service:
-
-```env
-AI_SERVICE_URL=https://<your-modal-web-function-url>
-AI_SHARED_SECRET=<same-secret>
-AI_REQUEST_TIMEOUT=180
-```
-
-Then check LittleNet's `/readyz` endpoint.
-
-## 5. Cost behavior
-
-The deployment is intentionally configured with `min_containers=0` and a 300-second scaledown window. That means the GPU scales to zero when unused, preserving Starter credits. The first AI request after an idle period can have a cold start; for a college demo, warm it a few minutes before presenting.
-
-## Optional: host the Flask web UI itself on Modal
-
-This repository now includes `modal_web.py`. It serves the complete Flask/Jinja app as a Modal WSGI Web Function and mounts `littlenet-uploads` as a persistent Volume. PostgreSQL still stays external.
-
-Create the web secret after the AI URL is known:
+The web secret must contain the real runtime configuration. At minimum the Modal definition requires:
 
 ```bash
 modal secret create littlenet-web-secrets \
   DATABASE_URL="postgresql://..." \
-  SECRET_KEY="replace-with-long-random-value" \
-  AI_SERVICE_URL="https://<modal-ai-url>" \
-  AI_SHARED_SECRET="<same-ai-secret>" \
-  BASE_URL="https://<modal-web-url>"
+  SECRET_KEY="<long-random-flask-secret>" \
+  AI_SERVICE_URL="https://<modal-ai-web-url>" \
+  AI_SHARED_SECRET="<same-shared-secret>" \
+  BASE_URL="https://<public-littlenet-web-url>"
 ```
 
-Then:
+For a full live-ready release, also configure the SMTP/mail and private R2 variables expected by the application in the same runtime secret/environment. The release preflight verifies them instead of silently falling back to demo behavior.
+
+## Recommended release path
+
+Use GitHub Actions **Deploy & Validate LittleNet Live** instead of manually performing isolated commands:
+
+```text
+Modal auth validation
+→ AI deploy
+→ model warm/validation
+→ web deploy
+→ PostgreSQL init/migrations
+→ quiz seed
+→ DB/AI/Presidio/liveness/mail/R2/BASE_URL preflight
+→ public health/readiness checks
+→ Playwright browser smoke
+→ live-URL Android APK build
+```
+
+The release fails immediately if any dependency is missing or degraded. A final APK is not produced from a degraded deployment.
+
+## Equivalent manual commands for diagnosis
 
 ```bash
+python -m pip install -r requirements-modal.txt
+modal token info
+modal deploy modal_ai.py
+modal run modal_ai.py
 modal deploy modal_web.py
-modal run modal_web.py::init_database
-modal run modal_web.py::web_preflight
+modal run modal_web.py --init-db
+modal run modal_web.py --seed
+modal run modal_web.py --preflight
 ```
 
-Because `BASE_URL` is used in parent-approval email links, set it to the generated Modal web URL after the first deployment and redeploy/update the secret if necessary.
+Then require `GET /healthz` = HTTP 200/ok and `GET /readyz` = HTTP 200/ready.
 
-The web function is intentionally capped at one container for this college build. This makes persistent upload writes predictable with Modal Volume semantics. If LittleNet were scaled to many simultaneous users, uploads should move to object storage rather than a shared filesystem.
+## Cost behavior
+
+The heavy AI deployment scales to zero when idle and uses a finite scaledown window so college/demo usage does not unnecessarily burn GPU credits. Expect a cold start after idle periods; warm the deployment before a judged demo.
+
+## Release artifact rule
+
+The source repository does not contain the canonical final APK. The only final APK is the `LittleNet-live-verified-apk` Actions artifact produced after the complete live gate passes.

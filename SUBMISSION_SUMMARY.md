@@ -1,83 +1,63 @@
-# LittleNet  -  Phase II Major Project Submission Package
+# LittleNet — Phase II Major Project Submission Status
+
 **Department of Computer Science & Engineering (Data Science)**  
-**Adichunchanagiri Institute of Technology, Chikkamagaluru  -  577102**
+**Adichunchanagiri Institute of Technology, Chikkamagaluru — 577102**
 
----
+## Project
 
-### 👥 Project Credentials & Team Info
-* **Project Title**: LittleNet  -  Child Centric Social Platform with AI-based Content Filtering
-* **Group Number**: `DSPG06`
-* **Team Members**:
-  - ATHMIYA D (`4AI23CD004`)
-  - PRAGNA G SHENOY (`4AI23CD037`)
-  - ROHINI L GOWDA (`4AI23CD043`)
-  - SANGEETHA M (`4AI23CD047`)
-* **Project Guide**: Prof. Harshitha HD
+**LittleNet — Child Centric Social Platform with AI-based Content Filtering** (`DSPG06`)
 
----
+Team: ATHMIYA D, PRAGNA G SHENOY, ROHINI L GOWDA and SANGEETHA M. Project guide: Prof. Harshitha HD.
 
-## 🌟 1. Live Cloud Deployments (Permanent & 100% Free Tier)
+## What is submission-ready now
 
-| Service | Technology | Public HTTPS URL | Credentials / Notes |
-| :--- | :--- | :--- | :--- |
-| **Kids Social App (Web)** | Flask + Responsive PWA | [https://littlenet655--littlenet-web-web.modal.run](https://littlenet655--littlenet-web-web.modal.run) | Publicly accessible worldwide |
-| **Moderator & Admin Workspace** | Flask + Live Audit Logs | [https://littlenet655--littlenet-web-web.modal.run/admin-login/](https://littlenet655--littlenet-web-web.modal.run/admin-login/) | **Email**: `admin@littlenet.com`<br>**Password**: `Littlenet@0ait04` |
-| **AI Inference Engine** | Modal Cloud (Nvidia Tesla T4 GPU) | [https://littlenet655--littlenet-ai-ai-web.modal.run](https://littlenet655--littlenet-ai-ai-web.modal.run) | PyTorch, Toxic-BERT, Faster-Whisper, NudeNet, YOLOv8, DeepFace |
-| **Relational Database** | Supabase PostgreSQL 17 (Singapore) | `aws-0-ap-southeast-1.pooler.supabase.com:6543` | 500 MB permanent free storage, SSL enabled |
+- Flask/Jinja/PostgreSQL source with Kids, Parent and Admin/Moderator modes
+- parent-first child account controls and verified guardian flow
+- approved/two-parent-gated social graph and non-global child discovery
+- fail-closed TEXT/IMAGE/VIDEO moderation
+- NudeNet + Falconsai NSFW + CLIP + OpenImages-capable YOLO visual safety
+- Detoxify/text safety and PII protection
+- video frame sampling; video audio is stripped before persistence because active speech/audio moderation is outside the locked build
+- DeepFace/MediaPipe-based face/liveness safety paths
+- compulsory age-banded quiz gate, Parent Controls, screen time and quiet hours
+- private R2 media authorization and PostgreSQL audit/history
+- Android WebView source and automated live-backed APK release workflow
+- CI security/source gates and clean submission ZIP packaging
 
----
+## Live deployment status — do not overclaim
 
-## 📱 2. Mobile Android APK Package
+The repository contains the automated **Deploy & Validate LittleNet Live** workflow, but the latest live run is currently blocked before deployment because GitHub Actions does not contain `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`. Therefore the source package must not claim that the current Modal web/AI URLs or database are verified live until that workflow passes.
 
-* **APK File Location (Project Root)**: `D:\aitprojects\LittleNet-1\LittleNet-v1.0-submission.apk`
-* **APK File Location (Desktop Shortcut)**: `C:\Users\aksha\Desktop\LittleNet-v1.0-submission.apk`
-* **File Size**: `2.24 MB`
-* **Package Name**: `com.littlenet.app`
-* **Pre-configured Target**: Connects directly to live production backend `https://littlenet655--littlenet-web-web.modal.run/`
-* **Hardware Permissions Enabled**:
-  - Front Camera (for biometric child face login and live camera capture)
-  - Microphone (for voice notes and audio reels)
-  - Storage/Media Access (for photo and video sharing)
+No admin password or other demo credential belongs in this document or in the repository. Use environment/secret-managed credentials for an actual demo.
 
-### How to Install on Android Phones for Viva Demo:
-1. Copy `LittleNet-v1.0-submission.apk` to phone via WhatsApp / Google Drive / USB Cable.
-2. Tap the file on the phone and tap **Install** (allow "Install from Unknown Sources" if prompted).
-3. The LittleNet icon appears in the app drawer ready for the presentation.
+## Android APK status
 
----
+The old root `LittleNet-v1.0-submission.apk` was retired because it contained a placeholder backend target. The canonical final APK is **not stored in Git**.
 
-## 🎯 3. Viva Presentation: Winning 5-Minute Live Demo Walkthrough
+After the live deployment passes, GitHub Actions generates **`LittleNet-live-verified-apk`**, injected with the exact same verified HTTPS backend URL. Download that artifact for the physical-device viva test.
 
-When the external examiners ask to see the working project, follow this exact sequence:
+## Correct viva demo order
 
-### Step 1: Mobile App Launch & Child Biometric Face Login
-1. Open the LittleNet app on the phone (or browser).
-2. Point the front camera to show **Face Login / Liveness Detection** (powered by DeepFace Facenet512).
-3. Show that if the camera fails or lighting is dim, a secure password fallback is provided.
+1. Parent registration → OTP → live camera/liveness/adult verification.
+2. Parent creates/confirms a child and shows Parent Controls.
+3. Child face enrollment/login and compulsory onboarding/scroll quiz gate.
+4. Safe text/image/video post.
+5. Unsafe text/adult/weapon examples showing BLOCK or Parent REVIEW.
+6. Two-parent-approved friendship/discovery/chat behavior.
+7. Parent dashboard alerts, screen time, quiet hours and safety review.
+8. Admin moderation/audit UI using a secret-managed demo account.
+9. Android app only after the `LittleNet-live-verified-apk` artifact exists and has been physically tested.
 
-### Step 2: Content Discovery & Educational Reels
-1. Show the child's **Personalized Learning Feed**:
-   - Educational short video Reels (STEM, science facts, language challenges).
-   - Interactive safety and knowledge Quizzes.
-2. Show that external global search is restricted so stranger discovery is blocked.
+## Before final submission
 
-### Step 3: Real-Time Multi-Modal AI Moderation Test (The "Showstopper")
-1. **Text Cyberbullying Test**:
-   - Try to write a rude or bullying comment (e.g. *"You are ugly and stupid"*).
-   - **Result**: The post is instantly intercepted by Toxic-BERT, rejected, and a friendly educational prompt advises: *"Be kind online! Your comment was flagged for harmful language."*
-2. **Visual Adult / Weapon Filter Test**:
-   - Try to upload an adult photo or weapon picture.
-   - **Result**: NudeNet / YOLOv8 flags the media with high confidence and blocks upload.
-3. **Audio Transcription Test**:
-   - Upload an audio note; Faster-Whisper transcribes speech in real time to ensure no hidden vulgarity exists in the voice track.
+Do not call the build fully live until all of these are true:
 
-### Step 4: Parent Oversight & Screen Time Dashboard
-1. Switch to Parent Mode on a laptop or second device.
-2. Show the parent approving the child's account via the secure approval link.
-3. Show real-time alerts: The parent receives instant notifications whenever inappropriate content attempts were blocked.
-4. Show parental controls: Screen time limits and quiet hours settings.
-
-### Step 5: Admin & Safety Audit Portal
-1. Open [https://littlenet655--littlenet-web-web.modal.run/admin-login/](https://littlenet655--littlenet-web-web.modal.run/admin-login/).
-2. Log in with `admin@littlenet.com` / `Littlenet@0ait04`.
-3. Show the examiners the live audit log table, user management, and safety triage queues.
+- GitHub Modal credentials configured
+- Modal AI warm gate passes
+- web deployment and PostgreSQL migrations pass
+- quiz seeding passes
+- SMTP/mail and R2 preflight pass
+- public `/healthz` and `/readyz` pass
+- Playwright live smoke passes
+- `LittleNet-live-verified-apk` is produced
+- APK is installed on a real Android device and camera/face/upload flows are tested

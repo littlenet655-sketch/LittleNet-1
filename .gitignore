@@ -40,3 +40,4 @@ agent/
 .cursor/
 .mcp.json
 walkthrough.md
+*.apk

@@ -8,10 +8,16 @@ load_dotenv('.env')
 from database.connection import fetch_one, execute, get_db_connection
 from auth.service import hash_password
 
+DEMO_PASSWORD = os.getenv("LITTLENET_DEMO_PASSWORD", "")
+if os.getenv("LITTLENET_ENABLE_DEMO_SEED", "").strip().lower() not in {"1", "true", "yes"}:
+    raise SystemExit("Demo account seeding is disabled. Set LITTLENET_ENABLE_DEMO_SEED=1 only in an isolated demo database.")
+if len(DEMO_PASSWORD) < 12:
+    raise SystemExit("Set a non-committed LITTLENET_DEMO_PASSWORD of at least 12 characters before seeding demo accounts.")
+
 def seed_demo_accounts():
     print("🔐 Seeding all Quick Demo Logins and Admin Accounts into Neon DB...")
     
-    pwd_hash = hash_password("Password123!")
+    pwd_hash = hash_password(DEMO_PASSWORD)
     
     # 1. Parent: Akshay (akshaykammar31@gmail.com)
     parent_akshay = fetch_one("SELECT user_id FROM users WHERE LOWER(email)='akshaykammar31@gmail.com' OR LOWER(username)='akshay'")
@@ -138,7 +144,7 @@ def seed_demo_accounts():
         (mentor_id, mentor_id, star_id)
     )
 
-    # 5. Admin: admin@littlenet.com / admin
+    # 5. Admin demo identity; password comes only from LITTLENET_DEMO_PASSWORD
     admin = fetch_one("SELECT user_id FROM users WHERE LOWER(email)='admin@littlenet.com' OR LOWER(username)='admin'")
     if not admin:
         a_row = execute(

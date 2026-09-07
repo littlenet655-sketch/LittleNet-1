@@ -228,7 +228,7 @@ def process_parent_verification(token, form_data, selfie_bytes, doc_bytes=None):
     child_id = map_data["child_id"]
     parent_name = form_data.get("parent_name", map_data["parent_name"]).strip()
     parent_email = map_data["parent_email"].strip().lower()
-    doc_type = form_data.get("document_type", "AADHAAR_MOCK")
+    doc_type = form_data.get("document_type", "GUARDIAN_DECLARATION")
     doc_number = form_data.get("document_number", "").strip()
     dob = form_data.get("dob", "").strip()
     consent = bool(form_data.get("consent"))
@@ -240,18 +240,21 @@ def process_parent_verification(token, form_data, selfie_bytes, doc_bytes=None):
     is_express = (
         form_data.get("verification_mode") == "EXPRESS"
         or form_data.get("express_verify") == "1"
-        or (not selfie_bytes and not doc_number and consent)
     )
 
     if is_express:
         # Express Guardian Verification: Fast, simple, and realistic for everyday parents
         if dob:
             try:
-                birth_year = int(dob.split("-")[0])
-                if birth_year > 2006:
+                birth_date = datetime.strptime(dob, "%Y-%m-%d").date()
+                today = datetime.now(timezone.utc).date()
+                declared_age = today.year - birth_date.year - (
+                    (today.month, today.day) < (birth_date.month, birth_date.day)
+                )
+                if declared_age < 18:
                     return {"success": False, "error": "Adult verification failed: Parent must be 18 years of age or older."}
-            except (ValueError, IndexError):
-                pass
+            except ValueError:
+                return {"success": False, "error": "Please provide a valid date of birth for the parent or guardian."}
         
         provider_name = "EXPRESS_GUARDIAN_CONSENT"
         masked_identity = "GUARDIAN-CONSENT-VERIFIED"
@@ -267,8 +270,8 @@ def process_parent_verification(token, form_data, selfie_bytes, doc_bytes=None):
         try:
             from safety.face_service import verify_adult_face
             adult_res = verify_adult_face(tmp_path)
-            if not adult_res.get('is_adult', True):
-                return {"success": False, "error": "Adult verification failed: The live camera face was detected as a minor. A parent or legal adult guardian must complete this verification."}
+            if not isinstance(adult_res, dict) or adult_res.get('is_adult') is not True:
+                return {"success": False, "error": "Adult verification failed: a verified adult parent or legal guardian must complete this live-camera check."}
         finally:
             if os.path.exists(tmp_path):
                 try: os.remove(tmp_path)
@@ -276,7 +279,22 @@ def process_parent_verification(token, form_data, selfie_bytes, doc_bytes=None):
 
         # Express parent verification succeeded with live adult face verification
     else:
-        # 1. Verify Identity Document
+        # The deterministic Aadhaar mock is development-only. A crafted POST
+        # must never be able to select it on a public deployment.
+        base_url = str(getattr(Config, "BASE_URL", "") or "").lower()
+        allow_mock_identity = (
+            os.getenv("LITTLENET_ALLOW_MOCK_IDENTITY", "").strip().lower() in {"1", "true", "yes"}
+            and ("localhost" in base_url or "127.0.0.1" in base_url)
+            and not base_url.startswith("https://")
+        )
+        if not allow_mock_identity:
+            return {
+                "success": False,
+                "error": "Legacy demo identity verification is disabled. Use Express Guardian Verification with the live camera.",
+                "status": "DISABLED",
+            }
+
+        # Local-development-only mock identity path.
         id_res = default_verification_provider.verify_parent_identity(
             document_type=doc_type,
             document_number=doc_number,
@@ -537,10 +555,12 @@ def get_child_approval_details(approval_token, logged_in_parent_id):
             ORDER BY verification_id DESC LIMIT 1
         """, (expected_parent_id, data["child_id"]))
         ver_row = cur.fetchone()
+        if not ver_row or ver_row.get("verification_status") != "VERIFIED":
+            return {"valid": False, "reason": "PARENT_VERIFICATION_REQUIRED", "data": data}
         verification_data = {
-            "status": ver_row["verification_status"] if ver_row else "VERIFIED",
-            "masked_id": ver_row["masked_id"] if ver_row and ver_row.get("masked_id") else "XXXX-XXXX-5678",
-            "document_type": ver_row["document_type"] if ver_row and ver_row.get("document_type") else "AADHAAR_MOCK"
+            "status": "VERIFIED",
+            "masked_id": ver_row["masked_id"] if ver_row.get("masked_id") else "GUARDIAN-VERIFIED",
+            "document_type": ver_row["document_type"] if ver_row.get("document_type") else "GUARDIAN_DECLARATION"
         }
 
         return {
@@ -648,24 +668,12 @@ def process_child_decision(approval_token, logged_in_parent_id, decision, reject
         conn.close()
 
 def approve_child_account(token):
-    """Direct programmatic approval helper."""
-    conn = get_db_connection()
-    try:
-        cur = conn.cursor()
-        cur.execute('SELECT * FROM parent_child_map WHERE (approval_token=%s OR verification_token=%s) AND approved=FALSE FOR UPDATE', (token, token))
-        row = cur.fetchone()
-        if not row:
-            conn.rollback()
-            return None
-        cur.execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s", (row['child_id'],))
-        cur.execute('UPDATE parent_child_map SET approved=TRUE, is_token_used=TRUE, approved_at=NOW(), approval_status=\'APPROVED\' WHERE map_id=%s', (row['map_id'],))
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-    return row
+    """Deprecated token-only approval path; intentionally fail closed.
+
+    Child activation requires a verified Parent session and the normal
+    ``process_child_decision`` authorization path.
+    """
+    raise RuntimeError("Direct token-only child approval is disabled; parent verification is required")
 
 def login_user(identifier, password):
     val = (identifier or '').strip()

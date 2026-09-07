@@ -1,7 +1,7 @@
 # LittleNet  -  Railway Free / Low-RAM Deployment
 
 LittleNet supports a split runtime so the social web application does not need to
-load PyTorch, TensorFlow, YOLO, Whisper and DeepFace in the same 512 MB process.
+load PyTorch, TensorFlow, YOLO and DeepFace in the same 512 MB process.
 
 ## Recommended college-demo layout
 
@@ -58,5 +58,5 @@ media to object storage.
 ## Before APK build
 1. `/healthz` must return HTTP 200.
 2. `/readyz` must return HTTP 200.
-3. Run the safe/adult/weapon/audio/face smoke tests.
+3. Run the safe/adult/weapon/video/face smoke tests.
 4. Put the final HTTPS web URL into the APK build workflow.

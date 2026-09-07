@@ -6,7 +6,7 @@ ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT.parent/'LittleNet-complete-release.zip'
 EXCLUDE_DIRS={'.git','.pytest_cache','__pycache__','.venv','venv','uploads','models','model_cache','.gradle','build'}
 EXCLUDE_FILES={'.env','local.properties'}
-EXCLUDE_SUFFIXES={'.pyc','.pyo','.jks','.keystore'}
+EXCLUDE_SUFFIXES={'.pyc','.pyo','.jks','.keystore','.apk'}
 
 if OUT.exists():OUT.unlink()
 with zipfile.ZipFile(OUT,'w',zipfile.ZIP_DEFLATED) as z:
