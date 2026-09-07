@@ -38,7 +38,7 @@ web_image = (
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
-            "LITTLENET_DEPLOY_VERSION": "9",
+            "LITTLENET_DEPLOY_VERSION": "10",
         }
     )
     .add_local_dir(
@@ -77,6 +77,18 @@ def web():
     from app import create_app
 
     flask_app = create_app()
+
+    # Recover private-object deletions left pending by a process crash. The first
+    # deployment before migrations may not have the outbox table yet, so startup
+    # recovery is best effort; the release preflight below is the strict gate.
+    try:
+        from services.media_outbox import reconcile_pending_deletes
+
+        cleanup = reconcile_pending_deletes(100)
+        if cleanup.get("failed"):
+            flask_app.logger.warning("Pending R2 delete reconciliation: %s", cleanup)
+    except Exception:
+        flask_app.logger.info("Media delete outbox is not ready during web startup", exc_info=True)
 
     @flask_app.after_request
     def persist_upload_changes(response):
@@ -147,6 +159,7 @@ def web_preflight():
     from safety.remote_client import health
     from safety.presidio_adapter import analyze_pii
     from services.object_storage import healthcheck as r2_healthcheck
+    from services.media_outbox import reconcile_pending_deletes
 
     db = fetch_one("SELECT 1 ok")
     schema = fetch_one("""
@@ -156,9 +169,13 @@ def web_preflight():
           to_regclass('public.posts')::text AS posts,
           to_regclass('public.comments')::text AS comments,
           to_regclass('public.followers')::text AS followers,
-          to_regclass('public.quizzes')::text AS quizzes
+          to_regclass('public.quizzes')::text AS quizzes,
+          to_regclass('public.media_delete_outbox')::text AS media_delete_outbox
     """) or {}
-    required_tables = ("users", "child_profiles", "posts", "comments", "followers", "quizzes")
+    required_tables = (
+        "users", "child_profiles", "posts", "comments", "followers", "quizzes",
+        "media_delete_outbox",
+    )
     schema_ok = all(schema.get(name) for name in required_tables)
     quiz_count = 0
     if schema_ok:
@@ -182,6 +199,14 @@ def web_preflight():
     )
     mail = _smtp_healthcheck()
     r2 = r2_healthcheck()
+    if r2.get("ok") and schema.get("media_delete_outbox"):
+        try:
+            media_outbox = reconcile_pending_deletes(100)
+            media_outbox["ok"] = media_outbox.get("failed", 0) == 0
+        except Exception as exc:
+            media_outbox = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
+    else:
+        media_outbox = {"ok": False, "error": "R2 or media_delete_outbox unavailable"}
 
     report = {
         "database": bool(db and db["ok"] == 1),
@@ -192,6 +217,7 @@ def web_preflight():
         "base_url": {"ok": public_base_url, "value": base_url},
         "mail": mail,
         "r2": r2,
+        "media_delete_outbox": media_outbox,
     }
     report["ok"] = bool(
         report["database"]
@@ -203,17 +229,30 @@ def web_preflight():
         and public_base_url
         and mail.get("ok")
         and r2.get("ok")
+        and media_outbox.get("ok")
     )
     return report
 
 
 @app.local_entrypoint()
-def main(init_db: bool = False, seed: bool = False, preflight: bool = False):
-    """Release helper: migrate, seed mandatory quiz data, then validate dependencies."""
+def main(
+    init_db: bool = False,
+    seed: bool = False,
+    preflight: bool = False,
+    reconcile_media: bool = False,
+):
+    """Release helper: migrate, seed, reconcile private media, then validate dependencies."""
     if init_db:
         print("database", init_database.remote())
     if seed:
         print("quizzes", seed_quizzes.remote())
+    if reconcile_media:
+        # web_preflight already performs strict reconciliation; this flag is a
+        # convenient operator entrypoint that keeps the same dependency checks.
+        report = web_preflight.remote()
+        print("media reconciliation", report.get("media_delete_outbox"))
+        if not report.get("media_delete_outbox", {}).get("ok"):
+            raise RuntimeError(f"LittleNet media reconciliation failed: {report}")
     if preflight:
         report = web_preflight.remote()
         print("preflight", report)
