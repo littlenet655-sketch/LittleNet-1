@@ -15,15 +15,65 @@ from child.service import (
     is_following,
     is_follow_pending,
 )
-from database.connection import fetch_all
+from database.connection import fetch_all, fetch_one
 from decorators import child_required
 from extensions import limiter
 from safety.pii_service import scan_pii
-from services.controls import effective_categories
+from services.controls import effective_categories, feature_allowed, quiet_hours_state
 from services.social import _age_group
 
 
 content_search_bp = Blueprint("content_search", __name__)
+
+
+@content_search_bp.before_app_request
+def enforce_child_media_runtime_controls():
+    """Do not let a known /uploads URL bypass live Parent Mode locks.
+
+    app.py intentionally performs object-level visibility checks for media. This
+    global blueprint hook adds the dynamic account/quiet-hours/time/quiz/feature
+    gates before that media route runs, so copying a media URL cannot sidestep a
+    parent pause or disabled Reels/Stories/Messages surface.
+    """
+    if session.get('role') != 'CHILD' or not request.path.startswith('/uploads/'):
+        return None
+    uid = session.get('user_id')
+    if not uid:
+        return ('Unauthorized', 401)
+
+    user = fetch_one("SELECT account_status FROM users WHERE user_id=%s AND role='CHILD'", (uid,))
+    if not user or user.get('account_status') != 'ACTIVE':
+        session.clear()
+        return ('Account access disabled', 401)
+
+    quiet = quiet_hours_state(uid)
+    if quiet.get('active'):
+        return ('Media unavailable during quiet hours', 403)
+
+    from services.usage import lock_state
+    locked, _ = lock_state(uid)
+    if locked:
+        return ('Daily screen-time limit reached', 403)
+
+    from quiz.service import quiz_due
+    if quiz_due(uid):
+        return ('Complete the required learning break before continuing', 403)
+
+    stored = 'uploads/' + request.path[len('/uploads/'):]
+    post = fetch_one(
+        'SELECT is_reel,is_story FROM posts WHERE media_path=%s OR story_music_path=%s LIMIT 1',
+        (stored, stored),
+    )
+    if post:
+        if post.get('is_reel') and not feature_allowed(uid, 'reels'):
+            return ('Reels are disabled by Parent Mode', 403)
+        if post.get('is_story') and not feature_allowed(uid, 'stories'):
+            return ('Stories are disabled by Parent Mode', 403)
+
+    message = fetch_one('SELECT 1 FROM child_messages WHERE media_path=%s LIMIT 1', (stored,))
+    if message and not feature_allowed(uid, 'messaging'):
+        return ('Messaging is disabled by Parent Mode', 403)
+    return None
 
 
 def _clean_query(value):
