@@ -41,3 +41,5 @@ agent/
 .mcp.json
 walkthrough.md
 *.apk
+ngrok.exe
+datasets/*.csv
