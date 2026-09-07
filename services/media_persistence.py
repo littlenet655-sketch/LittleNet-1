@@ -3,7 +3,8 @@
 Child media is moderated on ephemeral local disk, copied to the private R2 bucket,
 and only then referenced by PostgreSQL. This ordering prevents an accepted DB row
 from ever pointing at an unpersisted local child-media file. If the subsequent DB
-write fails, callers roll the private object back.
+write fails, callers compensate the private object immediately or queue a durable
+retry in PostgreSQL.
 """
 from __future__ import annotations
 
@@ -37,12 +38,21 @@ def persist_before_db(local_path: str | None, namespace: str, owner_id: int) -> 
 
 
 def rollback_reference(reference: str | None) -> None:
-    """Best-effort compensation when R2 succeeded but the database write failed."""
+    """Compensate an R2 upload when its database write did not commit."""
     if not reference or not is_reference(reference):
         return
     try:
         delete_reference(reference)
-    except Exception:
-        # The bucket is private. A failed cleanup leaves an unreachable orphan,
-        # never a publicly addressable child-media object.
-        pass
+        return
+    except Exception as exc:
+        # Preserve retry intent if the bucket/network is unavailable. The object
+        # remains private and unreferenced until the durable outbox removes it.
+        try:
+            from services.media_outbox import enqueue_delete
+
+            enqueue_delete(reference, source_table="compensation")
+        except Exception:
+            # If both R2 and PostgreSQL are unavailable simultaneously there is no
+            # durable coordinator left to write to. The private object is still not
+            # reachable through LittleNet because no application row references it.
+            raise RuntimeError("media rollback could not be persisted") from exc
