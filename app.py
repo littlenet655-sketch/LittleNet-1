@@ -251,11 +251,13 @@ def create_app():
                 ai_ok=True;ai_detail='local'
         except Exception:
             ai_ok=False;ai_detail='remote_unavailable'
-        resend_key=os.getenv('RESEND_API_KEY')
-        smtp_ok=bool((os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')) and (os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')))
-        mail_ok=bool(resend_key or smtp_ok)
-        mail_mode='resend' if resend_key else ('smtp' if smtp_ok else 'not_configured')
-        ok=db_ok and bool(ai_ok) and mail_ok
+        from mailg.send_email import get_mail_status
+        mail_status = get_mail_status()
+        mail_ok = bool(mail_status.get('ok'))
+        mail_mode = mail_status.get('mail_mode', 'not_configured')
+        strict_prod = os.getenv('STRICT_PRODUCTION_PREFLIGHT', '').strip().lower() in {'1', 'true', 'yes'}
+        mail_ready = mail_status.get('is_production_ready') if strict_prod else mail_ok
+        ok = db_ok and bool(ai_ok) and bool(mail_ready)
         return jsonify(status='ready' if ok else 'degraded',database=db_ok,ai=ai_ok,ai_mode=ai_detail,mail=mail_ok,mail_mode=mail_mode),(200 if ok else 503)
 
     @app.after_request

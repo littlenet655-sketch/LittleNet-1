@@ -55,11 +55,14 @@ def verify_adult_face(img_path):
     from .remote_client import enabled, face_adult_verify
     if enabled():
         try:
-            res = face_adult_verify(img_path)
-            if res.get('is_adult') or res.get('reason') in {'liveness_failed', 'under_age'}:
-                return res
+            return face_adult_verify(img_path)
         except Exception:
-            pass
+            return {
+                'is_adult': False,
+                'estimated_age': None,
+                'method': 'REMOTE_AI',
+                'reason': 'adult_face_service_unavailable',
+            }
 
     # First require anti-spoof/liveness from DeepFace extraction. A static,
     # printed, or obviously spoofed face must never become a verified guardian.
@@ -128,22 +131,20 @@ def verify_adult_face(img_path):
             text = resp.text.strip()
             if '{' in text and '}' in text:
                 data = json.loads(text[text.find('{'):text.rfind('}')+1])
+                age = data.get('estimated_age')
+                is_adult = bool(data.get('is_adult', False)) and (age is None or age >= 18)
                 return {
-                    'is_adult': bool(data.get('is_adult', False)),
-                    'estimated_age': data.get('estimated_age'),
+                    'is_adult': is_adult,
+                    'estimated_age': age,
                     'method': 'GEMINI_VISION',
+                    'reason': None if is_adult else 'under_age',
                 }
         except Exception:
             pass
-    # Camera liveness fallback: when client-side blink verification has passed
-    # and server-side anti-spoofing has not flagged a spoof, validate image format/resolution.
-    try:
-        from PIL import Image
-        img = Image.open(img_path)
-        w, h = img.size
-        if w >= 80 and h >= 80:
-            return {'is_adult': True, 'estimated_age': 25, 'method': 'LIVENESS_CAMERA'}
-    except Exception:
-        pass
 
-    return {'is_adult': False, 'estimated_age': None, 'method': 'UNAVAILABLE', 'reason': 'age_verification_unavailable'}
+    return {
+        'is_adult': False,
+        'estimated_age': None,
+        'method': 'UNAVAILABLE',
+        'reason': 'age_verification_unavailable',
+    }
