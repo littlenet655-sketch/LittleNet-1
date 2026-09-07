@@ -1,12 +1,8 @@
 """Cloudflare R2 storage adapter for LittleNet media.
 
 The application keeps moderation files on local ephemeral disk only long enough
-for safety analysis. Once content is accepted, callers can persist it here and
-store the returned ``uploads/r2/<key>`` reference in PostgreSQL.
-
-R2 is S3-compatible. The bucket remains private: ``signed_download_url`` creates
-a short-lived URL only after LittleNet has performed its existing access checks
-in ``/uploads/<path>``.
+for safety analysis. Once content is accepted, callers persist it here before the
+corresponding PostgreSQL row is published.
 """
 from __future__ import annotations
 
@@ -14,7 +10,6 @@ import mimetypes
 import os
 from pathlib import Path
 from typing import Optional
-
 
 R2_REFERENCE_PREFIX = "uploads/r2/"
 
@@ -36,12 +31,6 @@ def enabled() -> bool:
 
 
 def healthcheck() -> dict:
-    """Read-only production readiness check for the configured private bucket.
-
-    A release must not be marked ready merely because four R2 environment
-    variables exist. ``head_bucket`` proves that the credentials can actually
-    reach the configured bucket without writing or deleting any child media.
-    """
     if not _enabled():
         return {"ok": False, "configured": False, "bucket": os.getenv("R2_BUCKET") or None}
     try:
@@ -64,6 +53,7 @@ def _client():
     if not _enabled():
         raise RuntimeError("Cloudflare R2 is not configured")
     import boto3
+
     return boto3.client(
         "s3",
         endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
@@ -74,19 +64,14 @@ def _client():
 
 
 def upload_file(local_path: str, key: str, content_type: Optional[str] = None) -> str:
-    """Upload one moderated file and return its private R2 DB reference.
-
-    LittleNet intentionally has no speech/audio moderation. Any video is therefore
-    converted to a silent video immediately before persistence. If ffmpeg/ffprobe
-    cannot prove the audio track is gone, the exception propagates and the caller's
-    existing R2 transaction marks the child media BLOCKED instead of publishing it.
-    """
+    """Upload moderated content to private R2; video audio is stripped first."""
     path = Path(local_path)
     if not path.is_file():
         raise FileNotFoundError(local_path)
     ctype = content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    if ctype.lower().startswith('video/'):
+    if ctype.lower().startswith("video/"):
         from services.media_sanitizer import strip_video_audio_in_place
+
         strip_video_audio_in_place(str(path))
     _client().upload_file(
         str(path),
@@ -94,39 +79,75 @@ def upload_file(local_path: str, key: str, content_type: Optional[str] = None) -
         key,
         ExtraArgs={
             "ContentType": ctype,
-            # Child media must never become reusable public browser/CDN cache
-            # content. Access is re-authorized by LittleNet on every /uploads/
-            # request and the resulting R2 URL is short-lived.
             "CacheControl": "private, no-store, max-age=0",
         },
     )
-    # Keep the literal legacy contract because other source/readiness checks
-    # intentionally assert this DB reference format.
     return f"uploads/r2/{key}"
 
 
+def _acknowledge_deleted_reference(reference: str) -> None:
+    """Best-effort acknowledgement for DB-triggered media deletion outbox rows."""
+    try:
+        from database.connection import execute
+
+        execute(
+            """UPDATE media_delete_outbox
+               SET completed_at=COALESCE(completed_at,NOW()), last_error=NULL
+               WHERE reference=%s""",
+            (reference,),
+        )
+    except Exception:
+        # The object is already gone and private. A stale outbox row can be
+        # reconciled later without turning a successful delete into a 500.
+        pass
+
+
 def delete_reference(reference: str) -> None:
-    """Delete an R2 object referenced as uploads/r2/<key>. No-op for local files."""
-    if not is_reference(reference) or not _enabled():
+    if not is_reference(reference):
         return
+    if not _enabled():
+        # Never report a successful private-object delete when R2 is unavailable.
+        # The durable outbox depends on this exception to retain retry state.
+        raise RuntimeError("Cloudflare R2 is not configured")
     _client().delete_object(
         Bucket=os.environ["R2_BUCKET"],
-        Key=str(reference)[len(R2_REFERENCE_PREFIX):],
+        Key=str(reference)[len(R2_REFERENCE_PREFIX) :],
     )
+    _acknowledge_deleted_reference(reference)
+
+
+def _request_media_gate() -> None:
+    """Prevent a signed URL from bypassing child account/time/onboarding controls."""
+    try:
+        from flask import has_request_context, session
+
+        if not has_request_context() or session.get("role") != "CHILD":
+            return
+        uid = int(session.get("user_id") or 0)
+        if not uid:
+            raise PermissionError("child_session_required")
+        from services.social import child_surface_open
+
+        if not child_surface_open(uid):
+            raise PermissionError("child_media_locked")
+    except PermissionError:
+        raise
+    except Exception as exc:
+        raise PermissionError("child_media_gate_unavailable") from exc
 
 
 def signed_download_url(reference: str, expires_seconds: int | None = None) -> str:
-    """Return a short-lived private R2 GET URL for an authorized LittleNet request."""
     if not is_reference(reference):
         raise ValueError("not an R2 reference")
     if not _enabled():
         raise RuntimeError("Cloudflare R2 is not configured")
+    _request_media_gate()
     expiry = expires_seconds or int(os.getenv("R2_SIGNED_URL_TTL", "180"))
     return _client().generate_presigned_url(
         "get_object",
         Params={
             "Bucket": os.environ["R2_BUCKET"],
-            "Key": str(reference)[len(R2_REFERENCE_PREFIX):],
+            "Key": str(reference)[len(R2_REFERENCE_PREFIX) :],
         },
         ExpiresIn=max(60, min(expiry, 600)),
     )

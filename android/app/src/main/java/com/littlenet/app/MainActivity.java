@@ -37,6 +37,7 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> chooser;
     private Uri cameraUri;
     private Uri backendUri;
+    private PermissionRequest pendingWebPermission;
 
     private boolean sameOrigin(Uri uri) {
         if (uri == null || backendUri == null) return false;
@@ -50,8 +51,7 @@ public class MainActivity extends Activity {
         String html = "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
                 + "body{margin:0;font-family:sans-serif;background:#FFF7ED;color:#1E1B4B;display:flex;flex-direction:column;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px;box-sizing:border-box;}"
                 + ".card{background:#FFFFFF;border-radius:24px;padding:32px 24px;box-shadow:0 10px 25px rgba(0,0,0,0.06);max-width:340px;width:100%;}"
-                + "h2{font-size:22px;margin:16px 0 8px;color:#4F46E5;}"
-                + "p{font-size:14px;color:#64748B;line-height:1.5;margin-bottom:24px;}"
+                + "h2{font-size:22px;margin:16px 0 8px;color:#4F46E5;}p{font-size:14px;color:#64748B;line-height:1.5;margin-bottom:24px;}"
                 + ".btn{background:#4F46E5;color:#FFFFFF;border:none;border-radius:14px;padding:14px 28px;font-size:16px;font-weight:600;width:100%;cursor:pointer;}"
                 + ".spinner{width:36px;height:36px;border:4px solid #E0E7FF;border-top:4px solid #4F46E5;border-radius:50%;animation:spin 1s linear infinite;margin:0 auto 16px;}"
                 + "@keyframes spin{0%{transform:rotate(0deg)}100%{transform:rotate(360deg)}}"
@@ -59,6 +59,21 @@ public class MainActivity extends Activity {
                 + "<div class='card'><div class='spinner'></div><h2>Connecting to LittleNet</h2><p>Entering your safe space. Reconnecting automatically...</p>"
                 + "<button class='btn' onclick='window.location.reload()'>Retry Now</button></div></body></html>";
         view.loadDataWithBaseURL(failingUrl, html, "text/html", "UTF-8", failingUrl);
+    }
+
+    private void grantWebPermission(PermissionRequest request) {
+        if (request == null || !sameOrigin(request.getOrigin())) {
+            if (request != null) request.deny();
+            return;
+        }
+        List<String> grant = new ArrayList<>();
+        for (String resource : request.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                    && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                grant.add(resource);
+            }
+        }
+        if (grant.isEmpty()) request.deny(); else request.grant(grant.toArray(new String[0]));
     }
 
     private void setupWebView() {
@@ -71,7 +86,10 @@ public class MainActivity extends Activity {
         }
         web = new WebView(this);
         setContentView(web);
-        WebView.setWebContentsDebuggingEnabled(true);
+        // The distributed hackathon APK is a debug variant, so BuildConfig.DEBUG
+        // cannot be used as the security boundary. Keep remote WebView debugging
+        // disabled in every installable LittleNet build.
+        WebView.setWebContentsDebuggingEnabled(false);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -95,15 +113,8 @@ public class MainActivity extends Activity {
                 return true;
             }
 
-            @Override public void onPageStarted(WebView view, String url, Bitmap favicon) {
-                super.onPageStarted(view, url, favicon);
-                Log.d(TAG, "onPageStarted: " + url);
-            }
-
-            @Override public void onPageFinished(WebView view, String url) {
-                super.onPageFinished(view, url);
-                Log.d(TAG, "onPageFinished: " + url);
-            }
+            @Override public void onPageStarted(WebView view, String url, Bitmap favicon) { super.onPageStarted(view, url, favicon);Log.d(TAG, "onPageStarted: " + url); }
+            @Override public void onPageFinished(WebView view, String url) { super.onPageFinished(view, url);Log.d(TAG, "onPageFinished: " + url); }
 
             @Override public void onReceivedError(WebView view, WebResourceRequest request, WebResourceError error) {
                 if (request != null && request.isForMainFrame()) {
@@ -113,8 +124,13 @@ public class MainActivity extends Activity {
             }
 
             @Override public boolean onRenderProcessGone(WebView view, RenderProcessGoneDetail detail) {
+                String restoreUrl = view != null ? view.getUrl() : null;
                 Log.e(TAG, "Render process gone");
                 setupWebView();
+                try {
+                    Uri restore = restoreUrl == null ? null : Uri.parse(restoreUrl);
+                    if (sameOrigin(restore)) web.loadUrl(restoreUrl);
+                } catch (Exception ignored) {}
                 return true;
             }
         });
@@ -123,18 +139,16 @@ public class MainActivity extends Activity {
             @Override public void onPermissionRequest(PermissionRequest request) {
                 runOnUiThread(() -> {
                     if (!sameOrigin(request.getOrigin())) { request.deny(); return; }
-                    List<String> needed = new ArrayList<>();
-                    if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.CAMERA);
-                    if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.RECORD_AUDIO);
-                    if (!needed.isEmpty()) {
-                        ActivityCompat.requestPermissions(MainActivity.this, needed.toArray(new String[0]), RUNTIME_PERMISSIONS);
-                    }
-                    List<String> grant = new ArrayList<>();
+                    boolean wantsCamera = false;
                     for (String resource : request.getResources()) {
-                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource) && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) grant.add(resource);
-                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource) && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) grant.add(resource);
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) wantsCamera = true;
                     }
-                    if (grant.isEmpty()) request.deny(); else request.grant(grant.toArray(new String[0]));
+                    if (wantsCamera && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        pendingWebPermission = request;
+                        ActivityCompat.requestPermissions(MainActivity.this, new String[]{Manifest.permission.CAMERA}, RUNTIME_PERMISSIONS);
+                        return;
+                    }
+                    grantWebPermission(request);
                 });
             }
 
@@ -151,11 +165,9 @@ public class MainActivity extends Activity {
                     image.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception e) { cameraUri = null; }
                 Intent video = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-                Intent audio = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
                 ArrayList<Intent> extras = new ArrayList<>();
                 if (image.resolveActivity(getPackageManager()) != null) extras.add(image);
                 if (video.resolveActivity(getPackageManager()) != null) extras.add(video);
-                if (audio.resolveActivity(getPackageManager()) != null) extras.add(audio);
                 Intent chooserIntent = Intent.createChooser(pick, "Choose LittleNet media");
                 chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extras.toArray(new Intent[0]));
                 startActivityForResult(chooserIntent, FILE_CHOOSER);
@@ -169,7 +181,17 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         backendUri = Uri.parse(getString(R.string.backend_url));
+        if (!sameOrigin(backendUri)) throw new IllegalStateException("LittleNet backend_url must be a validated HTTPS origin");
         setupWebView();
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RUNTIME_PERMISSIONS && pendingWebPermission != null) {
+            PermissionRequest pending = pendingWebPermission;
+            pendingWebPermission = null;
+            grantWebPermission(pending);
+        }
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -178,30 +200,19 @@ public class MainActivity extends Activity {
         Uri[] out = null;
         if (resultCode == RESULT_OK) {
             if (data != null && data.getClipData() != null) {
-                ClipData c = data.getClipData();
-                out = new Uri[c.getItemCount()];
+                ClipData c = data.getClipData();out = new Uri[c.getItemCount()];
                 for (int i = 0; i < c.getItemCount(); i++) out[i] = c.getItemAt(i).getUri();
-            } else if (data != null && data.getData() != null) {
-                out = new Uri[]{data.getData()};
-            } else if (cameraUri != null) {
-                out = new Uri[]{cameraUri};
-            }
+            } else if (data != null && data.getData() != null) out = new Uri[]{data.getData()};
+            else if (cameraUri != null) out = new Uri[]{cameraUri};
         }
-        chooser.onReceiveValue(out);
-        chooser = null;
-        cameraUri = null;
+        chooser.onReceiveValue(out);chooser = null;cameraUri = null;
     }
 
-    @Override public void onBackPressed() {
-        if (web != null && web.canGoBack()) web.goBack();
-        else super.onBackPressed();
-    }
+    @Override public void onBackPressed() { if (web != null && web.canGoBack()) web.goBack(); else super.onBackPressed(); }
 
     @Override protected void onDestroy() {
-        if (web != null) {
-            web.stopLoading();
-            web.destroy();
-        }
+        if (pendingWebPermission != null) { pendingWebPermission.deny();pendingWebPermission = null; }
+        if (web != null) { web.stopLoading();web.destroy(); }
         super.onDestroy();
     }
 }
