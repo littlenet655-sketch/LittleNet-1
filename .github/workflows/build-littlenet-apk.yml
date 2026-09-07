@@ -6,7 +6,6 @@ on:
       backend_url:
         description: "HTTPS LittleNet backend URL"
         required: true
-        default: "https://littlenet655--littlenet-web-web.modal.run/"
         type: string
   push:
     paths:
@@ -18,7 +17,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      BACKEND_URL: ${{ inputs.backend_url || 'https://littlenet655--littlenet-web-web.modal.run/' }}
+      BACKEND_URL: ${{ inputs.backend_url || secrets.LITTLENET_BACKEND_URL }}
 
     steps:
       - name: Check out source
@@ -38,39 +37,36 @@ jobs:
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "platform-tools" "platforms;android-35" "build-tools;35.0.0"
 
-      - name: Validate backend URL
+      - name: Validate live backend
         run: |
           python - <<'PY'
           import os
           from urllib.parse import urlparse
 
-          value = os.environ["BACKEND_URL"].strip()
+          value = os.environ.get("BACKEND_URL", "").strip()
           parsed = urlparse(value)
-          if parsed.scheme != "https" or not parsed.netloc:
+          host = (parsed.hostname or "").lower()
+          if parsed.scheme != "https" or not host:
               raise SystemExit("BACKEND_URL must be an absolute HTTPS URL")
-          print(f"Using HTTPS backend host: {parsed.netloc}")
+          if "example.com" in host or host.endswith(".invalid") or "your-littlenet-backend" in host:
+              raise SystemExit("BACKEND_URL cannot be a placeholder host")
+          print(f"Using HTTPS backend host: {host}")
           PY
+          base="${BACKEND_URL%/}"
+          curl --fail --silent --show-error --max-time 20 "$base/healthz" >/dev/null
+          curl --fail --silent --show-error --max-time 30 "$base/readyz" >/dev/null
 
       - name: Inject backend URL
-        run: |
-          python - <<'PY'
-          import html
-          import os
-          from pathlib import Path
-
-          path = Path("android/app/src/main/res/values/strings.xml")
-          value = html.escape(os.environ["BACKEND_URL"].strip(), quote=False)
-          source = path.read_text()
-          if '<string name="backend_url">' in source:
-              start = source.index('<string name="backend_url">')
-              end = source.index("</string>", start) + len("</string>")
-              replacement = f'<string name="backend_url">{value}</string>'
-              path.write_text(source[:start] + replacement + source[end:])
-          PY
+        run: python tools/set_backend_url.py "$BACKEND_URL"
 
       - name: Build installable debug APK
         working-directory: android
         run: gradle --no-daemon :app:assembleDebug
+
+      - name: Assert packaged backend is not a placeholder
+        run: |
+          grep -q '<string name="backend_url">https://' android/app/src/main/res/values/strings.xml
+          ! grep -Eiq 'example\.com|\.invalid|YOUR-LITTLENET-BACKEND' android/app/src/main/res/values/strings.xml
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
