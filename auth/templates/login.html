@@ -72,10 +72,12 @@
       <button type="submit" class="btn primary auth-submit-btn" id="auth-submit-btn"><span>Log In</span><span class="btn-arrow">&rarr;</span></button>
     </form>
 
-    <div id="face-login-wrap" {% if mode=='parent' or mode=='admin' %}style="display:none;"{% endif %}>
+    {% if mode!='admin' %}
+    <div id="face-login-wrap">
       <div class="auth-divider"><span>OR</span></div>
-      <a href="/face-login/" class="face-login-btn">{{ ico.icon('camera',17) }} <span>Face ID Login</span></a>
+      <a href="/face-login/?mode={{ 'parent' if mode=='parent' else 'kids' }}" class="face-login-btn">{{ ico.icon('camera',17) }} <span>{% if mode=='parent' %}Parent Face ID Login{% else %}Face ID Login{% endif %}</span></a>
     </div>
+    {% endif %}
 
     {% if mode=='admin' %}
     <div class="auth-signup-box"><span class="signup-text">Admin and moderator accounts are provisioned by the platform team.</span></div>
