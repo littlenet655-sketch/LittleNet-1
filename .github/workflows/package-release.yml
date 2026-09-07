@@ -14,16 +14,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Build clean release package
+      - name: Build and verify clean release package
         run: |
           python tools/package_release.py
-          mkdir -p release
-          unzip -q ../LittleNet-complete-release.zip -d release
+          python tools/verify_release.py
+          test -f ../LittleNet-complete-release.zip
       - name: Upload submission ZIP artifact
         uses: actions/upload-artifact@v4
         with:
           name: LittleNet-submission-ready
-          path: release/
+          path: ../LittleNet-complete-release.zip
           if-no-files-found: error
-          include-hidden-files: true
           retention-days: 14
