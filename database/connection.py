@@ -7,6 +7,13 @@ _pool = None
 _pool_lock = threading.Lock()
 
 
+def _database_url():
+    url = os.getenv('DATABASE_URL', '').strip()
+    if not url:
+        raise RuntimeError('DATABASE_URL is required; no built-in database credential fallback is allowed')
+    return url
+
+
 def _get_pool():
     global _pool
     if _pool is None or _pool.closed:
@@ -18,8 +25,7 @@ def _get_pool():
                     from psycopg2.extras import RealDictCursor
                 except ImportError as exc:
                     raise RuntimeError('psycopg2 is required. Install requirements-core.txt') from exc
-                url = os.getenv('DATABASE_URL', 'postgresql://postgres:littlenet@localhost:5432/safeconnect_db')
-                _pool = ThreadedConnectionPool(1, 10, url, cursor_factory=RealDictCursor)
+                _pool = ThreadedConnectionPool(1, 10, _database_url(), cursor_factory=RealDictCursor)
     return _pool
 
 
@@ -92,12 +98,14 @@ def get_db_connection():
                 return PooledConnectionWrapper(pool, raw_conn)
             _discard_connection(pool, raw_conn)
         raise RuntimeError('pooled database connections failed validation')
+    except RuntimeError:
+        raise
     except Exception:
-        # Fallback to direct connection if pool initialization or exhaustion occurs
+        # Fallback to a direct connection only for transient pool issues. The
+        # connection still uses the same required external DATABASE_URL.
         import psycopg2
         from psycopg2.extras import RealDictCursor
-        url = os.getenv('DATABASE_URL', 'postgresql://postgres:littlenet@localhost:5432/safeconnect_db')
-        return psycopg2.connect(url, cursor_factory=RealDictCursor)
+        return psycopg2.connect(_database_url(), cursor_factory=RealDictCursor)
 
 
 def fetch_one(sql, params=()):
