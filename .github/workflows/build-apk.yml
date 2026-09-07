@@ -6,6 +6,7 @@ on:
       backend_url:
         description: 'HTTPS LittleNet backend URL'
         required: true
+        default: 'https://littlenet655--littlenet-web-web.modal.run/'
         type: string
   push:
     branches: [ main, master ]
@@ -18,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      BACKEND_URL: ${{ github.event.inputs.backend_url || secrets.LITTLENET_BACKEND_URL }}
+      BACKEND_URL: ${{ inputs.backend_url || secrets.LITTLENET_BACKEND_URL || 'https://littlenet655--littlenet-web-web.modal.run/' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -36,11 +37,14 @@ jobs:
       - name: Validate backend URL
         run: |
           python - <<'PY'
-          import os,sys
-          u=os.environ.get('BACKEND_URL','').strip()
-          if not u.startswith('https://'):
-              sys.exit('BACKEND_URL must be a real HTTPS URL')
-          print('Backend:',u)
+          import os
+          from urllib.parse import urlparse
+
+          value = os.environ.get('BACKEND_URL', '').strip()
+          parsed = urlparse(value)
+          if parsed.scheme != 'https' or not parsed.netloc:
+              raise SystemExit('BACKEND_URL must be an absolute HTTPS URL')
+          print(f'Using HTTPS backend host: {parsed.netloc}')
           PY
       - name: Inject backend URL
         run: python tools/set_backend_url.py "$BACKEND_URL"
