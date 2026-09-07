@@ -24,6 +24,21 @@ def evaluate(child_id,content_type,payload,adult_threshold=.40):
     if t=='TEXT':
         signals=check_text(payload)
     elif t=='VIDEO':
+        # LittleNet has no speech/audio moderation path. Remove the audio stream
+        # before any video can proceed to moderation or later persistence. This
+        # central gate covers posts, stories and message videos instead of relying
+        # on each individual upload route to remember the sanitizer.
+        try:
+            from services.media_sanitizer import strip_video_audio_in_place
+            strip_video_audio_in_place(payload)
+        except Exception as exc:
+            signals=normalize_signals({
+                'category':'VIDEO',
+                'total_safety_failure':True,
+                'errors':['video_audio_sanitization_failed'],
+                'sanitizer_error':type(exc).__name__,
+            },category='VIDEO')
+            return signals,Decision('BLOCK',100.0,'Video safety processing failed closed')
         signals=check_video(payload)
     elif t=='IMAGE':
         signals=check_image(payload)
