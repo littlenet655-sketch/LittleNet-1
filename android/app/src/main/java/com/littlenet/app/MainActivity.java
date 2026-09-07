@@ -86,7 +86,10 @@ public class MainActivity extends Activity {
         }
         web = new WebView(this);
         setContentView(web);
-        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
+        // The distributed hackathon APK is a debug variant, so BuildConfig.DEBUG
+        // cannot be used as the security boundary. Keep remote WebView debugging
+        // disabled in every installable LittleNet build.
+        WebView.setWebContentsDebuggingEnabled(false);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
