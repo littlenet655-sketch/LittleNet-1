@@ -1,25 +1,32 @@
 from database.connection import fetch_one, fetch_all, execute
 
+
 def children(parent_id):
+    """Return children linked through an established approved parent mapping."""
     return fetch_all('''
-        SELECT DISTINCT u.user_id, u.full_name, cp.profile_picture 
-        FROM parent_child_map m 
-        JOIN users u ON u.user_id = m.child_id 
-        LEFT JOIN child_profiles cp ON cp.child_id = u.user_id 
-        JOIN users p ON p.user_id = %s
-        WHERE m.parent_id = %s 
-           OR m.verified_parent_id = %s 
-           OR LOWER(m.parent_email) = LOWER(p.email)
-    ''', (parent_id, parent_id, parent_id))
+        SELECT DISTINCT u.user_id, u.full_name, cp.profile_picture
+        FROM parent_child_map m
+        JOIN users u ON u.user_id = m.child_id AND u.role='CHILD'
+        LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+        WHERE m.approved=TRUE
+          AND m.approval_status='APPROVED'
+          AND (m.parent_id=%s OR m.verified_parent_id=%s)
+    ''', (parent_id, parent_id))
+
 
 def owns(parent_id, child_id):
+    """Canonical authorization check for Parent Mode child access."""
     return bool(fetch_one('''
-        SELECT 1 
+        SELECT 1
         FROM parent_child_map m
-        JOIN users p ON p.user_id = %s
-        WHERE m.child_id = %s 
-          AND (m.parent_id = %s OR m.verified_parent_id = %s OR LOWER(m.parent_email) = LOWER(p.email))
-    ''', (parent_id, child_id, parent_id, parent_id)))
+        JOIN users u ON u.user_id=m.child_id AND u.role='CHILD'
+        WHERE m.child_id=%s
+          AND m.approved=TRUE
+          AND m.approval_status='APPROVED'
+          AND (m.parent_id=%s OR m.verified_parent_id=%s)
+        LIMIT 1
+    ''', (child_id, parent_id, parent_id)))
+
 
 def pending_follows(parent_id):
     """Return actionable/waiting two-parent friendship stages for this parent."""
@@ -27,8 +34,9 @@ def pending_follows(parent_id):
         WITH owned AS (
           SELECT m.child_id
           FROM parent_child_map m
-          JOIN users p ON p.user_id=%s
-          WHERE m.parent_id=%s OR m.verified_parent_id=%s OR LOWER(m.parent_email)=LOWER(p.email)
+          WHERE m.approved=TRUE
+            AND m.approval_status='APPROVED'
+            AND (m.parent_id=%s OR m.verified_parent_id=%s)
         )
         SELECT * FROM (
           SELECT f.child_id, f.following_child_id,
@@ -75,7 +83,7 @@ def pending_follows(parent_id):
             AND f.child_id IN (SELECT child_id FROM owned)
         ) q
         ORDER BY actionable DESC, created_at ASC
-    ''', (parent_id,parent_id,parent_id))
+    ''', (parent_id,parent_id))
 
 
 def get_parent_weekly_digest(parent_id, child_id):
@@ -111,7 +119,7 @@ def get_parent_weekly_digest(parent_id, child_id):
     accuracy = round((correct_q / total_q * 100.0), 1) if total_q > 0 else 0.0
 
     safety_counts = fetch_one('''
-        SELECT 
+        SELECT
             COUNT(*) FILTER (WHERE decision = 'BLOCK') as blocked,
             COUNT(*) FILTER (WHERE decision = 'REVIEW') as reviews
         FROM moderation_events
@@ -119,15 +127,20 @@ def get_parent_weekly_digest(parent_id, child_id):
     ''', (child_id,))
 
     from services.ai import get_ai_client
+    try:
+        from quiz.service import age_group
+        digest_age_group = age_group(child_id)
+    except Exception:
+        digest_age_group = None
     raw_stats = {
-        "age_group": "9-11",
+        "age_group": digest_age_group or "unknown",
         "quizzes_completed": total_q,
         "accuracy_pct": accuracy,
         "screen_time_hours": screen_hours,
         "safety_blocks_count": int((safety_counts or {}).get('blocked', 0) or 0),
         "reviews_count": int((safety_counts or {}).get('reviews', 0) or 0),
-        "top_subjects": ["Science", "GK"],
-        "weak_subjects": ["Tricky Quiz Questions"]
+        "top_subjects": [],
+        "weak_subjects": []
     }
 
     digest_res = get_ai_client().synthesize_parent_digest(raw_stats)
@@ -151,7 +164,7 @@ def get_parent_safety_summary(parent_id, child_id):
         return None
 
     stats = fetch_one('''
-        SELECT 
+        SELECT
             COUNT(*) FILTER (WHERE decision = 'BLOCK') as blocks,
             COUNT(*) FILTER (WHERE decision = 'BLOCK' AND signals->>'category' = 'TEXT') as message_blocks,
             COUNT(*) FILTER (WHERE decision = 'REVIEW') as reviews,
@@ -167,7 +180,7 @@ def get_parent_safety_summary(parent_id, child_id):
 
     summary_text = (
         f"This week: {blocks} items blocked for safety ({msg_blocks} messages, {contacts} contact-sharing attempts); "
-        f"{reviews} flagged for your review. Zero unsafe content reached your child's device."
+        f"{reviews} flagged for your review."
     )
     return {
         "blocks": blocks,

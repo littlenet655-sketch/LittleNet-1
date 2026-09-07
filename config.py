@@ -1,18 +1,32 @@
 import os
+import secrets
 from datetime import timedelta
 from dotenv import load_dotenv
 load_dotenv()
 
+
 class Config:
-    SECRET_KEY = os.getenv("SECRET_KEY", "change-me-before-demo")
-    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:littlenet@localhost:5432/safeconnect_db")
     BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:5000")
+    _PRODUCTION = BASE_URL.startswith("https://")
+
+    # Never use a publicly known Flask signing key. Local development may use an
+    # ephemeral key, but any HTTPS deployment must provide a stable secret.
+    _SECRET_ENV = (os.getenv("SECRET_KEY") or "").strip()
+    if _PRODUCTION and (not _SECRET_ENV or _SECRET_ENV == "change-me-before-demo" or len(_SECRET_ENV) < 32):
+        raise RuntimeError("Production SECRET_KEY must be explicitly configured with at least 32 random characters")
+    SECRET_KEY = _SECRET_ENV or secrets.token_urlsafe(48)
+
+    _DATABASE_ENV = (os.getenv("DATABASE_URL") or "").strip()
+    if _PRODUCTION and not _DATABASE_ENV:
+        raise RuntimeError("Production DATABASE_URL must be explicitly configured")
+    DATABASE_URL = _DATABASE_ENV or "postgresql://postgres:littlenet@localhost:5432/safeconnect_db"
+
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
     SESSION_COOKIE_SECURE = os.getenv("COOKIE_SECURE", "1" if BASE_URL.startswith("https://") else "0") == "1"
     WTF_CSRF_SSL_STRICT = False
-    WTF_CSRF_TIME_LIMIT = None  # Valid for the life of the session
+    WTF_CSRF_TIME_LIMIT = None
     PERMANENT_SESSION_LIFETIME = timedelta(hours=8)
     ADULT_HARD_BLOCK_THRESHOLD = min(float(os.getenv("ADULT_HARD_BLOCK_THRESHOLD", "0.40")), 0.40)
     REEL_MAX_SECONDS = int(os.getenv("REEL_MAX_SECONDS", "180"))
