@@ -127,15 +127,28 @@ def seed_quizzes():
 
 
 def _mail_healthcheck():
-    resend_key = os.getenv("RESEND_API_KEY")
-    if resend_key:
+    from mailg.send_email import get_mail_status
+    status = get_mail_status()
+    if status.get("provider") == "resend":
         return {
             "ok": True,
             "configured": True,
             "provider": "resend",
-            "from": os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev"),
+            "mail_mode": status.get("mail_mode"),
+            "from": status.get("from_email"),
+            "is_production_ready": status.get("is_production_ready", False),
         }
-    return _smtp_healthcheck()
+    if status.get("provider") == "smtp":
+        smtp_res = _smtp_healthcheck()
+        smtp_res["mail_mode"] = "smtp"
+        smtp_res["is_production_ready"] = smtp_res.get("ok", False)
+        return smtp_res
+    return {
+        "ok": False,
+        "configured": False,
+        "mail_mode": "not_configured",
+        "is_production_ready": False,
+    }
 
 
 def _smtp_healthcheck():
@@ -234,6 +247,9 @@ def web_preflight():
         "r2": r2,
         "media_delete_outbox": media_outbox,
     }
+    strict_mail = os.getenv("STRICT_PRODUCTION_PREFLIGHT", "").strip().lower() in {"1", "true", "yes"}
+    mail_passes = mail.get("is_production_ready") if strict_mail else mail.get("ok")
+
     report["ok"] = bool(
         report["database"]
         and schema_ok
@@ -242,7 +258,7 @@ def web_preflight():
         and pii_ok
         and liveness_assets
         and public_base_url
-        and mail.get("ok")
+        and mail_passes
         and r2.get("ok")
         and media_outbox.get("ok")
     )

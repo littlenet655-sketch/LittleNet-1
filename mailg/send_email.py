@@ -92,6 +92,50 @@ def _send_via_smtp(receiver, subject, body):
         return False
 
 
+def get_mail_status():
+    """Determine the configured mail mode and whether it is production-verified."""
+    resend_key = os.getenv('RESEND_API_KEY')
+    if resend_key:
+        from_email = (os.getenv('RESEND_FROM_EMAIL') or '').strip().lower()
+        # If no custom from_email is set, or if it explicitly uses resend.dev sandbox domain
+        if not from_email or from_email.endswith('@resend.dev') or 'onboarding@resend.dev' in from_email:
+            mode = 'resend_sandbox'
+        else:
+            # Check if production domain verification is verified or unverified
+            # In our deployment environment without verified DNS, devpluse.in / other domains fall back to sandbox
+            is_verified = os.getenv('RESEND_DOMAIN_VERIFIED', '').strip().lower() in {'1', 'true', 'yes'}
+            mode = 'resend_verified' if is_verified else 'resend_sandbox'
+        return {
+            'ok': True,
+            'configured': True,
+            'provider': 'resend',
+            'mail_mode': mode,
+            'from_email': from_email or 'onboarding@resend.dev',
+            'is_production_ready': mode == 'resend_verified',
+        }
+
+    user = os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')
+    pwd = os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')
+    if user and pwd:
+        return {
+            'ok': True,
+            'configured': True,
+            'provider': 'smtp',
+            'mail_mode': 'smtp',
+            'from_email': user,
+            'is_production_ready': True,
+        }
+
+    return {
+        'ok': False,
+        'configured': False,
+        'provider': None,
+        'mail_mode': 'not_configured',
+        'from_email': None,
+        'is_production_ready': False,
+    }
+
+
 def send_email(receiver, subject, body):
     """Send transactional email via Resend API (primary) or SMTP (secondary)."""
     resend_key = os.getenv('RESEND_API_KEY')
