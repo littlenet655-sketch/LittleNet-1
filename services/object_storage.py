@@ -35,6 +35,27 @@ def enabled() -> bool:
     return _enabled()
 
 
+def healthcheck() -> dict:
+    """Read-only production readiness check for the configured private bucket.
+
+    A release must not be marked ready merely because four R2 environment
+    variables exist. ``head_bucket`` proves that the credentials can actually
+    reach the configured bucket without writing or deleting any child media.
+    """
+    if not _enabled():
+        return {"ok": False, "configured": False, "bucket": os.getenv("R2_BUCKET") or None}
+    try:
+        _client().head_bucket(Bucket=os.environ["R2_BUCKET"])
+        return {"ok": True, "configured": True, "bucket": os.environ["R2_BUCKET"]}
+    except Exception as exc:
+        return {
+            "ok": False,
+            "configured": True,
+            "bucket": os.getenv("R2_BUCKET") or None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+
+
 def is_reference(reference: str | None) -> bool:
     return bool(reference and str(reference).startswith(R2_REFERENCE_PREFIX))
 

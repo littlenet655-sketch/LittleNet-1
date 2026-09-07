@@ -1,5 +1,8 @@
 const { test, expect } = require('@playwright/test');
 
+const requireReady = String(process.env.E2E_REQUIRE_READY || '').toLowerCase() === '1' ||
+  String(process.env.E2E_REQUIRE_READY || '').toLowerCase() === 'true';
+
 async function expectPrivateSecurityHeaders(response) {
   const headers = response.headers();
   expect(headers['x-content-type-options']).toBe('nosniff');
@@ -20,13 +23,22 @@ test('web health and login shell are reachable', async ({ page, request }) => {
   await expect(page.locator('body')).toBeVisible();
 });
 
-test('readiness endpoint fails closed or reports ready explicitly', async ({ request }) => {
+test('readiness endpoint is strict for a live release', async ({ request }) => {
   const response = await request.get('/readyz');
-  expect([200, 503]).toContain(response.status());
   const body = await response.json();
-  expect(['ready', 'degraded']).toContain(body.status);
-  expect(typeof body.database).toBe('boolean');
-  expect(typeof body.mail).toBe('boolean');
+
+  if (requireReady) {
+    expect(response.status()).toBe(200);
+    expect(body.status).toBe('ready');
+    expect(body.database).toBe(true);
+    expect(body.ai).toBe(true);
+    expect(body.mail).toBe(true);
+  } else {
+    expect([200, 503]).toContain(response.status());
+    expect(['ready', 'degraded']).toContain(body.status);
+    expect(typeof body.database).toBe('boolean');
+    expect(typeof body.mail).toBe('boolean');
+  }
 });
 
 test('private upload path does not become anonymously fetchable', async ({ request }) => {
