@@ -1,47 +1,42 @@
 from database.connection import fetch_one, fetch_all, execute
 
 
-def _owned_mapping_sql(alias='m'):
-    """Canonical established parent-child ownership predicate.
-
-    Pending/rejected/email-only mappings are intentionally excluded. Suspended
-    children remain owned so a parent can unpause them from Parent Mode.
-    """
-    return f"""{alias}.approved=TRUE
-        AND {alias}.approval_status='APPROVED'
-        AND ({alias}.parent_id=%s OR {alias}.verified_parent_id=%s)"""
-
-
 def children(parent_id):
-    pred=_owned_mapping_sql('m')
-    return fetch_all(f'''
+    """Return children linked through an established approved parent mapping."""
+    return fetch_all('''
         SELECT DISTINCT u.user_id, u.full_name, cp.profile_picture
         FROM parent_child_map m
         JOIN users u ON u.user_id = m.child_id AND u.role='CHILD'
         LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
-        WHERE {pred}
+        WHERE m.approved=TRUE
+          AND m.approval_status='APPROVED'
+          AND (m.parent_id=%s OR m.verified_parent_id=%s)
     ''', (parent_id, parent_id))
 
 
 def owns(parent_id, child_id):
-    pred=_owned_mapping_sql('m')
-    return bool(fetch_one(f'''
+    """Canonical authorization check for Parent Mode child access."""
+    return bool(fetch_one('''
         SELECT 1
         FROM parent_child_map m
         JOIN users u ON u.user_id=m.child_id AND u.role='CHILD'
-        WHERE m.child_id=%s AND {pred}
+        WHERE m.child_id=%s
+          AND m.approved=TRUE
+          AND m.approval_status='APPROVED'
+          AND (m.parent_id=%s OR m.verified_parent_id=%s)
         LIMIT 1
     ''', (child_id, parent_id, parent_id)))
 
 
 def pending_follows(parent_id):
     """Return actionable/waiting two-parent friendship stages for this parent."""
-    pred=_owned_mapping_sql('m')
-    return fetch_all(f'''
+    return fetch_all('''
         WITH owned AS (
           SELECT m.child_id
           FROM parent_child_map m
-          WHERE {pred}
+          WHERE m.approved=TRUE
+            AND m.approval_status='APPROVED'
+            AND (m.parent_id=%s OR m.verified_parent_id=%s)
         )
         SELECT * FROM (
           SELECT f.child_id, f.following_child_id,
