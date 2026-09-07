@@ -103,7 +103,9 @@ def test_live_safety_never_injects_model_reason_as_html():
 def test_release_workflow_uploads_verified_zip():
     src = text('.github/workflows/package-release.yml')
     assert 'python tools/verify_release.py' in src
-    assert 'path: ../LittleNet-complete-release.zip' in src
+    assert 'cp ../LittleNet-complete-release.zip ./LittleNet-complete-release.zip' in src
+    assert 'path: LittleNet-complete-release.zip' in src
+    assert 'path: ../LittleNet-complete-release.zip' not in src
     assert 'path: release/' not in src
 
 

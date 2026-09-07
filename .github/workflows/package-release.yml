@@ -19,10 +19,12 @@ jobs:
           python tools/package_release.py
           python tools/verify_release.py
           test -f ../LittleNet-complete-release.zip
+          cp ../LittleNet-complete-release.zip ./LittleNet-complete-release.zip
+          test -f ./LittleNet-complete-release.zip
       - name: Upload submission ZIP artifact
         uses: actions/upload-artifact@v4
         with:
           name: LittleNet-submission-ready
-          path: ../LittleNet-complete-release.zip
+          path: LittleNet-complete-release.zip
           if-no-files-found: error
           retention-days: 14
