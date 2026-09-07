@@ -13,8 +13,13 @@ def _profile_terms(cid):
 
 
 def candidates(cid,cap=60):
+    """Return only posts whose creators are discoverable under canonical policy."""
+    from child.service import discoverable_child_ids
+    allowed_child_ids = discoverable_child_ids(cid)
+    if not allowed_child_ids:
+        return []
     cats=effective_categories(cid);age_group=_age_group(cid)
-    return fetch_all('''SELECT p.*,u.full_name,cp.profile_picture,\n        (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,\n        (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,\n        EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE) is_following\n      FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id\n      WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=FALSE\n        AND p.content_category=ANY(%s)\n        AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)\n        AND p.child_id<>%s\n        AND p.child_id NOT IN (\n          SELECT blocked_id FROM blocked_users WHERE blocker_id=%s\n          UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s\n          UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)\n      ORDER BY p.created_at DESC LIMIT %s''',(cid,cats,age_group,age_group,cid,cid,cid,cid,cap))
+    return fetch_all('''SELECT p.*,u.full_name,cp.profile_picture,\n        (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,\n        (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,\n        EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'\n          AND ((f.child_id=%s AND f.following_child_id=p.child_id) OR (f.child_id=p.child_id AND f.following_child_id=%s))) is_following\n      FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id\n      WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=FALSE\n        AND p.content_category=ANY(%s)\n        AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)\n        AND p.child_id=ANY(%s)\n        AND p.child_id<>%s\n        AND p.child_id NOT IN (\n          SELECT blocked_id FROM blocked_users WHERE blocker_id=%s\n          UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s\n          UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)\n      ORDER BY p.created_at DESC LIMIT %s''',(cid,cid,cats,age_group,age_group,allowed_child_ids,cid,cid,cid,cid,cap))
 
 
 def _text_for(post):
@@ -72,7 +77,7 @@ def apply_diversity_and_balance(ranked_posts, max_consecutive=2):
             if cat != last_cat or consecutive_count < max_consecutive:
                 selected_idx = idx
                 break
-        
+
         # If all remaining items share the same category, take first
         if selected_idx is None:
             selected_idx = 0
