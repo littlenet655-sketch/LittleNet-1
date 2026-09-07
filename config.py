@@ -1,12 +1,27 @@
 import os
+import secrets
 from datetime import timedelta
 from dotenv import load_dotenv
 load_dotenv()
 
+
+_BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:5000").strip() or "http://127.0.0.1:5000"
+_SECRET_FROM_ENV = os.getenv("SECRET_KEY", "").strip()
+_DATABASE_FROM_ENV = os.getenv("DATABASE_URL", "").strip()
+
+# Local source/tests may import the Flask app without a .env file. Use an
+# ephemeral, process-local signing key there rather than a public hard-coded
+# value. Public HTTPS deployments must provide durable secrets explicitly.
+if _BASE_URL.startswith("https://") and not _SECRET_FROM_ENV:
+    raise RuntimeError("SECRET_KEY is required for HTTPS/production deployments")
+if _BASE_URL.startswith("https://") and not _DATABASE_FROM_ENV:
+    raise RuntimeError("DATABASE_URL is required for HTTPS/production deployments")
+
+
 class Config:
-    SECRET_KEY = os.getenv("SECRET_KEY", "change-me-before-demo")
-    DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:littlenet@localhost:5432/safeconnect_db")
-    BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:5000")
+    SECRET_KEY = _SECRET_FROM_ENV or secrets.token_urlsafe(48)
+    DATABASE_URL = _DATABASE_FROM_ENV
+    BASE_URL = _BASE_URL
     MAX_CONTENT_LENGTH = 100 * 1024 * 1024
     SESSION_COOKIE_HTTPONLY = True
     SESSION_COOKIE_SAMESITE = "Lax"
