@@ -33,20 +33,32 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
-      - name: Validate backend URL
+      - name: Validate backend URL and readiness
         run: |
           python - <<'PY'
-          import os,sys
+          import os
+          from urllib.parse import urlparse
           u=os.environ.get('BACKEND_URL','').strip()
-          if not u.startswith('https://'):
-              sys.exit('BACKEND_URL must be a real HTTPS URL')
+          p=urlparse(u)
+          host=(p.hostname or '').lower()
+          if p.scheme!='https' or not host:
+              raise SystemExit('BACKEND_URL must be a real HTTPS URL')
+          if 'example.com' in host or host.endswith('.invalid') or 'your-littlenet-backend' in host:
+              raise SystemExit('BACKEND_URL cannot be a placeholder host')
           print('Backend:',u)
           PY
+          base="${BACKEND_URL%/}"
+          curl --fail --silent --show-error --max-time 20 "$base/healthz" >/dev/null
+          curl --fail --silent --show-error --max-time 30 "$base/readyz" >/dev/null
       - name: Inject backend URL
         run: python tools/set_backend_url.py "$BACKEND_URL"
       - name: Build debug APK
         working-directory: android
         run: gradle --no-daemon :app:assembleDebug
+      - name: Assert packaged backend is not a placeholder
+        run: |
+          grep -q '<string name="backend_url">https://' android/app/src/main/res/values/strings.xml
+          ! grep -Eiq 'example\.com|\.invalid|YOUR-LITTLENET-BACKEND' android/app/src/main/res/values/strings.xml
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
