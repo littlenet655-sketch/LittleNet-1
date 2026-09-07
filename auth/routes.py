@@ -257,7 +257,13 @@ def verify_parent_email_page():
     parent = _pending_parent()
     if not parent:
         return redirect('/register-parent/')
-    delivery_error = 'The account is pending, but the OTP email could not be sent. Check mail configuration, then use Resend.' if session.pop('pending_parent_delivery_error', False) else None
+    if session.pop('pending_parent_delivery_error', False):
+        if os.getenv('RESEND_API_KEY'):
+            delivery_error = 'The account is pending, but Resend could not deliver the OTP. In Resend sandbox mode, register with the account email (littlenet655@gmail.com) or verify your domain in Resend.'
+        else:
+            delivery_error = 'The account is pending, but the OTP email could not be sent. Check mail configuration, then use Resend.'
+    else:
+        delivery_error = None
     if request.method == 'POST':
         ok, error, _ = verify_parent_email_otp(parent['user_id'], request.form.get('otp', ''))
         if ok:

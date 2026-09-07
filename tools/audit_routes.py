@@ -5,7 +5,7 @@ public_prefixes={
     'auth/routes.py':{'mode_select','login','register_page','verify_parent','parent_approve_child','approve_child','register_parent','register_parent_direct_page','face_login','admin_login','logout','switch_mode'},
     'auth/api.py':{'api_login'},
 }
-route_files=sorted(set(root.rglob('routes.py'))|set(root.rglob('api.py')))
+route_files=sorted(p for p in (set(root.rglob('routes.py'))|set(root.rglob('api.py'))) if not any(part in ('.venv', 'venv', 'node_modules', '.git') for part in p.parts))
 for p in route_files:
     mod=ast.parse(p.read_text(encoding='utf-8'));rel=p.relative_to(root).as_posix()
     for n in mod.body:
@@ -43,8 +43,9 @@ for needle in ["@app.route('/uploads/<path:filename>')","if not uid:return ('Una
     if needle not in app:errors.append(f'app upload protection missing: {needle}')
 
 # template references
-html_names={p.name for p in root.rglob('*.html')}
+html_names={p.name for p in root.rglob('*.html') if not any(part in ('.venv', 'venv', 'node_modules', '.git') for part in p.parts)}
 for p in root.rglob('*.py'):
+    if any(part in ('.venv', 'venv', 'node_modules', '.git') for part in p.parts): continue
     try:mod=ast.parse(p.read_text())
     except Exception:continue
     for n in ast.walk(mod):

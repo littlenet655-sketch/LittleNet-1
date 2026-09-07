@@ -251,9 +251,12 @@ def create_app():
                 ai_ok=True;ai_detail='local'
         except Exception:
             ai_ok=False;ai_detail='remote_unavailable'
-        mail_ok=bool((os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')) and (os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')))
+        resend_key=os.getenv('RESEND_API_KEY')
+        smtp_ok=bool((os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')) and (os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')))
+        mail_ok=bool(resend_key or smtp_ok)
+        mail_mode='resend' if resend_key else ('smtp' if smtp_ok else 'not_configured')
         ok=db_ok and bool(ai_ok) and mail_ok
-        return jsonify(status='ready' if ok else 'degraded',database=db_ok,ai=ai_ok,ai_mode=ai_detail,mail=mail_ok,mail_mode='smtp' if mail_ok else 'not_configured'),(200 if ok else 503)
+        return jsonify(status='ready' if ok else 'degraded',database=db_ok,ai=ai_ok,ai_mode=ai_detail,mail=mail_ok,mail_mode=mail_mode),(200 if ok else 503)
 
     @app.after_request
     def security_headers(response):
@@ -306,7 +309,7 @@ def create_app():
             r2_origin=''
         img_src="'self' data: blob:"+(f' {r2_origin}' if r2_origin else '')
         media_src="'self' blob:"+(f' {r2_origin}' if r2_origin else '')
-        response.headers.setdefault('Content-Security-Policy',f"default-src 'self'; img-src {img_src}; media-src {media_src}; font-src 'self' https://fonts.gstatic.com data:; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+        response.headers.setdefault('Content-Security-Policy',f"default-src 'self'; img-src {img_src}; media-src {media_src}; font-src 'self' https://fonts.gstatic.com data:; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
         if request.is_secure:response.headers.setdefault('Strict-Transport-Security','max-age=31536000; includeSubDomains')
         return response
 
