@@ -82,11 +82,9 @@ def _validate_registration(form):
     if form.get('guardian_declaration') != '1':
         raise ValueError('Please confirm the adult guardian declaration.')
 
-    expected = (form.get('adult_challenge_expected') or '').strip()
-    answer = (form.get('adult_challenge_answer') or '').strip()
-    if not expected or not answer or not hmac.compare_digest(expected, answer):
-        raise ValueError('Adult verification challenge incorrect. Please try again.')
-
+    # Deliberately no arithmetic/captcha-style guardian question here. Adult
+    # status is proved by DOB validation, email ownership and the required live
+    # camera liveness/adult gate that follows OTP verification.
     return username, full_name, email, password, dob_str
 
 
@@ -251,5 +249,8 @@ def resend_parent_email_otp(user_id):
         conn.close()
 
     if not _send_code(user_id, user['email'], user['full_name'], code):
+        if os.getenv('RESEND_API_KEY'):
+            return False, 'Email delivery failed. In Resend testing mode, use the account email (littlenet655@gmail.com) or verify your domain in Resend.'
         return False, 'Email delivery is unavailable. Check SMTP configuration and try again.'
     return True, None
+

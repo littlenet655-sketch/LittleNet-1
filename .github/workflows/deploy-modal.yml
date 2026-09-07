@@ -17,14 +17,23 @@ on:
         required: true
         type: boolean
         default: true
-  # This path-scoped push makes the live gate run when its release machinery is
-  # changed. It intentionally avoids deploying on every ordinary application push.
+  # Auth, mail and camera/liveness changes are production behavior, not just
+  # source changes. They must redeploy automatically or users keep seeing the
+  # previous Modal image even after main is updated.
   push:
     branches: [ main ]
     paths:
       - '.github/workflows/deploy-modal.yml'
       - 'modal_ai.py'
       - 'modal_web.py'
+      - 'ai_server.py'
+      - 'app.py'
+      - 'auth/**'
+      - 'mailg/**'
+      - 'safety/face_service.py'
+      - 'safety/remote_client.py'
+      - 'static/js/parent_liveness_mediapipe.js'
+      - 'tools/install_mediapipe_assets.py'
       - 'services/object_storage.py'
       - 'db/migrations/**'
       - 'tools/seed_quizzes.py'

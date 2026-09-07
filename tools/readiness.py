@@ -6,7 +6,7 @@ def add(name,ok,detail=''):checks.append((name,bool(ok),detail))
 
 bad=[]
 for p in R.rglob('*.py'):
-    if '__pycache__' in p.parts:continue
+    if any(part in ('__pycache__', '.venv', 'venv', 'node_modules', '.git') for part in p.parts):continue
     try:ast.parse(p.read_text(encoding='utf-8'))
     except Exception as e:bad.append(f'{p.relative_to(R)}:{e}')
 add('Python source parses',not bad,'; '.join(bad))

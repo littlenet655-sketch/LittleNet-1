@@ -17,6 +17,8 @@ web_secret = modal.Secret.from_name(
     "littlenet-web-secrets",
     required_keys=["DATABASE_URL", "SECRET_KEY", "AI_SERVICE_URL", "AI_SHARED_SECRET"],
 )
+email_secret = modal.Secret.from_name("littlenet-email")
+
 
 web_image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -26,7 +28,8 @@ web_image = (
         "chmod +x /usr/local/bin/dbmate",
         "dbmate --version",
     )
-    .pip_install_from_requirements(str(ROOT / "requirements-safety.txt"))
+    .pip_install_from_requirements(str(ROOT / "requirements-core.txt"))
+    .pip_install("presidio-analyzer>=2.2,<3", "spacy>=3.8,<4")
     .run_commands("python -m spacy download en_core_web_sm")
     .workdir("/root/littlenet")
     .env(
@@ -38,7 +41,7 @@ web_image = (
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
-            "LITTLENET_DEPLOY_VERSION": "10",
+            "LITTLENET_DEPLOY_VERSION": "11",
         }
     )
     .add_local_dir(
@@ -60,7 +63,7 @@ web_image = (
     image=web_image,
     cpu=2.0,
     memory=2048,
-    secrets=[web_secret],
+    secrets=[web_secret, email_secret],
     volumes={"/root/littlenet/uploads": uploads},
     timeout=300,
     startup_timeout=120,
@@ -108,7 +111,7 @@ def init_database():
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/init_db.py"], check=True)
     subprocess.run(
-        ["dbmate", "--strict", "--no-dump-schema", "--migrations-dir", "db/migrations", "up"],
+        ["dbmate", "--no-dump-schema", "--migrations-dir", "db/migrations", "up"],
         check=True,
         env=os.environ.copy(),
     )
@@ -121,6 +124,18 @@ def seed_quizzes():
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/seed_quizzes.py"], check=True)
     return {"ok": True}
+
+
+def _mail_healthcheck():
+    resend_key = os.getenv("RESEND_API_KEY")
+    if resend_key:
+        return {
+            "ok": True,
+            "configured": True,
+            "provider": "resend",
+            "from": os.getenv("RESEND_FROM_EMAIL", "onboarding@resend.dev"),
+        }
+    return _smtp_healthcheck()
 
 
 def _smtp_healthcheck():
@@ -150,7 +165,7 @@ def _smtp_healthcheck():
         }
 
 
-@app.function(image=web_image, secrets=[web_secret], timeout=180)
+@app.function(image=web_image, secrets=[web_secret, email_secret], timeout=180)
 def web_preflight():
     """Fail closed unless the complete live LittleNet dependency chain is usable."""
     os.chdir("/root/littlenet")
@@ -197,7 +212,7 @@ def web_preflight():
         and "localhost" not in base_url
         and "YOUR-LITTLENET-BACKEND" not in base_url
     )
-    mail = _smtp_healthcheck()
+    mail = _mail_healthcheck()
     r2 = r2_healthcheck()
     if r2.get("ok") and schema.get("media_delete_outbox"):
         try:

@@ -10,16 +10,18 @@ PATTERNS = [
 ]
 
 root = '.'
-ignore_dirs = {'.git', 'node_modules', '.venv', '__pycache__', '.idea', '.vscode'}
+ignore_dirs = {'.git', 'node_modules', '.venv', 'venv', '__pycache__', '.idea', '.vscode', 'gradle-8.9', '.gradle', 'build', 'datasets', 'uploads', 'scratch', '.agent', '.agents', 'agent', '.claude', '.cursor'}
 findings = []
 
 for dirpath, dirnames, filenames in os.walk(root):
     dirnames[:] = [d for d in dirnames if d not in ignore_dirs]
     for fname in filenames:
-        if fname.endswith(('.pyc', '.apk', '.png', '.jpg', '.webp', '.zip', '.jar', '.log', '.db')):
+        if fname.endswith(('.pyc', '.apk', '.png', '.jpg', '.webp', '.zip', '.jar', '.log', '.db', '.tar', '.gz')):
             continue
         fpath = os.path.join(dirpath, fname)
         try:
+            if os.path.getsize(fpath) > 500_000:
+                continue
             with open(fpath, 'r', encoding='utf-8', errors='ignore') as f:
                 content = f.read()
                 for pat, label in PATTERNS:

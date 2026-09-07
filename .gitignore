@@ -43,3 +43,8 @@ walkthrough.md
 *.apk
 ngrok.exe
 datasets/*.csv
+datasets/Member_2_Processed_Dataset/
+static/vendor/
+*.zip
+playwright-report/
+test-results/

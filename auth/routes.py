@@ -236,7 +236,6 @@ def approve_child(token):
 @auth_bp.route('/register-parent/', methods=['GET', 'POST'])
 @limiter.limit('100 per hour')
 def register_parent_direct_page():
-    import random
     if request.method == 'POST':
         try:
             res = begin_parent_registration(request.form)
@@ -248,10 +247,8 @@ def register_parent_direct_page():
             session['pending_parent_delivery_error'] = not bool(res.get('email_sent'))
             return redirect('/verify-parent-email/')
         except Exception as exc:
-            n1 = random.randint(14, 28); n2 = random.randint(13, 29)
-            return render_template('parent_register_direct.html', error=str(exc), challenge_q=f'{n1} + {n2}', challenge_expected=str(n1+n2)), 400
-    n1 = random.randint(14, 28); n2 = random.randint(13, 29)
-    return render_template('parent_register_direct.html', challenge_q=f'{n1} + {n2}', challenge_expected=str(n1+n2))
+            return render_template('parent_register_direct.html', error=str(exc)), 400
+    return render_template('parent_register_direct.html')
 
 
 @auth_bp.route('/verify-parent-email/', methods=['GET', 'POST'])
@@ -260,7 +257,13 @@ def verify_parent_email_page():
     parent = _pending_parent()
     if not parent:
         return redirect('/register-parent/')
-    delivery_error = 'The account is pending, but the OTP email could not be sent. Check mail configuration, then use Resend.' if session.pop('pending_parent_delivery_error', False) else None
+    if session.pop('pending_parent_delivery_error', False):
+        if os.getenv('RESEND_API_KEY'):
+            delivery_error = 'The account is pending, but Resend could not deliver the OTP. In Resend sandbox mode, register with the account email (littlenet655@gmail.com) or verify your domain in Resend.'
+        else:
+            delivery_error = 'The account is pending, but the OTP email could not be sent. Check mail configuration, then use Resend.'
+    else:
+        delivery_error = None
     if request.method == 'POST':
         ok, error, _ = verify_parent_email_otp(parent['user_id'], request.form.get('otp', ''))
         if ok:
@@ -304,10 +307,16 @@ def verify_parent_liveness_page():
             return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']), error='The live camera capture was incomplete. Please retry in good lighting.'), 400
 
         fd, path = tempfile.mkstemp(prefix='littlenet_parent_', suffix='.jpg'); os.close(fd)
+        enrollment_error = None
         try:
             with open(path, 'wb') as f:
                 f.write(data)
             result = verify_adult_face(path)
+            if result.get('is_adult'):
+                try:
+                    enroll(parent['user_id'], path)
+                except Exception as exc:
+                    enrollment_error = exc
         finally:
             try:os.remove(path)
             except OSError:pass
@@ -320,10 +329,17 @@ def verify_parent_liveness_page():
                 message = 'Adult guardian verification failed. Parent Mode can only be activated by a verified adult.'
             return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']), error=message), 403
 
+        if enrollment_error is not None:
+            return render_template(
+                'parent_liveness_verify.html',
+                masked_email=_mask_email(parent['email']),
+                error='Your adult check passed, but Face ID enrollment could not be completed. Please retry the live blink so Parent Face ID is saved correctly.'
+            ), 503
+
         execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT' AND account_status='PENDING_APPROVAL'", (parent['user_id'],))
         try:
             from services.audit import log
-            log(parent['user_id'], 'PARENT_LIVENESS_VERIFIED', {'method': result.get('method'), 'estimated_age': result.get('estimated_age')})
+            log(parent['user_id'], 'PARENT_LIVENESS_VERIFIED', {'method': result.get('method'), 'estimated_age': result.get('estimated_age'), 'face_id_enrolled': True})
         except Exception:
             pass
         active = fetch_one('SELECT * FROM users WHERE user_id=%s', (parent['user_id'],))
@@ -377,11 +393,18 @@ def face_enroll():
 @auth_bp.route('/face-login/', methods=['GET', 'POST'])
 @limiter.limit('10 per minute')
 def face_login():
+    mode = (request.form.get('mode') or request.args.get('mode') or 'kids').strip().lower()
+    mode = 'parent' if mode == 'parent' else 'kids'
+    role = 'PARENT' if mode == 'parent' else 'CHILD'
+
     if request.method == 'POST':
         identifier = request.form.get('email', '').strip().lower()
-        user = fetch_one("SELECT * FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role='CHILD' AND account_status='ACTIVE'", (identifier, identifier))
+        user = fetch_one(
+            "SELECT * FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role=%s AND account_status='ACTIVE'",
+            (identifier, identifier, role),
+        )
         if not user:
-            return render_template('face_login.html', error='Child account not found.'), 400
+            return render_template('face_login.html', mode=mode, error=f"{'Parent' if role == 'PARENT' else 'Child'} account not found or not active."), 400
         os.makedirs('uploads/faces', exist_ok=True)
         path = os.path.join('uploads/faces', f'login_{uuid.uuid4().hex}.jpg')
         has_photo = False
@@ -397,19 +420,25 @@ def face_login():
                     has_photo = True
                 except Exception:pass
         if not has_photo:
-            return render_template('face_login.html', error='Live camera selfie is required.'), 400
+            return render_template('face_login.html', mode=mode, error='Live camera selfie is required.'), 400
         try:
             ok, reason, _ = verify(user['user_id'], path)
             if not ok:
-                return render_template('face_login.html', error='Liveness check failed. Please look straight into the camera.' if reason == 'liveness_failed' else 'Face did not match enrolled profile.'), 401
+                if reason == 'liveness_failed':
+                    error = 'Liveness check failed. Please look straight into the camera in good lighting.'
+                elif reason == 'not_enrolled':
+                    error = 'Face ID is not enrolled for this account. Use password login and complete the required face setup first.'
+                else:
+                    error = 'Face did not match the enrolled profile.'
+                return render_template('face_login.html', mode=mode, error=error), 401
             _set_session(user, 'FACE')
             return redirect(_dest(user))
         except Exception:
-            return render_template('face_login.html', error='Face authentication service unavailable. Use password login.'), 503
+            return render_template('face_login.html', mode=mode, error='Face authentication service unavailable. Use password login.'), 503
         finally:
             try:os.remove(path)
             except OSError:pass
-    return render_template('face_login.html')
+    return render_template('face_login.html', mode=mode)
 
 
 @auth_bp.route('/logout/',methods=['POST'])
