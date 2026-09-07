@@ -41,7 +41,7 @@ def test_mediapipe_build_assets_are_integrity_verified_not_just_hashed_after_dow
 
 def test_message_notes_only_select_active_parent_approved_friends():
     routes = _text('childMessage/routes.py')
-    notes_start = routes.index("# Notes are social presence")
+    notes_start = routes.index('peers = fetch_all(')
     notes_end = routes.index('sample_notes =', notes_start)
     notes = routes[notes_start:notes_end]
     assert 'FROM followers f' in notes
