@@ -27,7 +27,7 @@ let stream = null;
 let faceLandmarker = null;
 let rafId = null;
 let verified = false;
-let phase = 'CALIBRATE';
+let phase = 'WAIT_OPEN';
 let closedAt = 0;
 let closedFrames = 0;
 let openFrames = 0;
@@ -88,7 +88,7 @@ function resetBlinkSequence({ keepCalibration = true } = {}) {
     phase = 'WAIT_CLOSED';
     hud.textContent = 'BLINK ONCE NATURALLY';
   } else {
-    phase = 'CALIBRATE';
+    phase = 'WAIT_OPEN';
     calibration = [];
     openEarBaseline = null;
     hud.textContent = 'KEEP EYES OPEN';
@@ -118,8 +118,8 @@ function capture() {
 function updateBlinkState(ear, blinkScore) {
   const now = performance.now();
 
-  if (phase === 'CALIBRATE') {
-    // Only learn the person's normal open-eye geometry from clean open frames.
+  if (phase === 'WAIT_OPEN') {
+    // Learn the person's normal open-eye geometry before accepting a blink.
     if (ear > 0.10 && ear < 0.50 && blinkScore < BLEND_OPEN) {
       calibration.push(ear);
       hud.textContent = `KEEP EYES OPEN · ${Math.min(100, Math.round((calibration.length / CALIBRATION_FRAMES) * 100))}%`;
@@ -163,7 +163,7 @@ function processResult(result) {
   const landmarks = result.faceLandmarks || [];
   if (landmarks.length !== 1) {
     hud.textContent = landmarks.length > 1 ? 'ONE FACE ONLY' : 'CENTER YOUR FACE';
-    if (phase !== 'CALIBRATE') resetBlinkSequence({ keepCalibration: true });
+    if (phase !== 'WAIT_OPEN') resetBlinkSequence({ keepCalibration: true });
     return;
   }
 
