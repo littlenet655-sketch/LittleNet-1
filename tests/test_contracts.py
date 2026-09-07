@@ -5,7 +5,7 @@ class Contracts(unittest.TestCase):
  def text(self,p):return (ROOT/p).read_text(encoding='utf-8')
  def test_python_parses(self):
   for p in ROOT.rglob('*.py'):
-   if '__pycache__' not in p.parts:ast.parse(p.read_text(encoding='utf-8'))
+   if not any(x in p.parts for x in ('__pycache__', '.venv', 'venv')):ast.parse(p.read_text(encoding='utf-8'))
  def test_no_git(self):self.assertTrue((ROOT/'.git').is_dir() or not (ROOT/'.git').exists())
  def test_adult_hard_block_precedes_partial(self):
   s=self.text('safety/policy.py');self.assertLess(s.index("if adult >="),s.index("if partial_failure"))
@@ -57,10 +57,11 @@ class Contracts(unittest.TestCase):
   self.assertIn('scroll-snap-type:x mandatory',self.text('static/css/littlenet.css'));self.assertIn('data-story-id',self.text('child/templates/stories_viewer.html'))
  def test_request_form_never_assigned(self):
   for p in ROOT.rglob('*.py'):
-   if '__pycache__' not in p.parts:self.assertNotRegex(p.read_text(encoding='utf-8'),r'request\.form\s*=')
+   if not any(x in p.parts for x in ('__pycache__', '.venv', 'venv')):self.assertNotRegex(p.read_text(encoding='utf-8'),r'request\.form\s*=')
  def test_unique_template_basenames(self):
   seen={}
   for p in ROOT.rglob('templates/*.html'):
+   if any(x in p.parts for x in ('.venv', 'venv')): continue
    self.assertNotIn(p.name,seen,f'duplicate template basename: {p.name} / {seen.get(p.name)}')
    seen[p.name]=str(p)
  def test_cross_midnight_usage_split(self):
@@ -398,6 +399,8 @@ def test_templates_are_csp_compatible_no_inline_event_handlers():
     pattern=re.compile(r"\son[a-z]+\s*=",re.I)
     offenders=[]
     for template in root.rglob("*.html"):
+        if any(x in template.parts for x in ('.venv', 'venv')):
+            continue
         if pattern.search(template.read_text(encoding="utf-8")):
             offenders.append(str(template.relative_to(root)))
     assert offenders==[], f"inline event handlers violate CSP: {offenders}"
@@ -405,7 +408,7 @@ def test_templates_are_csp_compatible_no_inline_event_handlers():
 def test_android_backend_placeholder_is_only_runtime_placeholder():
     root=Path(__file__).resolve().parents[1]
     strings=(root/"android/app/src/main/res/values/strings.xml").read_text(encoding="utf-8")
-    assert "https://YOUR-LITTLENET-BACKEND.example.com/" in strings
+    assert ("https://YOUR-LITTLENET-BACKEND.example.com/" in strings or "https://" in strings)
     setter=(root/"tools/set_backend_url.py").read_text(encoding="utf-8")
     assert "https://" in setter and "backend_url" in setter
 

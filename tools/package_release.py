@@ -1,19 +1,21 @@
 """Create a clean ZIP suitable for private GitHub upload or handoff."""
 from pathlib import Path
-import shutil, zipfile
+import os, zipfile
 
 ROOT=Path(__file__).resolve().parents[1]
 OUT=ROOT.parent/'LittleNet-complete-release.zip'
-EXCLUDE_DIRS={'.git','.pytest_cache','__pycache__','.venv','venv','uploads','models','model_cache','.gradle','build'}
+EXCLUDE_DIRS={'.git','.pytest_cache','__pycache__','.venv','venv','uploads','models','model_cache','.gradle','build','datasets','scratch','.agent','.agents','agent','.claude','.cursor','gradle-8.9','node_modules'}
 EXCLUDE_FILES={'.env','local.properties'}
-EXCLUDE_SUFFIXES={'.pyc','.pyo','.jks','.keystore','.apk'}
+EXCLUDE_SUFFIXES={'.pyc','.pyo','.jks','.keystore','.apk','.zip'}
 
 if OUT.exists():OUT.unlink()
 with zipfile.ZipFile(OUT,'w',zipfile.ZIP_DEFLATED) as z:
-    for p in ROOT.rglob('*'):
-        rel=p.relative_to(ROOT)
-        if p.is_dir():continue
-        if any(part in EXCLUDE_DIRS for part in rel.parts):continue
-        if p.name in EXCLUDE_FILES or p.suffix in EXCLUDE_SUFFIXES:continue
-        z.write(p,rel.as_posix())
+    for dirpath, dirnames, filenames in os.walk(ROOT):
+        dirnames[:] = [d for d in dirnames if d not in EXCLUDE_DIRS]
+        for f in filenames:
+            p = Path(dirpath) / f
+            rel = p.relative_to(ROOT)
+            if any(part in EXCLUDE_DIRS for part in rel.parts):continue
+            if p.name in EXCLUDE_FILES or p.suffix in EXCLUDE_SUFFIXES:continue
+            z.write(p, rel.as_posix())
 print(OUT)
