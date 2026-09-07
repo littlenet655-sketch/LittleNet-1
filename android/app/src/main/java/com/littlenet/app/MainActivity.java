@@ -37,6 +37,13 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> chooser;
     private Uri cameraUri;
     private Uri backendUri;
+    private PermissionRequest pendingWebPermissionRequest;
+
+    private boolean validBackend(Uri uri) {
+        if (uri == null || !"https".equalsIgnoreCase(uri.getScheme()) || uri.getHost() == null) return false;
+        String host = uri.getHost().toLowerCase();
+        return !host.endsWith("example.com") && !host.endsWith("invalid") && !host.contains("your-littlenet-backend");
+    }
 
     private boolean sameOrigin(Uri uri) {
         if (uri == null || backendUri == null) return false;
@@ -44,6 +51,16 @@ public class MainActivity extends Activity {
         int p2 = backendUri.getPort() == -1 ? 443 : backendUri.getPort();
         return "https".equalsIgnoreCase(uri.getScheme()) && "https".equalsIgnoreCase(backendUri.getScheme())
                 && uri.getHost() != null && uri.getHost().equalsIgnoreCase(backendUri.getHost()) && p1 == p2;
+    }
+
+    private void showConfigurationError() {
+        web = new WebView(this);
+        setContentView(web);
+        String html = "<!doctype html><html><head><meta name='viewport' content='width=device-width,initial-scale=1'><style>"
+                + "body{margin:0;font-family:sans-serif;background:#FFF7ED;color:#1E1B4B;display:flex;align-items:center;justify-content:center;height:100vh;text-align:center;padding:24px;box-sizing:border-box;}"
+                + ".card{background:white;border-radius:24px;padding:28px;max-width:360px;box-shadow:0 10px 25px rgba(0,0,0,.06)}h2{color:#B45309}p{color:#64748B;line-height:1.5}"
+                + "</style></head><body><div class='card'><h2>LittleNet app is not configured</h2><p>This build does not contain a verified HTTPS LittleNet backend. Install an APK produced by the official LittleNet build workflow.</p></div></body></html>";
+        web.loadData(html, "text/html", "UTF-8");
     }
 
     private void showRetryPage(WebView view, String failingUrl) {
@@ -61,6 +78,31 @@ public class MainActivity extends Activity {
         view.loadDataWithBaseURL(failingUrl, html, "text/html", "UTF-8", failingUrl);
     }
 
+    private List<String> webResourcesAllowed(PermissionRequest request) {
+        List<String> grant = new ArrayList<>();
+        if (request == null || !sameOrigin(request.getOrigin())) return grant;
+        for (String resource : request.getResources()) {
+            if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                    && ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                grant.add(resource);
+            }
+            if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                    && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+                grant.add(resource);
+            }
+        }
+        return grant;
+    }
+
+    private void finishPendingWebPermission() {
+        PermissionRequest request = pendingWebPermissionRequest;
+        pendingWebPermissionRequest = null;
+        if (request == null) return;
+        List<String> grant = webResourcesAllowed(request);
+        if (grant.isEmpty()) request.deny();
+        else request.grant(grant.toArray(new String[0]));
+    }
+
     private void setupWebView() {
         if (web != null) {
             try {
@@ -71,7 +113,7 @@ public class MainActivity extends Activity {
         }
         web = new WebView(this);
         setContentView(web);
-        WebView.setWebContentsDebuggingEnabled(true);
+        WebView.setWebContentsDebuggingEnabled(BuildConfig.DEBUG);
         WebSettings s = web.getSettings();
         s.setJavaScriptEnabled(true);
         s.setDomStorageEnabled(true);
@@ -124,16 +166,25 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (!sameOrigin(request.getOrigin())) { request.deny(); return; }
                     List<String> needed = new ArrayList<>();
-                    if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.CAMERA);
-                    if (ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) needed.add(Manifest.permission.RECORD_AUDIO);
-                    if (!needed.isEmpty()) {
-                        ActivityCompat.requestPermissions(MainActivity.this, needed.toArray(new String[0]), RUNTIME_PERMISSIONS);
-                    }
-                    List<String> grant = new ArrayList<>();
                     for (String resource : request.getResources()) {
-                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource) && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) grant.add(resource);
-                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource) && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) grant.add(resource);
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                                && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED
+                                && !needed.contains(Manifest.permission.CAMERA)) {
+                            needed.add(Manifest.permission.CAMERA);
+                        }
+                        if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                                && ContextCompat.checkSelfPermission(MainActivity.this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED
+                                && !needed.contains(Manifest.permission.RECORD_AUDIO)) {
+                            needed.add(Manifest.permission.RECORD_AUDIO);
+                        }
                     }
+                    if (!needed.isEmpty()) {
+                        if (pendingWebPermissionRequest != null) pendingWebPermissionRequest.deny();
+                        pendingWebPermissionRequest = request;
+                        ActivityCompat.requestPermissions(MainActivity.this, needed.toArray(new String[0]), RUNTIME_PERMISSIONS);
+                        return;
+                    }
+                    List<String> grant = webResourcesAllowed(request);
                     if (grant.isEmpty()) request.deny(); else request.grant(grant.toArray(new String[0]));
                 });
             }
@@ -151,11 +202,9 @@ public class MainActivity extends Activity {
                     image.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
                 } catch (Exception e) { cameraUri = null; }
                 Intent video = new Intent(MediaStore.ACTION_VIDEO_CAPTURE);
-                Intent audio = new Intent(MediaStore.Audio.Media.RECORD_SOUND_ACTION);
                 ArrayList<Intent> extras = new ArrayList<>();
                 if (image.resolveActivity(getPackageManager()) != null) extras.add(image);
                 if (video.resolveActivity(getPackageManager()) != null) extras.add(video);
-                if (audio.resolveActivity(getPackageManager()) != null) extras.add(audio);
                 Intent chooserIntent = Intent.createChooser(pick, "Choose LittleNet media");
                 chooserIntent.putExtra(Intent.EXTRA_INITIAL_INTENTS, extras.toArray(new Intent[0]));
                 startActivityForResult(chooserIntent, FILE_CHOOSER);
@@ -169,7 +218,18 @@ public class MainActivity extends Activity {
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         backendUri = Uri.parse(getString(R.string.backend_url));
+        if (!validBackend(backendUri)) {
+            showConfigurationError();
+            return;
+        }
         setupWebView();
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == RUNTIME_PERMISSIONS) {
+            runOnUiThread(this::finishPendingWebPermission);
+        }
     }
 
     @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
@@ -198,6 +258,10 @@ public class MainActivity extends Activity {
     }
 
     @Override protected void onDestroy() {
+        if (pendingWebPermissionRequest != null) {
+            pendingWebPermissionRequest.deny();
+            pendingWebPermissionRequest = null;
+        }
         if (web != null) {
             web.stopLoading();
             web.destroy();
