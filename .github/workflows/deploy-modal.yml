@@ -71,9 +71,9 @@ jobs:
       - name: Deploy AI service
         run: modal deploy modal_ai.py --stream-logs
 
-      - name: Warm and validate every locked-scope AI model
-        run: modal run modal_ai.py
-
+      # Validate cheaper web/runtime dependencies before invoking the expensive
+      # T4 model warm gate. This avoids burning GPU credits only to discover a
+      # missing DB, mail, R2 or BASE_URL configuration later in the release.
       - name: Deploy web service
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
         run: modal deploy modal_web.py --stream-logs
@@ -89,6 +89,9 @@ jobs:
       - name: Run DB, AI, Presidio, liveness, mail, R2 and BASE_URL preflight
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
         run: modal run modal_web.py --preflight
+
+      - name: Warm and validate every locked-scope AI model
+        run: modal run modal_ai.py
 
       - name: Require public health and ready endpoints
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}

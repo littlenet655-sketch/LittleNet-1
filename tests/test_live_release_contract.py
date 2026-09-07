@@ -17,15 +17,15 @@ def test_modal_preflight_covers_full_live_stack():
         assert required in src
 
 
-def test_deploy_workflow_runs_migration_seed_strict_smoke_then_apk():
+def test_deploy_workflow_runs_cheap_runtime_gates_before_gpu_then_smoke_and_apk():
     workflow = (ROOT / '.github/workflows/deploy-modal.yml').read_text(encoding='utf-8')
     required_order = [
         'modal deploy modal_ai.py',
-        'modal run modal_ai.py',
         'modal deploy modal_web.py',
         'modal run modal_web.py --init-db',
         'modal run modal_web.py --seed',
         'modal run modal_web.py --preflight',
+        'modal run modal_ai.py',
         '/readyz',
         "E2E_REQUIRE_READY: '1'",
         ':app:assembleDebug',
