@@ -14,7 +14,14 @@ def _profile_terms(cid):
 
 def candidates(cid,cap=60):
     cats=effective_categories(cid);age_group=_age_group(cid)
-    return fetch_all('''SELECT p.*,u.full_name,cp.profile_picture,\n        (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,\n        (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,\n        EXISTS(SELECT 1 FROM followers f WHERE f.child_id=%s AND f.following_child_id=p.child_id AND f.approved=TRUE) is_following\n      FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id\n      WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=FALSE\n        AND p.content_category=ANY(%s)\n        AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)\n        AND p.child_id<>%s\n        AND p.child_id NOT IN (\n          SELECT blocked_id FROM blocked_users WHERE blocker_id=%s\n          UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s\n          UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)\n      ORDER BY p.created_at DESC LIMIT %s''',(cid,cats,age_group,age_group,cid,cid,cid,cid,cap))
+    # Reuse the exact child-discovery boundary instead of building a wider
+    # recommendation-only graph. Recommendations must never reveal children the
+    # viewer could not otherwise discover under Parent Mode policy.
+    from child.service import discoverable_child_ids
+    allowed_child_ids=discoverable_child_ids(cid)
+    if not allowed_child_ids:
+        return []
+    return fetch_all('''SELECT p.*,u.full_name,cp.profile_picture,\n        (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,\n        (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,\n        EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'\n          AND ((f.child_id=%s AND f.following_child_id=p.child_id) OR (f.child_id=p.child_id AND f.following_child_id=%s))) is_following\n      FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id\n      WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=FALSE\n        AND p.child_id=ANY(%s)\n        AND p.content_category=ANY(%s)\n        AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)\n        AND p.child_id<>%s\n        AND p.child_id NOT IN (\n          SELECT blocked_id FROM blocked_users WHERE blocker_id=%s\n          UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s\n          UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)\n      ORDER BY p.created_at DESC LIMIT %s''',(cid,cid,allowed_child_ids,cats,age_group,age_group,cid,cid,cid,cid,cap))
 
 
 def _text_for(post):
@@ -44,7 +51,8 @@ def rank_candidates(cid,rows):
             scores=rank_texts(profile_text,[_text_for(p) for p in rows])
             ai_scores={int(p['post_id']):float(score) for p,score in zip(rows,scores)}
     except Exception:
-        # Personalization is not a safety gate. A semantic model outage must not\n        # break Kids Mode; safe deterministic ranking remains available.
+        # Personalization is not a safety gate. A semantic model outage must not
+        # break Kids Mode; safe deterministic ranking remains available.
         ai_scores={}
     return sorted(rows,key=lambda p:(ai_scores.get(int(p['post_id']),-2.0),_fallback_score(p,terms),p.get('created_at')),reverse=True)
 
@@ -66,14 +74,11 @@ def apply_diversity_and_balance(ranked_posts, max_consecutive=2):
 
     while pool:
         selected_idx = None
-        # Try to find next post that doesn't violate consecutive category cap
         for idx, p in enumerate(pool):
             cat = p.get('content_category', 'Other')
             if cat != last_cat or consecutive_count < max_consecutive:
                 selected_idx = idx
                 break
-        
-        # If all remaining items share the same category, take first
         if selected_idx is None:
             selected_idx = 0
 
@@ -84,7 +89,6 @@ def apply_diversity_and_balance(ranked_posts, max_consecutive=2):
         else:
             last_cat = cat
             consecutive_count = 1
-
         balanced.append(post)
 
     return balanced
