@@ -165,17 +165,40 @@ def test_resend_sandbox_is_distinguishable_from_verified():
 
 def test_production_preflight_rejects_sandbox_only_mail():
     """Strict production preflight rejects sandbox mail mode."""
-    from modal_web import _mail_healthcheck
+    from app import create_app
+    app = create_app()
 
+    # Test that readyz rejects sandbox in STRICT_PRODUCTION_PREFLIGHT mode
     with patch.dict(os.environ, {
         "RESEND_API_KEY": "re_test_123",
         "RESEND_FROM_EMAIL": "no-reply@devpluse.in",
         "RESEND_DOMAIN_VERIFIED": "0",
+        "STRICT_PRODUCTION_PREFLIGHT": "1",
     }, clear=True):
-        health = _mail_healthcheck()
-        assert health["ok"] is True
-        assert health["mail_mode"] == "resend_sandbox"
-        assert health["is_production_ready"] is False
+        with app.test_client() as client:
+            with patch("app.fetch_one", return_value={"ok": 1}):
+                with patch("safety.remote_client.enabled", return_value=False):
+                    resp = client.get("/readyz")
+                    assert resp.status_code == 503
+                    data = resp.get_json()
+                    assert data["status"] == "degraded"
+                    assert data["mail_mode"] == "resend_sandbox"
+
+    # And passes when verified
+    with patch.dict(os.environ, {
+        "RESEND_API_KEY": "re_test_123",
+        "RESEND_FROM_EMAIL": "safety@littlenet.safe",
+        "RESEND_DOMAIN_VERIFIED": "1",
+        "STRICT_PRODUCTION_PREFLIGHT": "1",
+    }, clear=True):
+        with app.test_client() as client:
+            with patch("app.fetch_one", return_value={"ok": 1}):
+                with patch("safety.remote_client.enabled", return_value=False):
+                    resp = client.get("/readyz")
+                    assert resp.status_code == 200
+                    data = resp.get_json()
+                    assert data["status"] == "ready"
+                    assert data["mail_mode"] == "resend_verified"
 
 
 def test_otp_send_failure_never_claims_code_sent():
