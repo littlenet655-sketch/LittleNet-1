@@ -43,7 +43,7 @@ jobs:
           value = os.environ.get('BACKEND_URL', '').strip()
           parsed = urlparse(value)
           if parsed.scheme != 'https' or not parsed.netloc:
-              raise SystemExit('BACKEND_URL must be an absolute HTTPS URL')
+              raise SystemExit('BACKEND_URL must be a real HTTPS URL')
           print(f'Using HTTPS backend host: {parsed.netloc}')
           PY
       - name: Inject backend URL
