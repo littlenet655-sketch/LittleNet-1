@@ -17,7 +17,7 @@ IMG={'jpg','jpeg','png','webp'};VID={'mp4','mov','avi','mkv','webm'};AUD={'mp3',
 def _save(file,folder,ext):
     os.makedirs(folder,exist_ok=True);p=os.path.join(folder,f'{uuid.uuid4().hex}.{ext}');file.save(p);return p
 def _unlink(path):
-    if path:
+    if path and not str(path).startswith('uploads/r2/'):
         try:os.remove(path)
         except OSError:pass
 
@@ -36,8 +36,6 @@ def _merge(*signals):
         for k in ['adult_score','violence_score','weapon_score','toxicity_score','general_score']:out[k]=max(float(out.get(k,0)),float(s.get(k,0) or 0))
         out['partial_safety_failure']=out['partial_safety_failure'] or bool(s.get('partial_safety_failure'))
         out['sources'].append(s.get('category','UNKNOWN'))
-    # Every component (caption + required media) is a safety gate. If any one
-    # component totally fails moderation, the combined post must fail closed.
     out['total_safety_failure']=any(bool(s.get('total_safety_failure')) for s in valid)
     out['category']='ADULT' if out['adult_score']>=Config.ADULT_HARD_BLOCK_THRESHOLD else ('WEAPON' if out['weapon_score']>=.45 else 'CONTENT')
     return out
@@ -56,8 +54,23 @@ def _create(content_type,payload,caption,category,is_story=False,is_reel=False,p
     d=decide(merged,safety_level(session['user_id']),Config.ADULT_HARD_BLOCK_THRESHOLD)
     if d.action=='BLOCK':
         record(session['user_id'],content_type,None,merged,d);parent_notify(session['user_id'],'CONTENT_BLOCKED',d.reason,'/parent/safety/');_unlink(path);_unlink(music_path);return None,d
-    row=execute('''INSERT INTO posts(child_id,media_type,media_path,story_music_path,caption,content_category,audience_age_group,is_story,is_reel,safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id''',(
-        session['user_id'],content_type,path,music_path,caption,category,audience_age_group,is_story,is_reel,d.risk,merged['adult_score']*100,merged['violence_score']*100,merged['weapon_score']*100,merged['toxicity_score']*100,d.action=='ALLOW','ALLOWED' if d.action=='ALLOW' else 'REVIEW',d.reason),returning=True)
+
+    stored_path=path;stored_music=music_path;persisted=[]
+    try:
+        from services.media_persistence import persist_before_db,rollback_reference
+        namespace='stories' if is_story else ('reels' if is_reel else 'posts')
+        if path:
+            stored_path=persist_before_db(path,namespace,session['user_id']);persisted.append(stored_path)
+        if music_path:
+            stored_music=persist_before_db(music_path,'story-music',session['user_id']);persisted.append(stored_music)
+        row=execute('''INSERT INTO posts(child_id,media_type,media_path,story_music_path,caption,content_category,audience_age_group,is_story,is_reel,safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id''',(
+            session['user_id'],content_type,stored_path,stored_music,caption,category,audience_age_group,is_story,is_reel,d.risk,merged['adult_score']*100,merged['violence_score']*100,merged['weapon_score']*100,merged['toxicity_score']*100,d.action=='ALLOW','ALLOWED' if d.action=='ALLOW' else 'REVIEW',d.reason),returning=True)
+    except Exception:
+        try:
+            for ref in persisted:rollback_reference(ref)
+        except Exception:pass
+        _unlink(path);_unlink(music_path)
+        raise
     event=record(session['user_id'],content_type,row['post_id'],merged,d)
     if d.action=='REVIEW':parent_notify(session['user_id'],'REVIEW_REQUIRED','Content is waiting for your review',f'/parent/safety/?event={event}')
     log(session['user_id'],'POST_CREATED',{'post_id':row['post_id'],'status':d.action,'type':content_type})
@@ -90,8 +103,7 @@ def upload_post(force_kind=None):
     if category not in effective_categories(session['user_id']):return jsonify(error='This content category is disabled by Parent Mode'),403
     music_path=None;music_signals=None
     music=request.files.get('music_file') if is_story else None
-    if music and music.filename:
-        return jsonify(error='Story music/audio uploads are disabled in LittleNet'),400
+    if music and music.filename:return jsonify(error='Story music/audio uploads are disabled in LittleNet'),400
     if not file or not file.filename:
         if caption:
             _,d=_create('TEXT',caption,caption,category,is_story,is_reel,None,music_path,music_signals,audience);return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
@@ -109,7 +121,11 @@ def upload_post(force_kind=None):
     if mt=='VIDEO':
         dur=video_duration_seconds(path);limit=Config.REEL_MAX_SECONDS if is_reel else Config.STORY_MAX_SECONDS if is_story else Config.VIDEO_MAX_SECONDS
         if dur<=0 or dur>limit:_unlink(path);return jsonify(error=f'Video must be under {limit} seconds'),400
-    _,d=_create(mt,path,caption,category,is_story,is_reel,path,None,None,audience);return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
+    try:
+        _,d=_create(mt,path,caption,category,is_story,is_reel,path,None,None,audience)
+    except Exception:
+        return jsonify(error='Secure media persistence failed; content was not published'),503
+    return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
 
 @upload_bp.route('/like/<int:post_id>/',methods=['POST'])
 @child_required
@@ -162,7 +178,6 @@ def delete_post(post_id):
     if not p:return jsonify(error='not found'),404
     execute('INSERT INTO deleted_posts(original_post_id,child_id,media_type,media_path,caption,content_category) VALUES(%s,%s,%s,%s,%s,%s)',(p['post_id'],p['child_id'],p['media_type'],p.get('media_path'),p.get('caption'),p.get('content_category')))
     execute('DELETE FROM posts WHERE post_id=%s',(post_id,));_unlink(p.get('media_path'));_unlink(p.get('story_music_path'));return jsonify(ok=True)
-
 
 @upload_bp.route('/save/<int:post_id>/',methods=['POST'])
 @child_required
@@ -227,16 +242,14 @@ def upload_story_alias():
     if not controls.get('allow_posting',True) or not controls.get('allow_stories',True):return jsonify(error='Stories are disabled by Parent Mode'),403
     if category not in effective_categories(session['user_id']):return jsonify(error='This content category is disabled by Parent Mode'),403
     music=request.files.get('music_file')
-    if music and music.filename:
-        return jsonify(error='Story music/audio uploads are disabled in LittleNet'),400
+    if music and music.filename:return jsonify(error='Story music/audio uploads are disabled in LittleNet'),400
     if not files:
         if not caption:return jsonify(error='No Story content'),400
         _,d=_create('TEXT',caption,caption,category,True,False,None,None,None,audience);return jsonify(success=d.action!='BLOCK',count=1 if d.action!='BLOCK' else 0,status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
     results=[]
     for file in files[:10]:
         mt,ext=_media_type(file)
-        if mt=='AUDIO':
-            results.append({'name':file.filename,'status':'AUDIO_DISABLED'});continue
+        if mt=='AUDIO':results.append({'name':file.filename,'status':'AUDIO_DISABLED'});continue
         if mt not in {'IMAGE','VIDEO'}:results.append({'name':file.filename,'status':'UNSUPPORTED'});continue
         folder='uploads/images' if mt=='IMAGE' else 'uploads/videos';path=_save(file,folder,ext)
         try:
@@ -259,6 +272,10 @@ def delete_story(post_id):
 @upload_bp.route('/api/edit-story-caption/<int:post_id>/',methods=['POST'])
 @child_required
 def edit_story_caption(post_id):
-    data=request.get_json(silent=True) or {};caption=(data.get('caption') or '').strip();sig,d=evaluate(session['user_id'],'TEXT',caption)
+    data=request.get_json(silent=True) or {};caption=(data.get('caption') or '').strip()
+    from safety.pii_service import scan_pii
+    pii=scan_pii(caption)
+    if pii.get('detected') and pii.get('policy_action')=='BLOCK':return jsonify(ok=False,status='BLOCK',reason='CONTACT_SHARING_BLOCKED'),400
+    sig,d=evaluate(session['user_id'],'TEXT',caption)
     if d.action!='ALLOW':return jsonify(ok=False,status=d.action),400
     execute("UPDATE posts SET caption=%s WHERE post_id=%s AND child_id=%s AND is_story=TRUE AND moderation_status='ALLOWED'",(caption,post_id,session['user_id']));return jsonify(ok=True)
