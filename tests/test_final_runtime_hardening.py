@@ -26,7 +26,6 @@ def test_persist_before_db_uploads_first_and_removes_ephemeral_file(tmp_path, mo
     local = tmp_path / "photo.jpg"
     local.write_bytes(b"moderated-image")
     calls = []
-
     monkeypatch.setattr(media_persistence, "enabled", lambda: True)
 
     def fake_upload(path, key):
@@ -36,7 +35,6 @@ def test_persist_before_db_uploads_first_and_removes_ephemeral_file(tmp_path, mo
 
     monkeypatch.setattr(media_persistence, "upload_file", fake_upload)
     ref = media_persistence.persist_before_db(str(local), "posts", 7)
-
     assert ref == "uploads/r2/posts/7/private-photo.jpg"
     assert len(calls) == 1
     assert not local.exists()
@@ -46,10 +44,8 @@ def test_persist_before_db_fails_closed_without_r2(tmp_path, monkeypatch):
     local = tmp_path / "photo.jpg"
     local.write_bytes(b"moderated-image")
     monkeypatch.setattr(media_persistence, "enabled", lambda: False)
-
     with pytest.raises(RuntimeError, match="R2 is required"):
         media_persistence.persist_before_db(str(local), "posts", 7)
-
     assert local.exists()
 
 
@@ -67,7 +63,6 @@ def test_failed_r2_compensation_is_queued_for_durable_retry(monkeypatch):
             (reference, source_table, source_id)
         ),
     )
-
     media_persistence.rollback_reference("uploads/r2/posts/7/orphan.jpg")
     assert queued == [("uploads/r2/posts/7/orphan.jpg", "compensation", None)]
 
@@ -75,7 +70,6 @@ def test_failed_r2_compensation_is_queued_for_durable_retry(monkeypatch):
 def test_r2_delete_never_reports_success_when_storage_is_unconfigured(monkeypatch):
     for name in ("R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"):
         monkeypatch.delenv(name, raising=False)
-
     with pytest.raises(RuntimeError, match="R2 is not configured"):
         object_storage.delete_reference("uploads/r2/posts/7/private.jpg")
 
@@ -93,7 +87,6 @@ def test_outbox_retains_retry_state_when_private_delete_fails(monkeypatch):
         "delete_reference",
         lambda reference: (_ for _ in ()).throw(RuntimeError("R2 unavailable")),
     )
-
     result = media_outbox.reconcile_pending_deletes()
     assert result == {"checked": 1, "completed": 0, "failed": 1}
     assert any("attempts=attempts+1" in sql and "last_error=%s" in sql for sql, _ in writes)
@@ -123,11 +116,9 @@ def test_signed_r2_url_fails_closed_when_child_surface_is_locked(monkeypatch):
 def test_post_and_message_media_are_persisted_before_database_insert():
     posts = _text("uploadPost/routes.py")
     messages = _text("childMessage/routes.py")
-
     post_persist = posts.index("persist_before_db(path,namespace,session['user_id'])")
     post_insert = posts.index("INSERT INTO posts", post_persist)
     assert post_persist < post_insert
-
     message_persist = messages.index("persist_before_db(path,'messages',session['user_id'])")
     message_insert = messages.index("INSERT INTO child_messages", message_persist)
     assert message_persist < message_insert
@@ -151,8 +142,9 @@ def test_database_migration_has_identity_relationship_and_delete_outbox_invarian
 
 def test_parent_mode_uses_full_document_navigation_for_page_specific_scripts():
     parent = _text("parent/templates/parent_base.html")
-    assert 'data-no-instant' in parent
-    assert parent.count('data-no-instant') >= 10
+    assert 'a[href^="/parent/"]' in parent
+    assert "setAttribute('data-no-instant','')" in parent
+    assert "document.addEventListener('click'" in parent
 
 
 def test_retired_audio_is_absent_from_android_runtime_surface():
@@ -164,6 +156,7 @@ def test_retired_audio_is_absent_from_android_runtime_surface():
     assert "pendingWebPermission" in activity
     assert "onRequestPermissionsResult" in activity
     assert "MIXED_CONTENT_NEVER_ALLOW" in activity
+    assert "WebView.setWebContentsDebuggingEnabled(false)" in activity
 
 
 def test_stale_kivy_ngrok_entrypoint_is_removed():
