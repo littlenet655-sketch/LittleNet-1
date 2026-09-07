@@ -131,11 +131,29 @@ def verify_adult_face(img_path):
             text = resp.text.strip()
             if '{' in text and '}' in text:
                 data = json.loads(text[text.find('{'):text.rfind('}')+1])
-                age = data.get('estimated_age')
-                is_adult = bool(data.get('is_adult', False)) and (age is None or age >= 18)
+                try:
+                    age_val = float(data['estimated_age'])
+                except (KeyError, TypeError, ValueError):
+                    return {
+                        'is_adult': False,
+                        'estimated_age': None,
+                        'method': 'GEMINI_VISION',
+                        'reason': 'age_verification_unavailable',
+                    }
+
+                if not math.isfinite(age_val) or age_val < 0:
+                    return {
+                        'is_adult': False,
+                        'estimated_age': None,
+                        'method': 'GEMINI_VISION',
+                        'reason': 'age_verification_unavailable',
+                    }
+
+                age_int = int(round(age_val))
+                is_adult = bool(data.get('is_adult', False)) and age_val >= 18.0
                 return {
                     'is_adult': is_adult,
-                    'estimated_age': age,
+                    'estimated_age': age_int,
                     'method': 'GEMINI_VISION',
                     'reason': None if is_adult else 'under_age',
                 }

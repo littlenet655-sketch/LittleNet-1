@@ -224,3 +224,88 @@ def test_otp_send_failure_never_claims_code_sent():
                         "guardian_declaration": "1",
                     })
                     assert res["email_sent"] is False
+
+
+@pytest.mark.parametrize("gemini_json,expected_is_adult,expected_reason,expected_age", [
+    ('{"is_adult": true}', False, 'age_verification_unavailable', None),
+    ('{"is_adult": true, "estimated_age": null}', False, 'age_verification_unavailable', None),
+    ('{"is_adult": true, "estimated_age": "unknown"}', False, 'age_verification_unavailable', None),
+    ('{"is_adult": true, "estimated_age": "21"}', True, None, 21),
+    ('{"is_adult": true, "estimated_age": 17}', False, 'under_age', 17),
+    ('{"is_adult": false, "estimated_age": 30}', False, 'under_age', 30),
+    ('{"is_adult": true, "estimated_age": 18}', True, None, 18),
+    ('{"is_adult": true, "estimated_age": 25}', True, None, 25),
+    ('{"is_adult": true, "estimated_age": -5}', False, 'age_verification_unavailable', None),
+    ('{"is_adult": true, "estimated_age": "NaN"}', False, 'age_verification_unavailable', None),
+])
+def test_gemini_adult_age_fallback_matrix(gemini_json, expected_is_adult, expected_reason, expected_age):
+    """Test full matrix of Gemini responses ensuring numeric age >= 18 is strictly enforced."""
+    from safety.face_service import verify_adult_face
+
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(b"dummy_image_payload")
+        tmp_path = tmp.name
+
+    try:
+        mock_resp = MagicMock()
+        mock_resp.text = gemini_json
+        mock_model = MagicMock()
+        mock_model.generate_content.return_value = mock_resp
+
+        mock_genai = MagicMock()
+        mock_genai.GenerativeModel.return_value = mock_model
+
+        # Mock PIL.Image.open
+        mock_image = MagicMock()
+
+        # DeepFace raises/fails so it falls through to Gemini
+        with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key"}, clear=False):
+            mock_google = MagicMock()
+            mock_google.generativeai = mock_genai
+            with patch.dict("sys.modules", {
+                "deepface": MagicMock(DeepFace=MagicMock(extract_faces=MagicMock(side_effect=RuntimeError("no face")))),
+                "google": mock_google,
+                "google.generativeai": mock_genai,
+                "PIL": MagicMock(Image=mock_image),
+            }):
+                res = verify_adult_face(tmp_path)
+                assert res.get("is_adult") is expected_is_adult
+                assert res.get("reason") == expected_reason
+                assert res.get("estimated_age") == expected_age
+                if expected_is_adult:
+                    assert res.get("method") == "GEMINI_VISION"
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def test_gemini_fallback_fails_closed_on_exception_and_timeout():
+    """Gemini API failure or timeout must fail closed."""
+    from safety.face_service import verify_adult_face
+
+    with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+        tmp.write(b"dummy_image_payload")
+        tmp_path = tmp.name
+
+    try:
+        mock_model = MagicMock()
+        mock_model.generate_content.side_effect = TimeoutError("Gemini call timed out")
+        mock_genai = MagicMock()
+        mock_genai.GenerativeModel.return_value = mock_model
+        mock_google = MagicMock()
+        mock_google.generativeai = mock_genai
+
+        with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key"}, clear=False):
+            with patch.dict("sys.modules", {
+                "deepface": MagicMock(DeepFace=MagicMock(extract_faces=MagicMock(side_effect=RuntimeError("no face")))),
+                "google": mock_google,
+                "google.generativeai": mock_genai,
+                "PIL": MagicMock(Image=MagicMock()),
+            }):
+                res = verify_adult_face(tmp_path)
+                assert res.get("is_adult") is False
+                assert res.get("estimated_age") is None
+                assert res.get("reason") == "age_verification_unavailable"
+    finally:
+        if os.path.exists(tmp_path):
+            os.remove(tmp_path)
