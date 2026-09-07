@@ -487,13 +487,12 @@ def test_release_verifier_exists_and_allows_only_env_example():
     assert "'.env.example'" in v
 
 
-def test_email_child_approval_requires_explicit_post_confirmation():
+def test_legacy_email_child_approval_redirects_to_verified_parent_flow():
     root=Path(__file__).resolve().parents[1]
     routes=(root/'auth/routes.py').read_text(encoding='utf-8')
-    confirm=(root/'auth/templates/approve_confirm.html').read_text(encoding='utf-8')
-    assert "@auth_bp.route('/approve/<token>/',methods=['GET','POST'])" in routes
-    assert "if request.method=='GET':return render_template('approve_confirm.html'" in routes
-    assert 'csrf_token' in confirm and '<form method="post">' in confirm
+    assert "@auth_bp.route('/approve/<token>/', methods=['GET', 'POST'])" in routes
+    assert "return redirect(f'/verify-parent/{token}/', code=303)" in routes
+    assert 'token-only activation' in routes
 
 def test_token_parent_setup_requires_eight_char_password_and_rate_limit():
     root=Path(__file__).resolve().parents[1]
