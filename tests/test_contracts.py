@@ -35,7 +35,8 @@ class Contracts(unittest.TestCase):
 
  def test_media_messages_exist(self):self.assertIn("/send-media/<int:child_id>/",self.text('childMessage/routes.py'))
  def test_video_audio_moderation(self):self.assertIn('_audio_from_video',self.text('safety/visual_service.py'));self.assertIn('check_audio(ap)',self.text('safety/visual_service.py'))
- def test_story_audio_moderation(self):self.assertIn('STORY_AUDIO_BLOCKED',self.text('uploadPost/routes.py'))
+ def test_story_audio_is_retired_fail_closed(self):
+  s=self.text('uploadPost/routes.py');self.assertIn('Story music/audio uploads are disabled in LittleNet',s);self.assertIn('Standalone audio and voice uploads are disabled in LittleNet',s);self.assertNotIn("evaluate(session['user_id'],'AUDIO'",s)
  def test_profile_picture_moderation(self):self.assertIn('/child/upload-profile-picture/',self.text('child/routes.py'));self.assertIn("evaluate(session['user_id'],'IMAGE',path)",self.text('child/routes.py'))
  def test_parent_content_approval(self):self.assertIn('/parent/content-approval/',self.text('parent/routes.py'))
  def test_recommended_approved_tags(self):self.assertIn('approved=TRUE',self.text('child/service.py'));self.assertIn('/recommended/',self.text('child/routes.py'))
@@ -105,7 +106,7 @@ class Contracts(unittest.TestCase):
 
 
  def test_multi_story_upload_preserved(self):
-  s=self.text('uploadPost/routes.py');self.assertIn("request.files.getlist('media')",s);self.assertIn('for file in files[:10]',s);self.assertIn('shutil.copy2',s)
+  s=self.text('uploadPost/routes.py');self.assertIn("request.files.getlist('media')",s);self.assertIn('for file in files[:10]',s);self.assertIn("'AUDIO_DISABLED'",s);self.assertNotIn('shutil.copy2',s)
 
 
  def test_document_messages_are_not_blindly_allowed(self):

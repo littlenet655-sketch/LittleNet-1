@@ -36,7 +36,9 @@ def _merge(*signals):
         for k in ['adult_score','violence_score','weapon_score','toxicity_score','general_score']:out[k]=max(float(out.get(k,0)),float(s.get(k,0) or 0))
         out['partial_safety_failure']=out['partial_safety_failure'] or bool(s.get('partial_safety_failure'))
         out['sources'].append(s.get('category','UNKNOWN'))
-    out['total_safety_failure']=all(bool(s.get('total_safety_failure')) for s in valid)
+    # Every component (caption + required media) is a safety gate. If any one
+    # component totally fails moderation, the combined post must fail closed.
+    out['total_safety_failure']=any(bool(s.get('total_safety_failure')) for s in valid)
     out['category']='ADULT' if out['adult_score']>=Config.ADULT_HARD_BLOCK_THRESHOLD else ('WEAPON' if out['weapon_score']>=.45 else 'CONTENT')
     return out
 
@@ -89,29 +91,25 @@ def upload_post(force_kind=None):
     music_path=None;music_signals=None
     music=request.files.get('music_file') if is_story else None
     if music and music.filename:
-        ext=music.filename.rsplit('.',1)[-1].lower() if '.' in music.filename else ''
-        if ext not in AUD:return jsonify(error='Story music must be an audio file'),400
-        if request.content_length and request.content_length>90*1024*1024:return jsonify(error='Upload too large'),413
-        music_path=_save(music,'uploads/music',ext);music_signals,_=evaluate(session['user_id'],'AUDIO',music_path)
-        md=decide(music_signals,safety_level(session['user_id']),Config.ADULT_HARD_BLOCK_THRESHOLD)
-        if md.action=='BLOCK':_unlink(music_path);parent_notify(session['user_id'],'STORY_AUDIO_BLOCKED',md.reason,'/parent/safety/');return jsonify(blocked=True,reason=md.reason),400
+        return jsonify(error='Story music/audio uploads are disabled in LittleNet'),400
     if not file or not file.filename:
         if caption:
             _,d=_create('TEXT',caption,caption,category,is_story,is_reel,None,music_path,music_signals,audience);return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
-        _unlink(music_path);return jsonify(error='Select media or enter text'),400
+        return jsonify(error='Select media or enter text'),400
     mt,ext=_media_type(file)
-    if not mt:_unlink(music_path);return jsonify(error='Unsupported file'),400
-    max_mb=15 if mt=='IMAGE' else 30 if mt=='AUDIO' else 80
-    if request.content_length and request.content_length>max_mb*1024*1024+10*1024*1024:_unlink(music_path);return jsonify(error='File too large'),413
-    folder='uploads/images' if mt=='IMAGE' else 'uploads/audio' if mt=='AUDIO' else 'uploads/videos';path=_save(file,folder,ext)
+    if not mt:return jsonify(error='Unsupported file'),400
+    if mt=='AUDIO':return jsonify(error='Standalone audio and voice uploads are disabled in LittleNet'),400
+    max_mb=15 if mt=='IMAGE' else 80
+    if request.content_length and request.content_length>max_mb*1024*1024+10*1024*1024:return jsonify(error='File too large'),413
+    folder='uploads/images' if mt=='IMAGE' else 'uploads/videos';path=_save(file,folder,ext)
     if mt=='IMAGE':
         try:
             from PIL import Image;Image.open(path).verify()
-        except Exception:_unlink(path);_unlink(music_path);return jsonify(error='Invalid image'),400
+        except Exception:_unlink(path);return jsonify(error='Invalid image'),400
     if mt=='VIDEO':
         dur=video_duration_seconds(path);limit=Config.REEL_MAX_SECONDS if is_reel else Config.STORY_MAX_SECONDS if is_story else Config.VIDEO_MAX_SECONDS
-        if dur<=0 or dur>limit:_unlink(path);_unlink(music_path);return jsonify(error=f'Video must be under {limit} seconds'),400
-    _,d=_create(mt,path,caption,category,is_story,is_reel,path,music_path,music_signals,audience);return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
+        if dur<=0 or dur>limit:_unlink(path);return jsonify(error=f'Video must be under {limit} seconds'),400
+    _,d=_create(mt,path,caption,category,is_story,is_reel,path,None,None,audience);return jsonify(success=d.action!='BLOCK',status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
 
 @upload_bp.route('/like/<int:post_id>/',methods=['POST'])
 @child_required
@@ -228,38 +226,28 @@ def upload_story_alias():
     caption=(request.form.get('caption') or '').strip();category=request.form.get('content_category','Other');category=category if category in SAFE_CATEGORIES else 'Other';audience=request.form.get('audience_age_group','ALL');audience=audience if audience in {'ALL','6-8','9-11','12-13','14-18'} else 'ALL';controls=controls_for_child(session['user_id'])
     if not controls.get('allow_posting',True) or not controls.get('allow_stories',True):return jsonify(error='Stories are disabled by Parent Mode'),403
     if category not in effective_categories(session['user_id']):return jsonify(error='This content category is disabled by Parent Mode'),403
-    music=request.files.get('music_file');music_master=None;music_signals=None
+    music=request.files.get('music_file')
     if music and music.filename:
-        ext=music.filename.rsplit('.',1)[-1].lower() if '.' in music.filename else ''
-        if ext not in AUD:return jsonify(error='Story music must be audio'),400
-        music_master=_save(music,'uploads/music',ext);music_signals,_=evaluate(session['user_id'],'AUDIO',music_master);md=decide(music_signals,safety_level(session['user_id']),Config.ADULT_HARD_BLOCK_THRESHOLD)
-        if md.action=='BLOCK':_unlink(music_master);parent_notify(session['user_id'],'STORY_AUDIO_BLOCKED',md.reason,'/parent/safety/');return jsonify(blocked=True,reason=md.reason),400
+        return jsonify(error='Story music/audio uploads are disabled in LittleNet'),400
     if not files:
-        if not caption:_unlink(music_master);return jsonify(error='No Story content'),400
-        music_copy=None
-        if music_master:
-            import shutil;ext=music_master.rsplit('.',1)[-1];music_copy=os.path.join('uploads/music',f'{uuid.uuid4().hex}.{ext}');shutil.copy2(music_master,music_copy)
-        _,d=_create('TEXT',caption,caption,category,True,False,None,music_copy,music_signals,audience);_unlink(music_master);return jsonify(success=d.action!='BLOCK',count=1 if d.action!='BLOCK' else 0,status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
-    import shutil
+        if not caption:return jsonify(error='No Story content'),400
+        _,d=_create('TEXT',caption,caption,category,True,False,None,None,None,audience);return jsonify(success=d.action!='BLOCK',count=1 if d.action!='BLOCK' else 0,status=d.action,reason=d.reason,risk=d.risk),200 if d.action!='BLOCK' else 400
     results=[]
-    try:
-        for file in files[:10]:
-            mt,ext=_media_type(file)
-            if mt not in {'IMAGE','VIDEO','AUDIO'}:results.append({'name':file.filename,'status':'UNSUPPORTED'});continue
-            folder='uploads/images' if mt=='IMAGE' else 'uploads/audio' if mt=='AUDIO' else 'uploads/videos';path=_save(file,folder,ext)
-            music_copy=None
-            try:
-                if mt=='IMAGE':
-                    from PIL import Image;Image.open(path).verify()
-                if mt=='VIDEO':
-                    dur=video_duration_seconds(path)
-                    if dur<=0 or dur>Config.STORY_MAX_SECONDS:raise ValueError('story_video_duration')
-                if music_master:
-                    mx=music_master.rsplit('.',1)[-1];music_copy=os.path.join('uploads/music',f'{uuid.uuid4().hex}.{mx}');shutil.copy2(music_master,music_copy)
-                pid,d=_create(mt,path,caption,category,True,False,path,music_copy,music_signals,audience);results.append({'name':file.filename,'post_id':pid,'status':d.action})
-            except Exception:
-                _unlink(path);_unlink(music_copy);results.append({'name':file.filename,'status':'ERROR'})
-    finally:_unlink(music_master)
+    for file in files[:10]:
+        mt,ext=_media_type(file)
+        if mt=='AUDIO':
+            results.append({'name':file.filename,'status':'AUDIO_DISABLED'});continue
+        if mt not in {'IMAGE','VIDEO'}:results.append({'name':file.filename,'status':'UNSUPPORTED'});continue
+        folder='uploads/images' if mt=='IMAGE' else 'uploads/videos';path=_save(file,folder,ext)
+        try:
+            if mt=='IMAGE':
+                from PIL import Image;Image.open(path).verify()
+            if mt=='VIDEO':
+                dur=video_duration_seconds(path)
+                if dur<=0 or dur>Config.STORY_MAX_SECONDS:raise ValueError('story_video_duration')
+            pid,d=_create(mt,path,caption,category,True,False,path,None,None,audience);results.append({'name':file.filename,'post_id':pid,'status':d.action})
+        except Exception:
+            _unlink(path);results.append({'name':file.filename,'status':'ERROR'})
     accepted=[r for r in results if r.get('status') in {'ALLOW','REVIEW'}]
     return jsonify(success=bool(accepted),count=len(accepted),results=results),200 if accepted else 400
 @upload_bp.route('/api/delete-story/<int:post_id>/',methods=['POST'])
