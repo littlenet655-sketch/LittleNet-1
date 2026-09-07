@@ -1,25 +1,39 @@
-from database.connection import fetch_one, fetch_all, execute
+from database.connection import fetch_all, fetch_one, execute
+
 
 def children(parent_id):
+    """Return only children this parent currently and actively supervises."""
     return fetch_all('''
-        SELECT DISTINCT u.user_id, u.full_name, cp.profile_picture 
-        FROM parent_child_map m 
-        JOIN users u ON u.user_id = m.child_id 
-        LEFT JOIN child_profiles cp ON cp.child_id = u.user_id 
-        JOIN users p ON p.user_id = %s
-        WHERE m.parent_id = %s 
-           OR m.verified_parent_id = %s 
-           OR LOWER(m.parent_email) = LOWER(p.email)
-    ''', (parent_id, parent_id, parent_id))
+        SELECT DISTINCT u.user_id, u.full_name, cp.profile_picture
+        FROM parent_child_map m
+        JOIN users u ON u.user_id = m.child_id
+        LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+        WHERE (m.parent_id = %s OR m.verified_parent_id = %s)
+          AND m.approved = TRUE
+          AND u.role = 'CHILD'
+          AND u.account_status = 'ACTIVE'
+    ''', (parent_id, parent_id))
+
 
 def owns(parent_id, child_id):
+    """Canonical authorization predicate for parent access to child data.
+
+    Email-address matching is intentionally not ownership: it is only an
+    invitation/linking hint. Authorization requires a persisted approved mapping
+    to this parent (or verified parent) and an active child account.
+    """
     return bool(fetch_one('''
-        SELECT 1 
+        SELECT 1
         FROM parent_child_map m
-        JOIN users p ON p.user_id = %s
-        WHERE m.child_id = %s 
-          AND (m.parent_id = %s OR m.verified_parent_id = %s OR LOWER(m.parent_email) = LOWER(p.email))
-    ''', (parent_id, child_id, parent_id, parent_id)))
+        JOIN users u ON u.user_id = m.child_id
+        WHERE m.child_id = %s
+          AND (m.parent_id = %s OR m.verified_parent_id = %s)
+          AND m.approved = TRUE
+          AND u.role = 'CHILD'
+          AND u.account_status = 'ACTIVE'
+        LIMIT 1
+    ''', (child_id, parent_id, parent_id)))
+
 
 def pending_follows(parent_id):
     """Return actionable/waiting two-parent friendship stages for this parent."""
@@ -27,8 +41,11 @@ def pending_follows(parent_id):
         WITH owned AS (
           SELECT m.child_id
           FROM parent_child_map m
-          JOIN users p ON p.user_id=%s
-          WHERE m.parent_id=%s OR m.verified_parent_id=%s OR LOWER(m.parent_email)=LOWER(p.email)
+          JOIN users u ON u.user_id=m.child_id
+          WHERE (m.parent_id=%s OR m.verified_parent_id=%s)
+            AND m.approved=TRUE
+            AND u.role='CHILD'
+            AND u.account_status='ACTIVE'
         )
         SELECT * FROM (
           SELECT f.child_id, f.following_child_id,
@@ -75,7 +92,7 @@ def pending_follows(parent_id):
             AND f.child_id IN (SELECT child_id FROM owned)
         ) q
         ORDER BY actionable DESC, created_at ASC
-    ''', (parent_id,parent_id,parent_id))
+    ''', (parent_id,parent_id))
 
 
 def get_parent_weekly_digest(parent_id, child_id):
@@ -111,7 +128,7 @@ def get_parent_weekly_digest(parent_id, child_id):
     accuracy = round((correct_q / total_q * 100.0), 1) if total_q > 0 else 0.0
 
     safety_counts = fetch_one('''
-        SELECT 
+        SELECT
             COUNT(*) FILTER (WHERE decision = 'BLOCK') as blocked,
             COUNT(*) FILTER (WHERE decision = 'REVIEW') as reviews
         FROM moderation_events
@@ -151,7 +168,7 @@ def get_parent_safety_summary(parent_id, child_id):
         return None
 
     stats = fetch_one('''
-        SELECT 
+        SELECT
             COUNT(*) FILTER (WHERE decision = 'BLOCK') as blocks,
             COUNT(*) FILTER (WHERE decision = 'BLOCK' AND signals->>'category' = 'TEXT') as message_blocks,
             COUNT(*) FILTER (WHERE decision = 'REVIEW') as reviews,
