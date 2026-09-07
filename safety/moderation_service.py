@@ -1,7 +1,7 @@
 import json
 from database.connection import execute, fetch_one
 from .common import normalize_signals
-from .policy import decide
+from .policy import decide, Decision
 from .text_service import check_text
 from .visual_service import check_image
 from .video_service import check_video
@@ -15,7 +15,12 @@ def safety_level(child_id):
 def evaluate(child_id,content_type,payload,adult_threshold=.40):
     t=content_type.upper()
     if t in {'AUDIO','VOICE'}:
-        raise ValueError('Standalone audio and voice uploads are disabled in LittleNet')
+        signals=normalize_signals({
+            'category':t,
+            'total_safety_failure':True,
+            'errors':['standalone_audio_disabled'],
+        },category=t)
+        return signals,Decision('BLOCK',100.0,'Standalone audio and voice uploads are disabled in LittleNet')
     if t=='TEXT':
         signals=check_text(payload)
     elif t=='VIDEO':
