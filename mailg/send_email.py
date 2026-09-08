@@ -7,15 +7,34 @@ import urllib.request
 from email.mime.text import MIMEText
 
 
+def _resend_from_email() -> str:
+    """Return the LittleNet-owned sender, overriding stale shared-secret values."""
+    return (
+        os.getenv('LITTLENET_RESEND_FROM_EMAIL')
+        or os.getenv('RESEND_FROM_EMAIL')
+        or ''
+    ).strip()
+
+
+def _resend_domain_verified() -> bool:
+    raw = (
+        os.getenv('LITTLENET_RESEND_DOMAIN_VERIFIED')
+        or os.getenv('RESEND_DOMAIN_VERIFIED')
+        or ''
+    )
+    return raw.strip().lower() in {'1', 'true', 'yes'}
+
+
 def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_name=None):
     """Deliver an HTML email using the Resend REST API."""
     from_name = from_name or os.getenv('RESEND_FROM_NAME') or 'LittleNet Safety'
-    configured_from = from_email or os.getenv('RESEND_FROM_EMAIL')
+    configured_from = from_email or _resend_from_email()
 
     candidates = []
     if configured_from:
         candidates.append(f"{from_name} <{configured_from}>")
-    # Always include onboarding@resend.dev as fallback for unverified custom domains
+    # Keep Resend's sandbox sender as a development fallback only. Production
+    # LittleNet deployments set LITTLENET_RESEND_FROM_EMAIL to littlenet.in.
     sandbox_from = f"{from_name} <onboarding@resend.dev>"
     if sandbox_from not in candidates:
         candidates.append(sandbox_from)
@@ -45,7 +64,6 @@ def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_nam
         except urllib.error.HTTPError as exc:
             err_body = exc.read().decode("utf-8", errors="replace")
             last_error = f"HTTP {exc.code}: {err_body}"
-            # If domain is not verified, retry with sandbox from address
             if exc.code == 400 and ("not verified" in err_body.lower() or "domain" in err_body.lower()):
                 if from_header != candidates[-1]:
                     continue
@@ -96,15 +114,11 @@ def get_mail_status():
     """Determine the configured mail mode and whether it is production-verified."""
     resend_key = os.getenv('RESEND_API_KEY')
     if resend_key:
-        from_email = (os.getenv('RESEND_FROM_EMAIL') or '').strip().lower()
-        # If no custom from_email is set, or if it explicitly uses resend.dev sandbox domain
+        from_email = _resend_from_email().lower()
         if not from_email or from_email.endswith('@resend.dev') or 'onboarding@resend.dev' in from_email:
             mode = 'resend_sandbox'
         else:
-            # Check if production domain verification is verified or unverified
-            # In our deployment environment without verified DNS, devpluse.in / other domains fall back to sandbox
-            is_verified = os.getenv('RESEND_DOMAIN_VERIFIED', '').strip().lower() in {'1', 'true', 'yes'}
-            mode = 'resend_verified' if is_verified else 'resend_sandbox'
+            mode = 'resend_verified' if _resend_domain_verified() else 'resend_sandbox'
         return {
             'ok': True,
             'configured': True,
@@ -149,4 +163,3 @@ def send_email(receiver, subject, body):
     safe_subject = str(subject).encode('ascii', errors='replace').decode('ascii')
     print(f'[MAIL-DEMO] {safe_subject} -> {receiver}')
     return False
-
