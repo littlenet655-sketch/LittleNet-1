@@ -156,8 +156,11 @@ def test_retired_audio_and_webview_are_absent_from_native_flutter_runtime():
     assert "android.permission.RECORD_AUDIO" not in prepare
     assert "android.permission.CAMERA" in prepare
     assert "FlutterActivity" in prepare
-    assert "android.webkit.WebView" not in prepare
-    assert "WebViewClient" not in prepare
+    # The only WebViewClient reference is deliberately inside the fail-closed
+    # grep detector that prevents generated Android code from regressing to a
+    # WebView wrapper. It is not application/runtime code.
+    assert "WebViewClient" in prepare
+    assert "ERROR: WebView code found in native Flutter Android runner." in prepare
     assert "image_picker" in pubspec
     assert "ImageSource.camera" in auth
     assert not (ROOT / "android/app/src/main/java/com/littlenet/app/MainActivity.java").exists()
