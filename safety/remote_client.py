@@ -8,6 +8,7 @@ caller when the AI service is unavailable.
 import json
 import math
 import os
+import time
 from pathlib import Path
 
 import requests
@@ -33,6 +34,15 @@ def _timeout() -> int:
     except (TypeError, ValueError):
         configured = 120
     return max(10, min(configured, 300))
+
+
+def _health_timeout() -> int:
+    """Health probes must tolerate a Modal cold start but remain bounded."""
+    try:
+        configured = int(os.getenv("AI_HEALTH_TIMEOUT", "30"))
+    except (TypeError, ValueError):
+        configured = 30
+    return max(10, min(configured, 90))
 
 
 def _json_object(response, name: str) -> dict:
@@ -165,9 +175,41 @@ def face_adult_verify(path: str) -> dict:
 
 
 def health() -> dict:
-    r = requests.get(_base() + "/healthz", headers=_headers(), timeout=10)
-    r.raise_for_status()
-    return _json_object(r, "health")
+    """Return AI health without allowing a cold-start timeout to crash callers.
+
+    Modal may need more than ten seconds to start a scaled-to-zero AI container.
+    A release preflight should retry that bounded cold start, then return an
+    explicit unhealthy result if the service still cannot answer. Runtime safety
+    callers remain fail-closed because `ok` is never synthesized as true.
+    """
+    attempts = 3
+    try:
+        attempts = max(1, min(int(os.getenv("AI_HEALTH_ATTEMPTS", "3")), 5))
+    except (TypeError, ValueError):
+        attempts = 3
+    timeout = _health_timeout()
+    last_error = "ai_health_unavailable"
+    for attempt in range(1, attempts + 1):
+        try:
+            r = requests.get(  # nosec B113 - timeout is explicitly bounded above
+                _base() + "/healthz", headers=_headers(), timeout=timeout
+            )
+            r.raise_for_status()
+            data = _json_object(r, "health")
+            if data.get("ok") is True:
+                return data
+            last_error = str(data.get("error") or data.get("status") or "ai_not_ready")
+        except (requests.RequestException, ValueError) as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        if attempt < attempts:
+            time.sleep(min(2 * attempt, 4))
+    return {
+        "ok": False,
+        "error": "ai_health_unavailable",
+        "detail": last_error[:300],
+        "attempts": attempts,
+        "timeout_seconds": timeout,
+    }
 
 
 def rank_texts(profile_text: str, items: list[dict]) -> list[dict]:
