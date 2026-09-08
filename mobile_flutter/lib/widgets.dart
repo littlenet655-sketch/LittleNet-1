@@ -228,7 +228,10 @@ class AsyncBody extends StatelessWidget {
                 children: [
                   const Icon(Icons.cloud_off_rounded, size: 54),
                   const SizedBox(height: 12),
-                  Text(friendlyError(snapshot.error!text)),
+                  Text(
+                    friendlyError(snapshot.error!),
+                    textAlign: TextAlign.center,
+                  ),
                   const SizedBox(height: 16),
                   FilledButton.icon(
                     onPressed: onRetry,
@@ -244,8 +247,4 @@ class AsyncBody extends StatelessWidget {
       },
     );
   }
-}
-
-extension on Object {
-  Object get text => this;
 }
