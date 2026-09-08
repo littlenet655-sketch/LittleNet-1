@@ -10,6 +10,7 @@ import mimetypes
 import os
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 R2_REFERENCE_PREFIX = "uploads/r2/"
 
@@ -30,12 +31,40 @@ def enabled() -> bool:
     return _enabled()
 
 
+def _account_id() -> str:
+    """Accept either Cloudflare's bare account ID or the copied R2 endpoint URL."""
+    raw = (os.getenv("R2_ACCOUNT_ID") or "").strip()
+    if not raw:
+        return ""
+    if "://" in raw:
+        host = (urlparse(raw).hostname or "").strip().lower()
+        suffix = ".r2.cloudflarestorage.com"
+        if host.endswith(suffix):
+            return host[: -len(suffix)]
+    suffix = ".r2.cloudflarestorage.com"
+    if raw.lower().endswith(suffix):
+        return raw[: -len(suffix)].removeprefix("https://").removeprefix("http://")
+    return raw.strip("/")
+
+
+def _endpoint_url() -> str:
+    account_id = _account_id()
+    if not account_id:
+        raise RuntimeError("Cloudflare R2 account ID is not configured")
+    return f"https://{account_id}.r2.cloudflarestorage.com"
+
+
 def healthcheck() -> dict:
     if not _enabled():
         return {"ok": False, "configured": False, "bucket": os.getenv("R2_BUCKET") or None}
     try:
         _client().head_bucket(Bucket=os.environ["R2_BUCKET"])
-        return {"ok": True, "configured": True, "bucket": os.environ["R2_BUCKET"]}
+        return {
+            "ok": True,
+            "configured": True,
+            "bucket": os.environ["R2_BUCKET"],
+            "account_id_format": "normalized",
+        }
     except Exception as exc:
         return {
             "ok": False,
@@ -56,7 +85,7 @@ def _client():
 
     return boto3.client(
         "s3",
-        endpoint_url=f"https://{os.environ['R2_ACCOUNT_ID']}.r2.cloudflarestorage.com",
+        endpoint_url=_endpoint_url(),
         aws_access_key_id=os.environ["R2_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["R2_SECRET_ACCESS_KEY"],
         region_name="auto",
