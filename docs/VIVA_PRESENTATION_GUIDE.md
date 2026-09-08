@@ -1,83 +1,206 @@
-# LittleNet  -  Academic Viva Presentation Guide & Screen-to-Model Map
+# LittleNet Academic Viva Presentation Guide
 
-**Major Project Phase II (2025 - 2026)**  
+**Major Project Phase II (2025–2026)**  
 **Department of Computer Science & Engineering (Data Science)**  
-**Adichunchanagiri Institute of Technology, Chikkamagaluru**  
-**Group**: `DSPG06` | **Project**: LittleNet
+**Project:** LittleNet — Child-Centric Social Platform with AI-Based Content Filtering
 
----
+## 1. One-line explanation
 
-## 🧭 1. Screen → File → AI Model Mapping
+> LittleNet is a supervised child-focused social and learning platform where server-side moderation, approved relationships, Parent Mode controls, Face Login/liveness, and Admin/Moderator review work together to reduce unsafe content and interactions.
 
-Use this table during your viva defense to answer questions like: *"Which neural network analyzes the image?"*, *"Where is anti-spoofing implemented?"*, or *"Which file contains the safety decision policy?"*.
+## 2. Screen → route → implementation map
 
-| Screen / Feature | Route / Endpoint | Frontend Template | Backend Handler | AI Model / Safety Algorithm |
-| :--- | :--- | :--- | :--- | :--- |
-| **Kids Home Feed** | `/child/dashboard/` | [`child_dashboard.html`](file:///d:/aitprojects/LittleNet-1/child/templates/child_dashboard.html) | `child/routes.py:dashboard()` | Filtered only: approved friends + `moderation_status='ALLOWED'` |
-| **Parent Supervision Portal** | `/verify-parent/<token>/` | [`parent_verify.html`](file:///d:/aitprojects/LittleNet-1/auth/templates/parent_verify.html) | `auth/routes.py:verify_parent()` | **Face Anti-Spoofing & Liveness**: `auth/verification_provider.py` |
-| **Child Approval Review** | `/parent/approve-child/<token>/` | [`approve_child.html`](file:///d:/aitprojects/LittleNet-1/auth/templates/approve_child.html) | `auth/routes.py:parent_approve_child()` | Single-use token invalidation + cryptographic audit |
-| **Image & Post Upload** | `/child/upload-post/` | [`upload.html`](file:///d:/aitprojects/LittleNet-1/uploadPost/templates/upload.html) | `uploadPost/routes.py:upload_post()` | **Ultralytics YOLOv8n** (weapons) + **FalconsAI NSFW** + **NudeNet** + **OpenAI CLIP** |
-| **Voice & Audio Moderation** | `/childMessage/routes.py` | [`chat.html`](file:///d:/aitprojects/LittleNet-1/childMessage/templates/chat.html) | `childMessage/routes.py:send_media()` | **FFmpeg** audio extraction + **faster-whisper** transcription + **Detoxify** toxicity analysis |
-| **Reels & Clips Player** | `/reels/` | [`reels.html`](file:///d:/aitprojects/LittleNet-1/child/templates/reels.html) | `child/routes.py:reels()` | Video frame sampling + **YOLOv8** + **NudeNet** + **Detoxify** |
-| **Parent Safety Command Center** | `/parent/dashboard/` | [`parent_dashboard.html`](file:///d:/aitprojects/LittleNet-1/parent/templates/parent_dashboard.html) | `parent/routes.py:dashboard()` | Real-time screen-time limits, quiet-hour locking, behavior index |
-| **Flagged Content Review** | `/parent/safety-review/` | [`safety_review.html`](file:///d:/aitprojects/LittleNet-1/parent/templates/safety_review.html) | `parent/routes.py:safety_review()` | Multi-signal breakdown (adult/weapon/violence/toxicity) + **Blurred preview toggle** |
-| **Biometric Face Login** | `/face-login/` | [`face_login.html`](file:///d:/aitprojects/LittleNet-1/auth/templates/face_login.html) | `auth/routes.py:face_login()` | **DeepFace** facial embeddings + live anti-spoofing verification |
-| **STEM & Safety Quizzes** | `/learning/` | [`learning.html`](file:///d:/aitprojects/LittleNet-1/quiz/templates/learning.html) | `quiz/routes.py:learning_hub()` | Adaptive age-tiered question bank (6 - 8, 9 - 11, 12 - 13, 14 - 18) |
+| Feature | Main route / area | Main implementation | What to explain |
+| --- | --- | --- | --- |
+| Kids dashboard/feed | `/child/dashboard/`, `/feed/` | `child/routes.py`, `services/social.py` | Safe/eligible feed, controls and quiz gates |
+| Create post | `/child/upload-post/` | `uploadPost/routes.py` | Image/video/text moderation before publication |
+| Stories | story routes/viewer | `uploadPost/routes.py`, Stories templates/JS | Only allowed content is normally visible |
+| Reels/Clips | `/reels/` | `uploadPost/routes.py` | Short-video feed + sampled visual moderation |
+| Discover | `/discover/` | `child/service.py` / social rules | Restricted discovery rather than global strangers |
+| Messages | `/messages/`, `/chat/<id>/` | `childMessage/routes.py`, `childMessage/service.py` | Current approved relationship is rechecked |
+| Parent dashboard | `/parent/dashboard/` | `parent/routes.py` | Usage, presence, controls, safety and learning summaries |
+| Parent safety review | `/parent/safety/` | `parent/routes.py`, `safety/moderation_service.py` | Explicit review of `REVIEW` decisions |
+| Screen time | Parent time-limit/control routes | `services/usage.py` | Server-side usage sessions and lock state |
+| Face Login/liveness | face-login/verification flows | `safety/face_service.py`, auth routes, MediaPipe assets | Face/liveness evidence before protected activation/login behavior |
+| Learning/quizzes | `/learning/` and quiz routes | `quiz/` | Age-group quizzes/challenges and learning features |
+| Admin/Moderator | `/admin/`, `/admin/moderation/` | `admin/routes.py` | Reports, moderation events, forced block and audit logs |
+| Android app | `android/` | `MainActivity.java`, Android resources | WebView wrapper using the same HTTPS Flask backend |
 
----
+## 3. Moderation scope you must state correctly
 
-## 🎯 2. 5-Minute Viva Demo Script
+### Active in the current build
 
-When demonstrating LittleNet to internal or external examiners, follow this exact sequence:
+- image moderation
+- sampled video-frame moderation
+- text/caption/comment/message moderation
+- PII/contact-sharing protection
+- contextual chat safety with fail-safe fallback
+- Parent Mode `REVIEW`
+- Admin/Moderator auditing
 
-### Step 1: Show the Kid-Safe Interface (1 minute)
-1. Open **[https://littlenet655--littlenet-web-web.modal.run](https://littlenet655--littlenet-web-web.modal.run)** on mobile or desktop.
-2. Log in to Kids Mode:
-   - **Username**: `ait_star_student`
-   - **Password**: `StudentAIT2026!`
-3. Point out the child-safe visual design:
-   - Warm cream background (`#FFF7ED`), candy-gradient story rings, rounded cards (20px), and bottom navigation (`Home`, `Find`, `Create`, `Clips`, `Me`).
-   - Note that there are **no stranger feeds** - only parent-approved connections and educational topics.
+### Intentionally not active
 
-### Step 2: Test Content Safety Filtering (1.5 minutes)
-1. Navigate to **Create** (`/child/upload-post/`).
-2. Upload a benign school image (e.g. books, plants) → AI marks it **Allowed** instantly.
-3. Attempt to upload an unsafe sample (or text containing cyberbullying) → AI immediately intercepts:
-   - Hard blocks 18+ content or dangerous objects.
-   - For ambiguous cases, marks as **REVIEW** and routes to the supervising parent without showing the item on the public feed.
+- standalone audio/voice uploads
+- story music/audio uploads
+- speech-to-text moderation
 
-### Step 3: Show the Parent Command Center (1.5 minutes)
-1. Log into Parent Mode:
-   - **Email**: `mentor_parent@ait.edu`
-   - **Password**: `ParentAIT2026!`
-2. Demonstrate **Parent Review** (`/parent/safety-review/`):
-   - Show the 4 model signal meters: **Adult %**, **Weapon %**, **Violence %**, and **Toxicity %**.
-   - Show the **Blurred Media Preview** with the explicit toggle: *"Show flagged media"*. Point out that children never see raw flagged content.
-3. Show parental controls:
-   - Daily screen-time slider (e.g. 60 mins).
-   - Strict mode toggle.
-   - Quiet-hours automated lockdown.
+Video audio is stripped before persistence. Older Phase-I material may mention speech transcription, but it is not part of the locked final college demo.
 
-### Step 4: Show the Multi-Step Parent Verification Flow (1 minute)
-1. Explain the registration security:
-   - Child cannot self-approve.
-   - Parent receives a secure invitation link.
-   - Parent opens the dedicated **Parent Supervision Portal** (`/verify-parent/<token>/`).
-   - Uses WebRTC camera for live parent selfie anti-spoofing and enters 12-digit mock Aadhaar ID.
-   - Approves child account, transitioning status from `PENDING_APPROVAL` to `ACTIVE`.
+## 4. Five-minute demo flow
 
----
+### Step 1 — Kids Mode (about 1 minute)
 
-## 🧠 3. Key Theoretical & Architecture Answers for Viva
+1. Open the configured LittleNet deployment or the Android APK.
+2. Log in with your prepared demo CHILD account. Do not hard-code or publish the credentials in project documents.
+3. Show:
+   - feed
+   - Stories/Reels entry points
+   - Discover restrictions
+   - profile/learning access
 
-**Q1: Why did you choose a multi-modal ensemble instead of a single model?**  
-> *"Social media content is rarely unimodal. Harmful content can manifest as text cyberbullying, image nudity, video physical violence, or audio harassment in reels. By combining YOLOv8 (objects), NudeNet & CLIP (visual context), Detoxify (text semantics), and Whisper (speech-to-text), LittleNet detects coordinated multi-modal violations that single models miss."*
+Explain that authorization and safety decisions live on the Flask/PostgreSQL backend, so the Android wrapper and browser use the same rules.
 
-**Q2: What is your fail-closed policy, and why is it important for child safety?**  
-> *"In safety engineering ([`safety/policy.py`](file:///d:/aitprojects/LittleNet-1/safety/policy.py)), if an AI model times out or the network drops (`total_safety_failure`), LittleNet strictly defaults to BLOCK. In partial failure (`partial_safety_failure`), it routes to parent REVIEW. It NEVER silently allows content when models are down. In child protection, a false positive (flagging benign content for parent check) is acceptable, but a false negative (exposing a child to harm) is catastrophic."*
+### Step 2 — Content moderation (about 1 minute)
 
-**Q3: How does LittleNet prevent fake accounts or child impersonation?**  
-> *"Every child account must be sponsored and verified by a parent. The parent must complete live selfie anti-spoofing verification and identity verification in the parent portal before the child account is activated. Connections between children must also be mutually approved by their respective supervising parents."*
+Use pre-tested demo samples:
 
-**Q4: How does the system handle high-latency AI inference without lagging the web server?**  
-> *"We implemented an asynchronous deployment split: the web frontend runs in a lightweight container ([`Dockerfile.web`](file:///d:/aitprojects/LittleNet-1/Dockerfile.web) / `requirements-core.txt`) with zero PyTorch overhead, while GPU-intensive neural nets run on an Nvidia Tesla T4 microservice ([`modal_ai.py`](file:///d:/aitprojects/LittleNet-1/modal_ai.py)) with dedicated timeout guards and caching."*
+1. Safe image/text -> explain `ALLOW`.
+2. Unsafe/toxic/contact-sharing content -> explain `BLOCK` or the corresponding safety result.
+3. Ambiguous sample -> explain `REVIEW` and Parent Mode visibility.
+
+Do not use untested extreme content in the live viva. Use controlled samples that already worked in rehearsal.
+
+### Step 3 — Parent Mode (about 1 minute)
+
+Log in with a prepared PARENT demo account and show:
+
+- child dashboard summary
+- safety review
+- daily screen-time limit
+- quiet hours
+- feature/category controls
+- notifications/usage information
+
+Explain that parent access requires an ACTIVE parent account plus an approved parent-child mapping.
+
+### Step 4 — Messaging authorization (about 45 seconds)
+
+1. Show messaging between approved child accounts.
+2. Explain that LittleNet checks the relationship even when a conversation already exists.
+3. If you have prepared the demo data, revoke/block the relationship and show that the old conversation cannot be reused for continued access.
+
+### Step 5 — Face/liveness + Admin + APK (about 1 minute)
+
+- Explain that guardian/adult verification requires exactly one face and positive liveness evidence.
+- Show the Admin/Moderator screen with moderation/audit evidence.
+- Show the Android APK and explain that it was built from the same source and points to the HTTPS backend.
+
+## 5. Core viva questions and strong answers
+
+### Q1. Why is LittleNet needed?
+
+Children use social-style platforms but ordinary platforms are not designed around guardian supervision. LittleNet combines social features with parent-controlled relationships, safety moderation, screen-time controls, learning features and auditable review.
+
+### Q2. Why do you use multiple safety signals?
+
+Different harms appear differently. Visual content can contain adult imagery or dangerous objects, while text can contain toxicity, grooming/secrecy patterns or contact-sharing attempts. LittleNet combines the relevant evidence before making one policy decision.
+
+### Q3. What are `ALLOW`, `REVIEW` and `BLOCK`?
+
+- `ALLOW`: normal visibility is permitted.
+- `REVIEW`: content is held for Parent Mode review.
+- `BLOCK`: a hard safety rule rejects or hides the item.
+
+This gives a middle state for uncertain content instead of forcing every decision into safe/unsafe only.
+
+### Q4. What does “fail closed” mean here?
+
+If required safety evidence is completely unavailable or malformed, LittleNet does not silently convert that into a safe score. Total safety failures use a hard safe outcome; partial failures route to review. This is important because a broken safety service must not become a bypass.
+
+### Q5. How did you fix the AI-response safety issue?
+
+The normalization layer now validates the signal envelope and score types/ranges. An empty or malformed result is marked as a safety failure instead of becoming zeros. Regression tests cover this behavior.
+
+### Q6. How does video moderation work?
+
+The current college implementation samples frames across a short uploaded video, runs visual safety checks and aggregates the results. If a sampled frame fails to be evaluated, that failure is preserved and can force review. It is sampling-based and does not claim perfect inspection of every video frame.
+
+### Q7. Does the current project moderate audio using speech-to-text?
+
+No. Standalone audio/voice and story-music uploads are intentionally disabled in the locked current build, and video audio is stripped before persistence. Earlier designs mentioned speech transcription, but we removed that dependency to keep the final project stable and demonstrable.
+
+### Q8. How do you prevent proxy/unauthorized child messaging?
+
+Messaging requires an approved current relationship. LittleNet rechecks that relationship before returning or creating a conversation and before reading messages. Therefore an old conversation ID cannot be used after the connection is revoked or blocked.
+
+### Q9. How does Parent Mode authorization work?
+
+Sensitive child access uses a canonical ownership check that requires an approved parent-child mapping and an ACTIVE parent account. Private media access uses the same ownership rule.
+
+### Q10. How is screen time enforced?
+
+The backend stores usage sessions and calculates current daily usage. Missing/stale sessions are recreated before the lock decision. Time is accumulated in seconds before conversion to display minutes so repeated short sessions are not lost. Daily limits and quiet hours are enforced server-side.
+
+### Q11. What is special about the face/liveness hardening?
+
+The system no longer treats image dimensions or missing face metadata as proof. Adult/guardian verification requires exactly one face and explicit positive liveness evidence. Age-boundary logic also avoids rounding 17.x into an adult result.
+
+### Q12. Why Flask + PostgreSQL?
+
+Flask keeps the college backend understandable and modular, while PostgreSQL gives reliable persistent relational state for users, parent-child mappings, social relationships, posts, messages, moderation events, usage logs and learning data.
+
+### Q13. Why an Android WebView instead of rebuilding everything natively?
+
+The project goal is to deliver a working Android application without duplicating the whole web product. The WebView wrapper reuses the same tested Flask routes and safety policy, reducing divergence between browser and mobile behavior.
+
+### Q14. What proof do you have that the project is working?
+
+For the current merged baseline:
+
+- 331 tests passed, 1 database-service smoke test skipped in the ordinary unit job
+- dedicated real PostgreSQL Child/Parent/Admin E2E passed
+- 130 routes audited with 0 errors
+- 76 templates audited with 0 errors
+- scope check 53/53 passed
+- dynamic SQL, Python security, secret scan and MediaPipe integrity passed
+- Android APK build passed on the current source commit
+
+### Q15. Is the latest commit already deployed to Modal?
+
+Not yet. The automated deploy workflow is ready, but the repository currently has no `MODAL_TOKEN_ID` or `MODAL_TOKEN_SECRET` GitHub Actions secrets. The latest deployment run stopped before any deploy command. This is an external credential configuration step, not an application test failure.
+
+## 6. Architecture answer in simple words
+
+> The child, parent, admin dashboard and Android app all talk to the Flask backend. Flask checks the user role, parent-child/child-child relationships, Parent Mode controls and moderation policy. PostgreSQL stores the system state. Safety services produce evidence, and the policy converts that evidence into ALLOW, REVIEW or BLOCK. This means the frontend cannot simply bypass the important safety decisions.
+
+## 7. What not to claim in the viva
+
+Do not say:
+
+- “LittleNet is 100% production ready.”
+- “Every video frame is scanned.”
+- “Speech transcription is active.”
+- “The latest commit is already live on Modal” until the deployment workflow passes.
+- “We support millions of users.”
+- “AI is always correct.”
+- “Aadhaar verification is implemented” unless you have separately added and verified such a real feature.
+
+Prefer:
+
+- “This is a verified college submission candidate.”
+- “We use sampled video-frame moderation.”
+- “Uncertain/partial failures go to parent review.”
+- “The current APK is CI-built from the verified source.”
+- “The final hosted redeploy needs the Modal GitHub Actions credentials restored.”
+
+## 8. Current evidence snapshot
+
+Baseline commit: `304f35052e033726b00e9b7e229141b42d32fd6c`
+
+Current APK artifact:
+
+- name: `LittleNet-debug-apk`
+- package: `com.littlenet.app`
+- digest: `sha256:f38cc4e79a14bcf7de405e2d735a5869f11716cf6aab853809ebbfb2c0c43f65`
+
+Use the regenerated submission ZIP after the documentation-consistency fix rather than an older package that still contains outdated speech/audio claims.
