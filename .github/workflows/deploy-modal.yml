@@ -28,6 +28,7 @@ on:
       - 'auth/**'
       - 'mailg/**'
       - 'safety/**'
+      - 'safety/face_service.py'
       - 'services/**'
       - 'parent/**'
       - 'child/**'
@@ -37,6 +38,7 @@ on:
       - 'quiz/**'
       - 'mobile/**'
       - 'static/js/**'
+      - 'static/js/parent_liveness_mediapipe.js'
       - 'db/migrations/**'
       - 'database/**'
       - 'tools/install_mediapipe_assets.py'
@@ -96,6 +98,9 @@ jobs:
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
         run: modal run modal_web.py --seed
 
+      # Warm the AI deployment before the strict web preflight. A cold Modal GPU
+      # can legitimately need longer than the web health probe timeout, while the
+      # warmup itself validates the complete locked model set.
       - name: Warm and validate every locked-scope AI model
         run: modal run modal_ai.py
 
