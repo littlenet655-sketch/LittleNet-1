@@ -2,16 +2,17 @@ from database.connection import fetch_one, fetch_all, execute
 
 
 def children(parent_id):
-    """Return children linked through an established approved parent mapping."""
+    """Return children linked to a currently active parent through an approved mapping."""
     return fetch_all('''
         SELECT DISTINCT u.user_id, u.full_name, cp.profile_picture
         FROM parent_child_map m
         JOIN users u ON u.user_id = m.child_id AND u.role='CHILD'
+        JOIN users p ON p.user_id=%s AND p.role='PARENT' AND p.account_status='ACTIVE'
         LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
         WHERE m.approved=TRUE
           AND m.approval_status='APPROVED'
           AND (m.parent_id=%s OR m.verified_parent_id=%s)
-    ''', (parent_id, parent_id))
+    ''', (parent_id, parent_id, parent_id))
 
 
 def owns(parent_id, child_id):
@@ -20,20 +21,22 @@ def owns(parent_id, child_id):
         SELECT 1
         FROM parent_child_map m
         JOIN users u ON u.user_id=m.child_id AND u.role='CHILD'
+        JOIN users p ON p.user_id=%s AND p.role='PARENT' AND p.account_status='ACTIVE'
         WHERE m.child_id=%s
           AND m.approved=TRUE
           AND m.approval_status='APPROVED'
           AND (m.parent_id=%s OR m.verified_parent_id=%s)
         LIMIT 1
-    ''', (child_id, parent_id, parent_id)))
+    ''', (parent_id, child_id, parent_id, parent_id)))
 
 
 def pending_follows(parent_id):
-    """Return actionable/waiting two-parent friendship stages for this parent."""
+    """Return actionable/waiting two-parent friendship stages for this active parent."""
     return fetch_all('''
         WITH owned AS (
           SELECT m.child_id
           FROM parent_child_map m
+          JOIN users p ON p.user_id=%s AND p.role='PARENT' AND p.account_status='ACTIVE'
           WHERE m.approved=TRUE
             AND m.approval_status='APPROVED'
             AND (m.parent_id=%s OR m.verified_parent_id=%s)
@@ -83,7 +86,7 @@ def pending_follows(parent_id):
             AND f.child_id IN (SELECT child_id FROM owned)
         ) q
         ORDER BY actionable DESC, created_at ASC
-    ''', (parent_id,parent_id))
+    ''', (parent_id,parent_id,parent_id))
 
 
 def get_parent_weekly_digest(parent_id, child_id):
@@ -105,10 +108,11 @@ def get_parent_weekly_digest(parent_id, child_id):
         return json.loads(data) if isinstance(data, str) else data
 
     usage_row = fetch_one('''
-        SELECT COALESCE(SUM(duration_minutes), 0) as mins FROM child_usage_logs
+        SELECT COALESCE(SUM(GREATEST(EXTRACT(EPOCH FROM (logout_time-login_time)),0)), 0) AS seconds
+        FROM child_usage_logs
         WHERE child_id = %s AND usage_date >= CURRENT_DATE - INTERVAL '7 days'
     ''', (child_id,))
-    screen_hours = round(float((usage_row or {}).get('mins', 0)) / 60.0, 1)
+    screen_hours = round(float((usage_row or {}).get('seconds', 0) or 0) / 3600.0, 1)
 
     attempts = fetch_all('''
         SELECT is_correct FROM child_quiz_attempts

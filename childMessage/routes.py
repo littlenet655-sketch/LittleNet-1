@@ -6,6 +6,7 @@ from services.social import can_interact,parent_notify,post_visible_to,notify
 from childMessage.service import conversation,messages
 from extensions import limiter
 from safety.moderation_service import evaluate,record
+from safety.policy import Decision
 from services.audit import log
 
 child_message_bp=Blueprint('child_message',__name__,template_folder='templates')
@@ -113,20 +114,25 @@ def send_text(child_id):
     if d.action=='BLOCK':
         parent_notify(session['user_id'],'MESSAGE_BLOCKED',d.reason,'/parent/safety/')
         return jsonify(blocked=True,error="This message can't be sent for safety.",reason=d.reason),400
-    final_action = d.action;cid = conversation(session['user_id'],child_id)
+    cid=conversation(session['user_id'],child_id)
+    if not cid:return jsonify(error='approved connection required'),403
+    final_decision=d
     high_risk_triggers = ('secret',"don't tell","dont tell",'meet','photo','pic','picture','selfie','wear','wearing','private','snap','insta','telegram','phone','number','address','alone')
     needs_contextual_eval = any(t in text.lower() for t in high_risk_triggers) or d.action == 'REVIEW'
     from services.ai import get_ai_client
     ai_client = get_ai_client()
-    if needs_contextual_eval and ai_client.is_k2_available():
+    if needs_contextual_eval:
         recent = fetch_all("SELECT sender_child_id, message_text FROM child_messages WHERE conversation_id=%s ORDER BY sent_at DESC LIMIT 5", (cid,))
         ai_res = ai_client.evaluate_chat_safety(recent, session['user_id'], child_id, text)
         if ai_res.action == 'BLOCK':
             parent_notify(session['user_id'],'MESSAGE_BLOCKED',f"AI detected {ai_res.primary_category}",'/parent/safety/')
             return jsonify(blocked=True,error="This message can't be sent for safety.",reason=ai_res.reason_code),400
-        elif ai_res.action == 'REVIEW':final_action = 'REVIEW'
+        if ai_res.action == 'REVIEW' and d.action == 'ALLOW':
+            contextual_risk=max(float(d.risk),float(ai_res.risk_score)*100.0)
+            final_decision=Decision('REVIEW',contextual_risk,f'contextual safety review: {ai_res.reason_code}')
+    final_action=final_decision.action
     row=execute("INSERT INTO child_messages(conversation_id,sender_child_id,receiver_child_id,message_type,message_text,moderation_status) VALUES(%s,%s,%s,'TEXT',%s,%s) RETURNING child_message_id",(cid,session['user_id'],child_id,text,'ALLOWED' if final_action=='ALLOW' else 'REVIEW'),returning=True)
-    record(session['user_id'],'MESSAGE',row['child_message_id'],sig,d)
+    record(session['user_id'],'MESSAGE',row['child_message_id'],sig,final_decision)
     if final_action=='REVIEW':parent_notify(session['user_id'],'REVIEW_REQUIRED','A message needs safety review','/parent/safety/')
     else:notify(child_id,'MESSAGE',f'{session.get("full_name","Someone")} sent you a message',f'/chat/{session["user_id"]}/',session['user_id'])
     log(session['user_id'],'MESSAGE_SENT',{'to':child_id,'status':final_action})
@@ -140,6 +146,7 @@ def share_post(child_id,post_id):
     ok, reason = is_post_shareable_to(post_id, session['user_id'], child_id)
     if not ok:return jsonify(error=reason),403
     cid=conversation(session['user_id'],child_id)
+    if not cid:return jsonify(error='approved connection required'),403
     execute("INSERT INTO child_messages(conversation_id,sender_child_id,receiver_child_id,message_type,shared_post_id,moderation_status) VALUES(%s,%s,%s,'SHARED_POST',%s,'ALLOWED')",(cid,session['user_id'],child_id,post_id))
     notify(child_id,'MESSAGE',f'{session.get("full_name","Someone")} shared a post with you',f'/chat/{session["user_id"]}/',session['user_id'])
     return jsonify(ok=True)
@@ -175,6 +182,9 @@ def send_media(child_id):
         from services.media_persistence import persist_before_db,rollback_reference
         reference=persist_before_db(path,'messages',session['user_id'])
         cid=conversation(session['user_id'],child_id)
+        if not cid:
+            rollback_reference(reference)
+            return jsonify(error='approved connection required'),403
         try:
             row=execute('INSERT INTO child_messages(conversation_id,sender_child_id,receiver_child_id,message_type,media_path,moderation_status) VALUES(%s,%s,%s,%s,%s,%s) RETURNING child_message_id',(cid,session['user_id'],child_id,kind,reference,'ALLOWED' if d.action=='ALLOW' else 'REVIEW'),returning=True)
         except Exception:

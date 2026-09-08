@@ -6,6 +6,7 @@ Every network request has a centrally bounded timeout and fails closed in its
 caller when the AI service is unavailable.
 """
 import json
+import math
 import os
 from pathlib import Path
 
@@ -34,6 +35,23 @@ def _timeout() -> int:
     return max(10, min(configured, 300))
 
 
+def _json_object(response, name: str) -> dict:
+    data = response.json()
+    if not isinstance(data, dict):
+        raise ValueError(f"{name}_invalid_json")
+    return data
+
+
+def _moderation_signals(response) -> dict:
+    data = _json_object(response, "moderation")
+    if data.get("ok") is False:
+        raise ValueError(str(data.get("error") or "moderation_failed"))
+    signals = data.get("signals")
+    if not isinstance(signals, dict) or not signals:
+        raise ValueError("moderation_signals_missing")
+    return signals
+
+
 def moderate_text(text: str) -> dict:
     r = requests.post(  # nosec B113 - timeout is explicitly bounded by _timeout()
         _base() + "/ai/moderate",
@@ -41,7 +59,7 @@ def moderate_text(text: str) -> dict:
         headers=_headers(), timeout=_timeout(),
     )
     r.raise_for_status()
-    return r.json()["signals"]
+    return _moderation_signals(r)
 
 
 def moderate_file(content_type: str, path: str) -> dict:
@@ -53,7 +71,7 @@ def moderate_file(content_type: str, path: str) -> dict:
             headers=_headers(), timeout=_timeout(),
         )
     r.raise_for_status()
-    return r.json()["signals"]
+    return _moderation_signals(r)
 
 
 def face_embedding(path: str) -> list[float]:
@@ -64,10 +82,19 @@ def face_embedding(path: str) -> list[float]:
             headers=_headers(), timeout=_timeout(),
         )
     r.raise_for_status()
-    data = r.json()
-    if not data.get("ok"):
+    data = _json_object(r, "face_embedding")
+    if data.get("ok") is not True:
         raise ValueError(data.get("reason", "face_error"))
-    return [float(x) for x in data["embedding"]]
+    raw = data.get("embedding")
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("face_embedding_missing")
+    emb=[]
+    for value in raw:
+        if isinstance(value,bool):raise ValueError("face_embedding_invalid")
+        value=float(value)
+        if not math.isfinite(value):raise ValueError("face_embedding_invalid")
+        emb.append(value)
+    return emb
 
 
 def face_verify(reference, path: str) -> dict:
@@ -79,7 +106,17 @@ def face_verify(reference, path: str) -> dict:
             headers=_headers(), timeout=_timeout(),
         )
     r.raise_for_status()
-    return r.json()
+    data = _json_object(r, "face_verify")
+    if data.get("ok") is True:
+        if not isinstance(data.get("matched"),bool):raise ValueError("face_verify_matched_invalid")
+        distance=data.get("distance")
+        if isinstance(distance,bool):raise ValueError("face_verify_distance_invalid")
+        distance=float(distance)
+        if not math.isfinite(distance):raise ValueError("face_verify_distance_invalid")
+        data["distance"]=distance
+    elif data.get("ok") is not False:
+        raise ValueError("face_verify_ok_invalid")
+    return data
 
 
 def face_adult_verify(path: str) -> dict:
@@ -91,26 +128,46 @@ def face_adult_verify(path: str) -> dict:
             headers=_headers(), timeout=_timeout(),
         )
     r.raise_for_status()
-    data = r.json()
-    if not data.get("ok"):
+    data = _json_object(r, "adult_face")
+    if data.get("ok") is not True:
         return {
             "is_adult": False,
             "estimated_age": None,
             "method": "REMOTE_AI",
             "reason": data.get("reason", "adult_face_verification_failed"),
         }
-    return data.get("result") or {
-        "is_adult": False,
-        "estimated_age": None,
-        "method": "REMOTE_AI",
-        "reason": "adult_face_verification_empty",
-    }
+    result=data.get("result")
+    if not isinstance(result,dict):
+        return {
+            "is_adult": False,
+            "estimated_age": None,
+            "method": "REMOTE_AI",
+            "reason": "adult_face_verification_empty",
+        }
+    if result.get("is_adult") is True:
+        try:age=float(result.get("estimated_age"))
+        except (TypeError,ValueError):age=float("nan")
+        if not math.isfinite(age) or age<18.0:
+            return {
+                "is_adult": False,
+                "estimated_age": None,
+                "method": "REMOTE_AI",
+                "reason": "adult_face_verification_invalid",
+            }
+    elif result.get("is_adult") is not False:
+        return {
+            "is_adult": False,
+            "estimated_age": None,
+            "method": "REMOTE_AI",
+            "reason": "adult_face_verification_invalid",
+        }
+    return result
 
 
 def health() -> dict:
     r = requests.get(_base() + "/healthz", headers=_headers(), timeout=10)
     r.raise_for_status()
-    return r.json()
+    return _json_object(r, "health")
 
 
 def rank_texts(profile_text: str, items: list[dict]) -> list[dict]:
@@ -122,4 +179,6 @@ def rank_texts(profile_text: str, items: list[dict]) -> list[dict]:
         _base()+"/ai/rank", json=payload, headers=_headers(), timeout=_timeout()
     )
     r.raise_for_status()
-    return r.json().get("items",[])
+    data=_json_object(r,"rank")
+    rows=data.get("items",[])
+    return rows if isinstance(rows,list) else []

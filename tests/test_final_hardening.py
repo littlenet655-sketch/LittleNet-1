@@ -25,7 +25,7 @@ def test_verify_adult_face_fails_closed_on_dimensions_alone():
             assert res.get("is_adult") is False
             assert res.get("estimated_age") is None
             assert res.get("method") != "LIVENESS_CAMERA"
-            assert res.get("reason") in {"liveness_failed", "liveness_unavailable", "age_verification_unavailable"}
+            assert res.get("reason") in {"liveness_failed", "liveness_unavailable", "age_verification_unavailable", "single_face_required"}
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -78,7 +78,7 @@ def test_verify_adult_face_blocks_liveness_failure():
 
 
 def test_verify_adult_face_fails_closed_when_age_model_unavailable():
-    """When no age model or detector succeeds, verify_adult_face must fail closed without guessing."""
+    """When no age model succeeds after liveness, verify_adult_face must fail closed without guessing."""
     from safety.face_service import verify_adult_face
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -88,8 +88,7 @@ def test_verify_adult_face_fails_closed_when_age_model_unavailable():
     try:
         mock_deepface = MagicMock()
         mock_deepface.extract_faces.return_value = [{"is_real": True}]
-        # analyze raises an error (e.g. model unavailable / no face)
-        mock_deepface.analyze.side_effect = RuntimeError("Face could not be detected")
+        mock_deepface.analyze.side_effect = RuntimeError("Age model unavailable")
 
         with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "", "GOOGLE_API_KEY": ""}, clear=False):
             with patch.dict("sys.modules", {"deepface": MagicMock(DeepFace=mock_deepface)}):
@@ -239,7 +238,7 @@ def test_otp_send_failure_never_claims_code_sent():
     ('{"is_adult": true, "estimated_age": "NaN"}', False, 'age_verification_unavailable', None),
 ])
 def test_gemini_adult_age_fallback_matrix(gemini_json, expected_is_adult, expected_reason, expected_age):
-    """Test full matrix of Gemini responses ensuring numeric age >= 18 is strictly enforced."""
+    """Gemini may estimate age only after independent liveness has positively passed."""
     from safety.face_service import verify_adult_face
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -254,16 +253,18 @@ def test_gemini_adult_age_fallback_matrix(gemini_json, expected_is_adult, expect
 
         mock_genai = MagicMock()
         mock_genai.GenerativeModel.return_value = mock_model
-
-        # Mock PIL.Image.open
         mock_image = MagicMock()
 
-        # DeepFace raises/fails so it falls through to Gemini
+        # Liveness succeeds; only the local age model fails, so Gemini is an age-only fallback.
+        mock_deepface = MagicMock()
+        mock_deepface.extract_faces.return_value = [{"is_real": True}]
+        mock_deepface.analyze.side_effect = RuntimeError("age model unavailable")
+
         with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key"}, clear=False):
             mock_google = MagicMock()
             mock_google.generativeai = mock_genai
             with patch.dict("sys.modules", {
-                "deepface": MagicMock(DeepFace=MagicMock(extract_faces=MagicMock(side_effect=RuntimeError("no face")))),
+                "deepface": MagicMock(DeepFace=mock_deepface),
                 "google": mock_google,
                 "google.generativeai": mock_genai,
                 "PIL": MagicMock(Image=mock_image),
@@ -280,7 +281,7 @@ def test_gemini_adult_age_fallback_matrix(gemini_json, expected_is_adult, expect
 
 
 def test_gemini_fallback_fails_closed_on_exception_and_timeout():
-    """Gemini API failure or timeout must fail closed."""
+    """After positive liveness, Gemini age timeout must still fail closed."""
     from safety.face_service import verify_adult_face
 
     with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
@@ -294,10 +295,13 @@ def test_gemini_fallback_fails_closed_on_exception_and_timeout():
         mock_genai.GenerativeModel.return_value = mock_model
         mock_google = MagicMock()
         mock_google.generativeai = mock_genai
+        mock_deepface = MagicMock()
+        mock_deepface.extract_faces.return_value = [{"is_real": True}]
+        mock_deepface.analyze.side_effect = RuntimeError("age model unavailable")
 
         with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key"}, clear=False):
             with patch.dict("sys.modules", {
-                "deepface": MagicMock(DeepFace=MagicMock(extract_faces=MagicMock(side_effect=RuntimeError("no face")))),
+                "deepface": MagicMock(DeepFace=mock_deepface),
                 "google": mock_google,
                 "google.generativeai": mock_genai,
                 "PIL": MagicMock(Image=MagicMock()),

@@ -13,7 +13,7 @@ from parent.api import parent_api_bp
 from quiz.routes import quiz_bp
 from admin.routes import admin_bp
 from database.connection import fetch_one, execute
-from services.usage import lock_state,heartbeat
+from services.usage import lock_state,heartbeat,start_session
 from quiz.service import quiz_due, needs_onboarding_quiz
 from services.controls import controls_for_child, feature_allowed, effective_categories, quiet_hours_state
 from services.i18n import language_for_user, tr, LANGUAGES
@@ -151,7 +151,11 @@ def create_app():
         if quiet['active']:
             return render_template('quiet_hours.html',quiet=quiet),403
         key=session.get('usage_session_key')
-        if key:heartbeat(key)
+        if not key or heartbeat(key) is None:
+            started=start_session(session['user_id'])
+            key=str(started['session_key'])
+            session['usage_session_key']=key
+            heartbeat(key)
         locked,_=lock_state(session['user_id'])
         if locked:return render_template('time_limit_reached.html'),403
         if quiz_due(session['user_id']):return redirect('/quiz/start/')
@@ -173,13 +177,13 @@ def create_app():
         p=fetch_one('SELECT post_id,child_id,moderation_status,is_safe,is_story FROM posts WHERE media_path=%s OR story_music_path=%s',(stored,stored))
         if p:
             if role=='CHILD':
-                # Cheap fail-fast check before the full category/age/friend policy query.
                 if p['moderation_status']!='ALLOWED' and uid!=p['child_id']:return ('Unavailable',404)
                 from services.social import post_visible_to, story_visible_to
                 visible=story_visible_to(uid,p['post_id']) if p.get('is_story') else post_visible_to(uid,p['post_id'])
                 if not visible:return ('Unavailable',404)
             elif role=='PARENT':
-                if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,p['child_id'])):return ('Forbidden',403)
+                from parent.service import owns
+                if not owns(uid,p['child_id']):return ('Forbidden',403)
             elif role!='ADMIN':return ('Forbidden',403)
 
         m=fetch_one('SELECT sender_child_id,receiver_child_id,moderation_status FROM child_messages WHERE media_path=%s',(stored,))
@@ -190,7 +194,8 @@ def create_app():
                 if not can_interact(m['sender_child_id'],m['receiver_child_id']):return ('Unavailable',404)
                 if m['moderation_status']!='ALLOWED' and uid!=m['sender_child_id']:return ('Unavailable',404)
             elif role=='PARENT':
-                if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,m['sender_child_id'])):return ('Forbidden',403)
+                from parent.service import owns
+                if not owns(uid,m['sender_child_id']):return ('Forbidden',403)
                 if m['moderation_status']!='REVIEW':return ('Unavailable',404)
             elif role!='ADMIN':return ('Forbidden',403)
 
@@ -200,14 +205,13 @@ def create_app():
                 from child.service import can_discover_child
                 if not can_discover_child(uid,f['child_id']):return ('Unavailable',404)
             elif role=='PARENT':
-                if not fetch_one('SELECT 1 FROM parent_child_map WHERE parent_id=%s AND child_id=%s',(uid,f['child_id'])):return ('Forbidden',403)
+                from parent.service import owns
+                if not owns(uid,f['child_id']):return ('Forbidden',403)
             elif role!='ADMIN':return ('Forbidden',403)
 
         default_avatar=filename=='profile_pictures/download.webp'
         if not any([p,m,f]) and not default_avatar:return ('Unavailable',404)
 
-        # R2 references never exist on local disk. All canonical visibility checks
-        # above must pass before LittleNet issues a short-lived private signed URL.
         if stored.startswith('uploads/r2/'):
             try:
                 from services.object_storage import signed_download_url
@@ -262,9 +266,6 @@ def create_app():
 
     @app.after_request
     def security_headers(response):
-        # Purge private R2 objects only after the owning child delete endpoint
-        # successfully removed its database row. R2 is private, so a failed purge
-        # leaves an unreachable orphan rather than exposing the media publicly.
         refs=getattr(g,'r2_delete_refs',[]) if request.method=='POST' and response.status_code<400 else []
         if refs:
             try:
@@ -273,10 +274,6 @@ def create_app():
             except Exception:
                 app.logger.exception('R2 object cleanup failed after successful media deletion')
 
-        # Parent-created child accounts are converted from email-only activation
-        # to the camera + liveness guardian verification flow. The legacy email
-        # sent inside create_child_by_parent becomes unusable after this state
-        # transition; a fresh verification email is sent immediately below.
         if request.method=='POST' and request.path.rstrip('/')=='/parent/create-child' and session.get('role')=='PARENT' and response.status_code<400:
             try:
                 parent=fetch_one('SELECT full_name,email FROM users WHERE user_id=%s AND role=\'PARENT\'',(session['user_id'],))

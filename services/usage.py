@@ -34,10 +34,21 @@ def close_session(session_key):
     end_at=row['last_seen_at'];execute('UPDATE child_usage_sessions SET ended_at=%s WHERE usage_session_id=%s',(end_at,row['usage_session_id'],));_log_session(row,end_at)
 
 
+def seconds_today(child_id):
+    """Return aggregate elapsed seconds before rounding to display minutes.
+
+    Summing timestamps instead of per-session integer minutes prevents repeated
+    short sessions (for example 59 seconds each) from disappearing completely.
+    """
+    logged=fetch_one('''SELECT COALESCE(SUM(GREATEST(EXTRACT(EPOCH FROM (logout_time-login_time)),0)),0) total
+        FROM child_usage_logs WHERE child_id=%s AND usage_date=CURRENT_DATE''',(child_id,))['total']
+    active=fetch_one("""SELECT COALESCE(SUM(GREATEST(EXTRACT(EPOCH FROM (last_seen_at-started_at)),0)),0) total
+        FROM child_usage_sessions WHERE child_id=%s AND ended_at IS NULL AND started_at::date=CURRENT_DATE""",(child_id,))['total']
+    return max(0.0,float(logged or 0)+float(active or 0))
+
+
 def minutes_today(child_id):
-    logged=fetch_one('SELECT COALESCE(SUM(duration_minutes),0) total FROM child_usage_logs WHERE child_id=%s AND usage_date=CURRENT_DATE',(child_id,))['total']
-    active=fetch_one("SELECT COALESCE(SUM(EXTRACT(EPOCH FROM (last_seen_at-started_at))/60),0) total FROM child_usage_sessions WHERE child_id=%s AND ended_at IS NULL AND started_at::date=CURRENT_DATE",(child_id,))['total']
-    return int(logged or 0)+int(active or 0)
+    return int(seconds_today(child_id)/60.0)
 
 
 def _notice_once(child_id, activity_type, parent_type, message, remaining):
