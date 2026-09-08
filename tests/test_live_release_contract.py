@@ -24,8 +24,10 @@ def test_deploy_workflow_runs_runtime_gates_then_builds_native_flutter_apk():
         'modal deploy modal_web.py',
         'modal run modal_web.py --init-db',
         'modal run modal_web.py --seed',
-        'modal run modal_web.py --preflight',
+        # Warm the GPU service before strict preflight so a legitimate cold start
+        # cannot make the web dependency check fail before model validation runs.
         'modal run modal_ai.py',
+        'modal run modal_web.py --preflight',
         '/readyz',
         "E2E_REQUIRE_READY: '1'",
         'Generate exact-branded native Android runner',
