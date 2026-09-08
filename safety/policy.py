@@ -20,14 +20,13 @@ def decide(signals: dict, safety_level: str = "STRICT", adult_threshold=None):
         adult_threshold = float(thresholds["adult_block"])
 
     adult = max(float(signals.get("adult_score", 0)), float(signals.get("sexual_score", 0)))
-    weapon = float(signals.get("weapon_score", 0))
+    legacy_weapon = float(signals.get("weapon_score", 0))
     violence = float(signals.get("violence_score", 0))
     toxicity = float(signals.get("toxicity_score", 0))
     category = str(signals.get("category", "")).upper()
     total_failure = bool(signals.get("total_safety_failure"))
     partial_failure = bool(signals.get("partial_safety_failure"))
 
-    # Deterministic child-safety hard blocks always win, even if another model fails.
     if category in HARD_TEXT_CATEGORIES or signals.get("deterministic_grooming") or signals.get("deterministic_severe_abuse"):
         reason = (
             "grooming/coercion hard blocked"
@@ -38,8 +37,6 @@ def decide(signals: dict, safety_level: str = "STRICT", adult_threshold=None):
     if total_failure:
         return Decision("BLOCK", 100.0, "AI safety unavailable: fail closed")
 
-    # Visual NSFW models have different score calibration. For IMAGE/VIDEO model
-    # diagnostics, use model-specific thresholds before the generic adult score.
     visual_nsfw = None
     if signals.get("model_signals") and category in {"IMAGE", "VIDEO", "ADULT", "NSFW", "NUDITY", "EXPLICIT"}:
         try:
@@ -65,26 +62,24 @@ def decide(signals: dict, safety_level: str = "STRICT", adult_threshold=None):
     elif adult >= float(adult_threshold) or category in ADULT_CATEGORIES:
         return Decision("BLOCK", max(adult * 100, 90), "18+ content hard blocked")
 
-    # Raw detector labels are mapped by the versioned YAML. BLOCK families at
-    # high confidence hard-block; medium evidence and REVIEW families go to
-    # parent/moderator review. A legacy weapon_score remains a hard-block signal.
     try:
         from .yolo_policy import classify_signals
 
         yolo = classify_signals(signals)
     except Exception:
-        # A classifier adapter exception cannot weaken a pre-existing weapon score.
         yolo = {"score": 0.0, "block": False, "review": False, "dangerous": []}
-    weapon = max(weapon, float(yolo.get("score", 0) or 0))
+
+    yolo_score = float(yolo.get("score", 0) or 0)
+    evidence_score = max(legacy_weapon, yolo_score)
     weapon_block = float(thresholds["weapon_block"])
-    if yolo.get("block") or weapon >= weapon_block or category == "WEAPON":
+    if yolo.get("block") or legacy_weapon >= weapon_block or category == "WEAPON":
         label = ((yolo.get("dangerous") or [{}])[0].get("label") or "dangerous object")
-        return Decision("BLOCK", max(weapon * 100, 85), f"weapon/dangerous object: {label}")
+        return Decision("BLOCK", max(evidence_score * 100, 85), f"weapon/dangerous object: {label}")
     if yolo.get("review"):
         label = ((yolo.get("dangerous") or [{}])[0].get("label") or "dangerous object")
         return Decision(
             "REVIEW",
-            max(weapon * 100, 50),
+            max(evidence_score * 100, 50),
             f"possible dangerous object requires parent review: {label}",
         )
 
