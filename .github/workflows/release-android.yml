@@ -1,4 +1,4 @@
-name: Build & Validate LittleNet Android Release
+name: Build & Validate LittleNet Native Android Release
 
 on:
   workflow_dispatch:
@@ -14,19 +14,17 @@ permissions:
 jobs:
   signed-release:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 50
     env:
       BACKEND_URL: ${{ inputs.backend_url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-java@v4
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
         with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: '8.9'
+          channel: stable
+          cache: true
 
       - name: Validate HTTPS backend and signing secrets
         env:
@@ -42,25 +40,55 @@ jobs:
           for name in ('ANDROID_SIGNING_KEY','ANDROID_KEY_ALIAS','ANDROID_KEYSTORE_PASSWORD'):
               if not os.environ.get(name):
                   sys.exit(f'Missing required GitHub secret: {name}')
+          print('Native release backend:', u.rstrip('/'))
           PY
 
-      - name: Inject production backend URL
-        run: python tools/set_backend_url.py "$BACKEND_URL"
+      - name: Generate exact-branded native Android runner
+        working-directory: mobile_flutter
+        run: bash tool/prepare_android.sh
 
-      - name: Build unsigned release APK
-        working-directory: android
-        run: gradle --no-daemon :app:assembleRelease
+      - name: Install Dart dependencies
+        working-directory: mobile_flutter
+        run: flutter pub get
 
-      - name: Sign release APK
+      - name: Analyze, test and prove no WebView
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'webview_flutter|InAppWebView|android\.webkit\.WebView|WebViewClient|loadUrl\(' mobile_flutter/lib mobile_flutter/android 2>/dev/null; then
+            echo 'WebView dependency/code found in signed native release' >&2
+            exit 1
+          fi
+          cd mobile_flutter
+          flutter analyze --no-fatal-warnings --no-fatal-infos
+          flutter test
+
+      - name: Build native release APK
+        working-directory: mobile_flutter
+        run: flutter build apk --release --dart-define=LITTLENET_API_BASE="${BACKEND_URL%/}"
+
+      - name: Sign native release APK
         id: sign_app
         uses: ilharp/sign-android-release@v2
         with:
-          releaseDir: android/app/build/outputs/apk/release
+          releaseDir: mobile_flutter/build/app/outputs/flutter-apk
           signingKey: ${{ secrets.ANDROID_SIGNING_KEY }}
           keyAlias: ${{ secrets.ANDROID_KEY_ALIAS }}
           keyStorePassword: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           keyPassword: ${{ secrets.ANDROID_KEY_PASSWORD }}
           buildToolsVersion: 35.0.0
+
+      - name: Verify signed package and native Flutter engine
+        env:
+          SIGNED_APK: ${{ steps.sign_app.outputs.signedFile }}
+        run: |
+          set -euo pipefail
+          test -s "$SIGNED_APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n 1)"
+          test -n "$AAPT"
+          "$AAPT" dump badging "$SIGNED_APK" | grep -q "package: name='com.littlenet.app'"
+          unzip -l "$SIGNED_APK" | grep -q 'lib/arm64-v8a/libflutter.so'
+          ! unzip -l "$SIGNED_APK" | grep -qi 'webview_flutter'
+          sha256sum "$SIGNED_APK" | tee LittleNet-signed-native-apk.sha256
 
       - name: Enable KVM
         run: |
@@ -68,7 +96,7 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
 
-      - name: Install and launch signed APK on emulator
+      - name: Install and launch signed native APK on emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
           SIGNED_APK: ${{ steps.sign_app.outputs.signedFile }}
@@ -84,10 +112,12 @@ jobs:
             adb shell am start -W -n com.littlenet.app/.MainActivity
             adb shell pidof com.littlenet.app
 
-      - name: Upload signed APK
+      - name: Upload signed native APK
         uses: actions/upload-artifact@v4
         with:
-          name: LittleNet-signed-release-apk
-          path: ${{ steps.sign_app.outputs.signedFile }}
+          name: LittleNet-signed-native-Flutter-APK
+          path: |
+            ${{ steps.sign_app.outputs.signedFile }}
+            LittleNet-signed-native-apk.sha256
           if-no-files-found: error
           retention-days: 30
