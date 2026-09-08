@@ -4,6 +4,7 @@ PostgreSQL remains external (Neon/etc.). Private media is stored in R2; the
 legacy uploads volume remains only for compatibility with local/demo assets.
 """
 from pathlib import Path
+import json
 import os
 import smtplib
 import subprocess
@@ -190,7 +191,7 @@ def web_preflight():
     from services.media_outbox import reconcile_pending_deletes
 
     db = fetch_one("SELECT 1 ok")
-    schema = fetch_one("""
+    schema = dict(fetch_one("""
         SELECT
           to_regclass('public.users')::text AS users,
           to_regclass('public.child_profiles')::text AS child_profiles,
@@ -199,7 +200,7 @@ def web_preflight():
           to_regclass('public.followers')::text AS followers,
           to_regclass('public.quizzes')::text AS quizzes,
           to_regclass('public.media_delete_outbox')::text AS media_delete_outbox
-    """) or {}
+    """) or {})
     required_tables = (
         "users", "child_profiles", "posts", "comments", "followers", "quizzes",
         "media_delete_outbox",
@@ -262,7 +263,10 @@ def web_preflight():
         and r2.get("ok")
         and media_outbox.get("ok")
     )
-    return report
+    # Modal serializes remote return values back to the local caller. Normalize
+    # any DB-driver mapping subclasses or provider-specific values to plain JSON
+    # primitives so GitHub Actions does not need psycopg2/boto/etc. installed.
+    return json.loads(json.dumps(report, default=str))
 
 
 @app.local_entrypoint()
