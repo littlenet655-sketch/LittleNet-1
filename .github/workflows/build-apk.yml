@@ -8,6 +8,8 @@ on:
         required: true
         default: 'https://littlenet655--littlenet-web-web.modal.run/'
         type: string
+  pull_request:
+    branches: [ main, master ]
   push:
     branches: [ main, master ]
     paths:
@@ -51,6 +53,11 @@ jobs:
       - name: Build debug APK
         working-directory: android
         run: gradle --no-daemon :app:assembleDebug
+      - name: Verify APK exists and package id is correct
+        run: |
+          APK=android/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          aapt dump badging "$APK" | grep -q "package: name='com.littlenet.app'"
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
