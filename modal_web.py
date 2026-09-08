@@ -19,6 +19,15 @@ web_secret = modal.Secret.from_name(
     required_keys=["DATABASE_URL", "SECRET_KEY", "AI_SERVICE_URL", "AI_SHARED_SECRET"],
 )
 email_secret = modal.Secret.from_name("littlenet-email")
+r2_secret = modal.Secret.from_name(
+    "littlenet-r2",
+    required_keys=[
+        "R2_ACCOUNT_ID",
+        "R2_ACCESS_KEY_ID",
+        "R2_SECRET_ACCESS_KEY",
+        "R2_BUCKET",
+    ],
+)
 
 
 web_image = (
@@ -45,7 +54,7 @@ web_image = (
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
-            "LITTLENET_DEPLOY_VERSION": "12",
+            "LITTLENET_DEPLOY_VERSION": "13",
         }
     )
     .add_local_dir(
@@ -67,7 +76,7 @@ web_image = (
     image=web_image,
     cpu=2.0,
     memory=2048,
-    secrets=[web_secret, email_secret],
+    secrets=[web_secret, email_secret, r2_secret],
     volumes={"/root/littlenet/uploads": uploads},
     timeout=300,
     startup_timeout=120,
@@ -179,7 +188,7 @@ def _smtp_healthcheck():
         }
 
 
-@app.function(image=web_image, secrets=[web_secret, email_secret], timeout=180)
+@app.function(image=web_image, secrets=[web_secret, email_secret, r2_secret], timeout=180)
 def web_preflight():
     """Fail closed unless the complete live LittleNet dependency chain is usable."""
     os.chdir("/root/littlenet")
