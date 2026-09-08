@@ -24,7 +24,9 @@ def api_children_compat(parent_id):
         return jsonify(success=False),403
     return jsonify(success=True,children=children(session['user_id']))
 
-# Register the native Flutter API on an already-registered blueprint. Keeping the
-# mobile client on bearer auth means it never depends on browser cookies/WebView.
+# Register the native Flutter APIs on an already-registered blueprint. The
+# mobile client uses bearer auth and never depends on browser cookies/WebView.
 from mobile.api import register_mobile_api
+from mobile.admin_api import register_mobile_admin_api
 register_mobile_api(parent_api_bp)
+register_mobile_admin_api(parent_api_bp)
