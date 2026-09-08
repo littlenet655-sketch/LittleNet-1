@@ -87,11 +87,11 @@ jobs:
           modal token info
 
       - name: Deploy AI service
-        run: modal deploy modal_ai.py --stream-logs
+        run: modal deploy modal_ai.py
 
       - name: Deploy web service
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        run: modal deploy modal_web.py --stream-logs
+        run: modal deploy modal_web.py
 
       - name: Apply database schema and migrations
         if: ${{ (github.event_name == 'push' || inputs.deploy_web) && (github.event_name == 'push' || inputs.migrate_database) }}
