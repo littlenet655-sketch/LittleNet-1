@@ -27,7 +27,7 @@ jobs:
           --health-timeout 5s
           --health-retries 12
     env:
-      DATABASE_URL: postgresql://postgres:littlenet@127.0.0.1:5432/safeconnect_db
+      DATABASE_URL: postgresql://postgres:littlenet@127.0.0.1:5432/safeconnect_db?sslmode=disable
       BASE_URL: http://127.0.0.1:5000
       COOKIE_SECURE: '0'
       RUN_REAL_POSTGRES_E2E: '1'
