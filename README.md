@@ -1,184 +1,261 @@
-# LittleNet  -  Child Centric Social Platform with AI-based Content Filtering
+# LittleNet — Child-Centric Social Platform with AI-Based Content Filtering
 
 [![Project Status: Release Candidate](https://img.shields.io/badge/Status-Release%20Candidate-yellow.svg)](#release-status)
-[![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Android%20APK%20%7C%20Cloud%20GPU-blue.svg)](#mobile-android-apk)
+[![Platform](https://img.shields.io/badge/Platform-Web%20%7C%20Native%20Flutter%20Android%20%7C%20Cloud%20GPU-blue.svg)](#native-flutter-android-app)
 [![AI Safety](https://img.shields.io/badge/AI%20Safety-Text%20%7C%20Image%20%7C%20Video-orange.svg)](#multi-modal-ai-content-filtering-architecture)
-[![Database](https://img.shields.io/badge/Database-PostgreSQL-3ECF8E.svg)](#database-architecture)
+[![Database](https://img.shields.io/badge/Database-PostgreSQL-3ECF8E.svg)](#architecture)
 
 ---
 
-### 🎓 Academic Information
-* **Institution**: Adichunchanagiri Institute of Technology, Chikkamagaluru  -  577102
-* **Department**: Department of Computer Science & Engineering (Data Science)
-* **Project Type**: Major Project Phase II Presentation (2025 - 2026)
-* **Group Number**: `DSPG06`
-* **Under the Guidance of**: Prof. Harshitha HD
-* **Presented By**:
-  - **ATHMIYA D** (`4AI23CD004`)
-  - **PRAGNA G SHENOY** (`4AI23CD037`)
-  - **ROHINI L GOWDA** (`4AI23CD043`)
-  - **SANGEETHA M** (`4AI23CD047`)
+## 🎓 Academic Information
+
+- **Institution:** Adichunchanagiri Institute of Technology, Chikkamagaluru — 577102
+- **Department:** Department of Computer Science & Engineering (Data Science)
+- **Project Type:** Major Project Phase II Presentation (2025–2026)
+- **Group Number:** `DSPG06`
+- **Guide:** Prof. Harshitha HD
+- **Presented by:**
+  - ATHMIYA D (`4AI23CD004`)
+  - PRAGNA G SHENOY (`4AI23CD037`)
+  - ROHINI L GOWDA (`4AI23CD043`)
+  - SANGEETHA M (`4AI23CD047`)
 
 ---
 
-## 🌟 Executive Abstract
+## 🌟 What LittleNet Is
 
-**LittleNet** is a modern, child-centric social networking ecosystem designed from the ground up to protect children aged 6 - 16 while offering an engaging, interactive space to share creativity, learn, and socialize safely.
+LittleNet is a child-centric social and learning platform for children aged 6–16. It combines a familiar social experience with parent-owned controls, biometric onboarding, age-banded learning breaks and server-side AI safety checks.
 
-Traditional platforms expose minors to severe risks including cyberbullying, mature content, online predators, and uncontrolled screen time. LittleNet solves these challenges through **real-time, multi-modal AI content filtering**, a **parent-first approval paradigm**, and **biometric child authentication**:
+The system is built around three user modes:
 
-* **Multi-Modal AI Safety Engine**: Combines text/PII safety with visual adult-content, semantic and dangerous-object detection for TEXT/IMAGE/VIDEO before child visibility. Standalone audio moderation is disabled; video audio is stripped before persistence.
-* **Parental Command Center**: Real-time push alerts, granular screen time limits, quiet-hour lockdowns, and pending content approval queues.
-* **Kid-Safe Mobile Experience**: Native Android APK with camera-based biometric face login, educational Reels, STEM quizzes, and restricted stranger-discovery algorithms.
+- **Kids Mode:** feed, stories, reels, posting, discovery, approved-only messaging, profile, notifications, quizzes and learning challenges.
+- **Parent Mode:** child accounts, screen-time limits, quiet hours, feature controls, follow approvals, safety-review decisions and activity alerts.
+- **Admin/Moderator Mode:** moderation queue, user search, audit trail and human Approve/Block/Escalate actions.
+
+The Android client is now a **genuine Flutter application**. The former Java WebView wrapper has been retired and is no longer a release path.
 
 ---
 
 ## 🚦 Release Status
 
-The source and CI gates are green, but the current cloud deployment is **not yet verified live**. The latest `Deploy & Validate LittleNet Live` run stopped before deployment because GitHub Actions is missing `MODAL_TOKEN_ID` and `MODAL_TOKEN_SECRET`.
+The native Flutter build gate now requires all of the following before an APK artifact is accepted:
 
-The intended release stack is Flask/Jinja web on Modal, protected Modal T4 AI, external PostgreSQL and private Cloudflare R2. Public endpoints must not be called production-ready until the connected workflow completes DB migrations, model warm-up, external preflight, `/readyz`, Playwright smoke and the APK build.
+1. Android runner generation and LittleNet branding.
+2. No WebView dependency or Android WebView code.
+3. Flutter analysis with actual analyzer errors still fatal.
+4. Flutter tests.
+5. Release APK build.
+6. APK verification for the Flutter ARM64 engine.
+7. Package identity `com.littlenet.app`.
+8. SHA-256 generation and artifact upload.
 
-Admin/demo credentials are intentionally not committed or documented; use repository/runtime secrets.
+The cloud deployment must still pass the separate **Deploy & Validate LittleNet Live** workflow before the hosted backend is called release-verified. That workflow requires Modal credentials, database migration/preflight, public `/healthz` and `/readyz`, browser smoke tests and a native Flutter live APK built against the same HTTPS URL.
 
-## 📱 Mobile Android APK
+Admin/demo credentials are intentionally not committed.
 
+---
+
+## 📱 Native Flutter Android App
+
+The native app lives in `mobile_flutter/` and communicates with Flask through authenticated JSON endpoints under `/api/mobile/v1/*`.
+
+### Android contract
+
+- **Framework:** Flutter / Dart
 - **Package name:** `com.littlenet.app`
-- **Target SDK:** Android 35; minSdk 26
-- **Final artifact rule:** no production APK is stored in Git. The canonical APK is the GitHub Actions artifact `LittleNet-live-verified-apk`, generated only after the same HTTPS backend passes the live release gate.
-- Camera/media access supports face/liveness and image/video upload. Active voice/audio posting is outside the locked runtime.
+- **App label:** LittleNet
+- **Launcher/splash:** repository LittleNet logo from `static/icons/app_logo.png`
+- **Transport:** HTTPS only; Android cleartext traffic disabled
+- **Auth storage:** encrypted Flutter secure storage
+- **Camera/media:** native camera/gallery access for face setup/login and image/video posting
+- **Audio:** standalone voice/audio posting remains outside the locked runtime
+- **WebView:** prohibited by CI
+
+### Kids Mode
+
+- Password and Face ID login
+- Child face enrollment
+- Mandatory onboarding quiz
+- Safe feed and stories
+- Vertical reels
+- Discover/search
+- Camera/gallery post, story and reel creation
+- Like, comment and save
+- Approved-only conversations and chat
+- Profile editing
+- Notifications
+- Learning challenges and quizzes
+- Parent-enforced screen time, quiet hours and feature gates
+
+### Parent Mode
+
+- Parent registration, email OTP and adult liveness flow
+- Parent dashboard and linked children
+- Child account creation
+- Screen-time limits
+- Reels/stories/messaging/posting/discover controls
+- Quiet hours
+- Safety review with Approve/Block
+- Follow-request approval
+- Parent notifications/activity
+
+### Admin/Moderator Mode
+
+- Dashboard metrics
+- Moderation queue
+- Approve / Block / Escalate
+- User search
+- Audit trail
+
+---
 
 ## 🧠 Multi-Modal AI Content Filtering Architecture
 
-The active moderation contract accepts **TEXT, IMAGE and VIDEO**. Text/PII is checked by deterministic rules plus Detoxify/Presidio. Images and sampled video frames use NudeNet, Falconsai NSFW, CLIP and an OpenImages-capable YOLO dangerous-object policy. PySceneDetect/OpenCV improves video frame selection. DeepFace/MediaPipe support face/liveness flows.
+The active moderation contract accepts **TEXT, IMAGE and VIDEO**.
 
-Hard adult/dangerous evidence is blocked before ordinary risk thresholds; uncertainty goes to Parent Review; a total safety outage cannot silently ALLOW content. Uploaded child videos have their audio tracks stripped before R2 persistence because standalone speech/audio moderation is intentionally disabled in the locked build.
+- Text/PII safety uses deterministic policy plus NLP/PII services.
+- Images and sampled video frames use visual adult-content, semantic and dangerous-object detection.
+- Hard adult or dangerous evidence is blocked before ordinary risk thresholds.
+- Uncertain content is placed into review instead of silently allowed.
+- Parent and moderator decisions are server-side and auditable.
+- DeepFace/MediaPipe support face and liveness flows.
+- Standalone audio moderation is retired in the locked college scope; child videos are treated as visual/video content and persisted without active voice posting.
 
-## 📂 Complete Project Directory Structure
+---
+
+## 🏗️ Architecture
+
+```text
+Native Flutter Android app                 Web/Jinja client
+         │                                       │
+         ├──── bearer /api/mobile/v1/* ─────────┤
+         │                                       │
+         └────────────── HTTPS ──────────────────┘
+                         │
+                  Flask application
+                         │
+        ┌────────────────┼────────────────┐
+        │                │                │
+   PostgreSQL      AI moderation      Private R2 media
+        │          Modal GPU/CPU            │
+        └────────────────┼──────────────────┘
+                         │
+             Parent/Admin safety review
+```
+
+Safety, screen-time, quiet-hours, approved-connection and moderation decisions remain server-owned so a modified client cannot simply bypass them.
+
+---
+
+## 📂 Important Project Directories
 
 ```text
 LittleNet-1/
-├── admin/                         # Admin & Safety Moderator Portal
-│   ├── api.py                     # Moderator REST endpoints
-│   ├── routes.py                  # User management, audit log, & report views
-│   └── templates/                 # Admin dashboard, user list, moderation queue
-├── ai_server.py                   # Lightweight local microservice wrapper for AI endpoints
-├── android/                       # Native Android Project (Java/Gradle)
-│   ├── app/
-│   │   ├── build.gradle           # SDK 35 compilation specs
-│   │   └── src/main/
-│   │       ├── AndroidManifest.xml # Permissions (CAMERA, AUDIO, INTERNET)
-│   │       ├── java/com/littlenet/app/MainActivity.java # Native WebView container
-│   │       └── res/values/strings.xml # Live backend endpoint configuration
-│   ├── build.gradle               # Root Gradle build script
-│   └── settings.gradle            # Project configuration
-├── app.py                         # Flask Application Factory & Core Server
-├── auth/                          # Authentication Blueprint
-│   ├── routes.py                  # Kids login, parent registration, face enrollment
-│   ├── service.py                 # Password hashing (bcrypt) & session security
-│   └── templates/                 # Login, register, face login, approval pages
-├── child/                         # Child Social Experience
-│   ├── routes.py                  # Feed, profile, discover, search routes
-│   ├── service.py                 # Post retrieval, interaction logic, screen time enforcement
-│   └── templates/                 # Feed, reels, profile, learning, notification pages
-├── childMessage/                  # Child-to-Child Secure Messaging
-│   ├── routes.py                  # Direct chat with approved friends only
-│   ├── service.py                 # Real-time message storage and safety filtering
-│   └── templates/                 # Chat UI and thread list
-├── config.py                      # Environment variable loader & security policies
-├── database/                      # PostgreSQL Storage Layer
-│   ├── connection.py              # Threaded connection pooler & query executors
-│   ├── schema.sql                 # Complete DDL tables, indexes, constraints
-│   ├── seed.sql                   # Educational quizzes, STEM challenges seed data
-│   └── upgrade.sql                # Safe incremental migrations
-├── modal_ai.py                    # Serverless GPU AI service deployment script (Modal)
-├── modal_web.py                   # Serverless Flask Web application runner (Modal)
-├── parent/                        # Parental Command Center
-│   ├── api.py                     # Real-time alert polling & control endpoints
-│   ├── routes.py                  # Parent dashboard, screen time, follow approvals
-│   ├── service.py                 # Push alerts, quiet hour scheduling, audit reporting
-│   └── templates/                 # Dashboard, safety review, screen time controls
-├── quiz/                          # Gamified Child Educational Learning
-│   ├── routes.py                  # Quiz taking and scoring endpoints
-│   ├── service.py                 # Adaptive question selection
-│   └── templates/                 # Interactive quiz card, learning leaderboard
-├── safety/                        # Multi-Modal AI Detection Modules
-│   ├── audio_service.py           # fail-closed compatibility stub; no active audio model
-│   ├── face_service.py            # DeepFace FaceNet512 facial recognition & liveness
-│   ├── remote_client.py           # Fail-closed HTTP client to cloud AI service
-│   └── visual_service.py          # YOLOv8 + NudeNet + CLIP composite analyzer
-├── static/                        # Frontend Assets
-│   ├── css/littlenet.css          # Vanilla responsive stylesheet (zero horizontal scroll)
-│   ├── favicon.svg                # Child-safe shield brand icon
-│   └── js/                        # Client-side validation, live safety polling, face capture
-├── templates/                     # Base Layouts & Global Templates
-│   ├── 404.html                   # Child-safe 404 Not Found error page
-│   ├── 500.html                   # Child-safe 500 Server Error page
-│   ├── base.html                  # Global HTML5 shell with CSRF & CSP tokens
-│   ├── _icons.html                # Reusable SVG icon components
-│   └── _post.html                 # Unified social media post component
-├── tools/                         # Automated DevOps & Audit Utilities
-│   ├── audit_templates.py         # Verifies 64 templates for zero syntax/CSRF flaws
-│   ├── create_admin.py            # CLI tool to initialize admin credentials
-│   ├── init_db.py                 # Automated Supabase DDL migration script
-│   ├── readiness.py               # 35-point production deployment validation
-│   └── scope_check.py             # 41/41 Major Project Phase II feature verification
-├── uploadPost/                    # Media Upload & Reels Pipeline
-│   ├── routes.py                  # Image, video reel, and audio post creation
-│   └── templates/                 # Upload form, full-screen vertical Reels viewer
-├── Dockerfile.ai                  # Container definition for AI GPU deployment
-├── Dockerfile.web                 # Container definition for Web server deployment
-├── requirements-ai.txt            # GPU dependencies (torch, transformers, ultralytics)
-├── requirements-core.txt          # Web dependencies (flask, psycopg2, bcrypt)
-└── SUBMISSION_SUMMARY.md          # 5-minute Viva & Evaluator Presentation Runbook
+├── mobile_flutter/                 # Native Flutter Android client
+│   ├── lib/
+│   │   ├── main.dart               # App entrypoint and role routing
+│   │   ├── api.dart                # Bearer-auth mobile API client
+│   │   ├── widgets.dart            # Shared native media/UI helpers
+│   │   └── screens/                # Kids, Parent, Admin native screens
+│   └── tool/prepare_android.sh     # Android runner, branding/package hardening
+├── mobile/
+│   └── api.py                      # /api/mobile/v1/* backend contract
+├── admin/                          # Admin/moderator web + services
+├── auth/                           # Authentication and parent verification
+├── child/                          # Child feed/discovery/profile logic
+├── childMessage/                   # Approved-only messaging
+├── parent/                         # Parent dashboard/controls/review
+├── quiz/                           # Quizzes and learning challenges
+├── safety/                         # Text, visual, face and policy services
+├── services/                       # Controls, usage, storage, behavior, etc.
+├── uploadPost/                     # Post/reel/story persistence pipeline
+├── database/                       # PostgreSQL connection/schema/upgrades
+├── static/                         # Web assets + canonical LittleNet branding
+├── templates/                      # Shared web templates
+├── modal_ai.py                     # Modal AI deployment
+├── modal_web.py                    # Modal Flask deployment
+├── .github/workflows/
+│   ├── flutter-native.yml          # Native APK build/verification
+│   ├── release-android.yml         # Signed native APK + emulator launch
+│   ├── deploy-modal.yml            # Live backend + native live APK gate
+│   ├── ci.yml                      # Python/source/security CI
+│   └── role-e2e.yml                # Real PostgreSQL role E2E
+└── tools/
+    ├── audit_all.py
+    ├── scope_check.py
+    └── readiness.py
 ```
 
 ---
 
-## 🛠️ Local Development & Quick Start
+## 🛠️ Local Web Development
 
-### 1. Clone & Environment Setup
 ```bash
 git clone https://github.com/PragnaGShenoy/LittleNet-1.git
 cd LittleNet-1
 python -m venv venv
-venv\Scripts\activate          # On Windows
-source venv/bin/activate       # On Linux/Mac
+```
+
+Windows:
+
+```powershell
+venv\Scripts\activate
 pip install -r requirements-core.txt
-```
-
-### 2. Configure Credentials (`.env`)
-Create a `.env` file in the root directory:
-```env
-DATABASE_URL=postgresql://postgres.your-project-ref:[YOUR_PASSWORD]@aws-0-ap-southeast-1.pooler.supabase.com:6543/postgres
-SECRET_KEY=your_secret_production_key_here
-AI_SERVICE_URL=https://your-modal-app.modal.run
-AI_SHARED_SECRET=your_ai_shared_secret_here
-BASE_URL=http://localhost:5000
-COOKIE_SECURE=0
-```
-
-### 3. Initialize Database & Run Web Server
-```bash
 python tools/init_db.py
 python app.py
 ```
-Open **[http://localhost:5000](http://localhost:5000)** in your browser.
+
+Linux/macOS:
+
+```bash
+source venv/bin/activate
+pip install -r requirements-core.txt
+python tools/init_db.py
+python app.py
+```
+
+Use `.env` / runtime secrets for `DATABASE_URL`, `SECRET_KEY`, AI service credentials, R2 credentials, mail configuration and `BASE_URL`. Do not commit real secrets.
 
 ---
 
-## 🛡️ Production Security & Safety Policies
+## 📲 Native Flutter Development
 
-* **Fail-Closed Architecture**: If the AI inspection server is unreachable or times out, content is held in pending review rather than published blindly.
-* **Strict Child Privacy**: No external tracking cookies, third-party analytics, or behavioral advertisement pixels.
-* **Parental Verification Gate**: Children cannot interact with peers until their designated parent confirms their relationship via a single-use crypto-tokenized email link.
-* **Hard Block Violations**: Weapons, self-harm, hate speech, and adult imagery are immediately quarantined with zero tolerance.
+From `mobile_flutter/`:
+
+```bash
+flutter pub get
+bash tool/prepare_android.sh
+flutter analyze --no-fatal-warnings --no-fatal-infos
+flutter test
+flutter build apk --release \
+  --dart-define=LITTLENET_API_BASE=https://YOUR-LITTLENET-BACKEND
+```
+
+The canonical college APK should come from GitHub Actions rather than a manually modified local build, because CI verifies package identity, branding, Flutter engine presence and the no-WebView contract.
+
+---
+
+## 🛡️ Security & Safety Principles
+
+- **Fail closed:** a safety outage cannot silently publish uncertain child content.
+- **Parent-first controls:** screen time, quiet hours and feature access are server-enforced.
+- **Approved-only interaction:** messaging requires approved relationships.
+- **Private media:** protected media is delivered through authenticated endpoints/storage controls.
+- **No embedded secrets:** credentials stay in GitHub/Modal/runtime secrets.
+- **No WebView release client:** Android interaction is implemented with Flutter widgets and native plugins.
+
+---
+
+## ✅ Release Workflows
+
+- `LittleNet Native Flutter APK` — analyze, test, build, verify and upload the unsigned/native release artifact.
+- `Build & Validate LittleNet Native Android Release` — build, sign, install and launch the native APK on an Android emulator when signing secrets are available.
+- `Deploy & Validate LittleNet Live` — deploy backend/AI, migrate/preflight, validate public readiness, browser-smoke the hosted system and build the native APK against that exact live URL.
+- `LittleNet CI` — source audits, Python regression, secret scanning and security checks.
+- `LittleNet Real PostgreSQL Role E2E` — role-level database-backed integration validation.
 
 ---
 
 ## 🌟 Acknowledgements
 
-We express our sincere gratitude to:
-* **Prof. Harshitha HD**, Project Guide, Dept. of CS&E (Data Science), AIT, for continuous guidance and valuable feedback.
-* **Dr. C T Jayadeva**, Principal, Adichunchanagiri Institute of Technology.
-* The Faculty & Staff of Department of Computer Science & Engineering (Data Science).
+We express our sincere gratitude to **Prof. Harshitha HD**, project guide, the Principal and the faculty/staff of the Department of Computer Science & Engineering (Data Science), Adichunchanagiri Institute of Technology, for their guidance and support.
