@@ -42,16 +42,20 @@ with zipfile.ZipFile(ZIP) as z:
         if name not in names:
             errors.append(f'missing release file: {name}')
 
-    # The submission source must not silently reintroduce the retired WebView
-    # client. The Flutter build workflow performs the same check at APK time.
+    # Check only executable/native application source. Tooling is intentionally
+    # allowed to mention WebView because prepare_android.sh contains the guard
+    # that rejects any generated WebView runner.
+    native_source_prefixes=('mobile_flutter/lib/','mobile_flutter/android/')
     for name in names:
-        if not name.endswith(('.dart','.yaml','.yml','.kt','.java','.py','.sh')):
+        if not name.startswith(native_source_prefixes):
+            continue
+        if not name.endswith(('.dart','.yaml','.yml','.kt','.java','.xml')):
             continue
         try:
             text=z.read(name).decode('utf-8',errors='ignore').lower()
         except Exception:
             continue
-        if name.startswith('mobile_flutter/') and any(term in text for term in (
+        if any(term in text for term in (
             'webview_flutter','inappwebview','android.webkit.webview','webviewclient'
         )):
             errors.append(f'webview regression in native release source: {name}')
