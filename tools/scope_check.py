@@ -46,7 +46,9 @@ checks={
  'PostgreSQL activity logs':('database/schema.sql','CREATE TABLE IF NOT EXISTS activity_logs'),
  'R2 media adapter':('services/object_storage.py','uploads/r2/'),
  'R2 child media enforcement':('auth/api.py','persist_child_media_to_r2'),
- 'Android APK source':('android/app/src/main/java/com/littlenet/app/MainActivity.java','WebView'),
+ 'Native Flutter Android client':('mobile_flutter/lib/main.dart','LittleNetApp'),
+ 'Native mobile bearer API':('mobile/api.py','/api/mobile/v1/health'),
+ 'Native Android package contract':('mobile_flutter/tool/prepare_android.sh','com.littlenet.app'),
  'Modal AI deployment':('modal_ai.py','gpu="T4"'),
  'Quiet hours':('services/controls.py','quiet_hours_state'),
  'Parent home live metrics':('parent/routes.py',"k['presence']=online_state(cid)"),
@@ -62,14 +64,17 @@ for name,(rel,needle) in checks.items():
     print(('PASS' if ok else 'FAIL'),name)
     if not ok:errors.append(name)
 
-# Negative scope locks: removed features must not return through dependencies.
+# Negative scope locks: retired features must not return through dependencies or
+# the Android client. A deleted legacy file also counts as successfully retired.
 negative={
  'Whisper dependency removed':('requirements-ai.txt','openai-whisper'),
  'Whisper Modal runtime removed':('modal_ai.py','whisper.load_model'),
+ 'Flutter WebView dependency absent':('mobile_flutter/pubspec.yaml','webview_flutter'),
+ 'Legacy Android WebView wrapper retired':('android/app/src/main/java/com/littlenet/app/MainActivity.java','android.webkit.WebView'),
 }
 for name,(rel,forbidden) in negative.items():
     p=R/rel
-    ok=p.exists() and forbidden.lower() not in p.read_text(encoding='utf-8').lower()
+    ok=(not p.exists()) or forbidden.lower() not in p.read_text(encoding='utf-8').lower()
     print(('PASS' if ok else 'FAIL'),name)
     if not ok:errors.append(name)
 
