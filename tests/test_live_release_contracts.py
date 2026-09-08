@@ -4,13 +4,16 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_live_release_preflight_runs_before_gpu_model_warmup():
+def test_live_release_warms_gpu_models_before_strict_preflight():
     workflow = (ROOT / ".github/workflows/deploy-modal.yml").read_text(encoding="utf-8")
     preflight = "Run DB, AI, Presidio, liveness, mail, R2 and BASE_URL preflight"
     warmup = "Warm and validate every locked-scope AI model"
     assert preflight in workflow
     assert warmup in workflow
-    assert workflow.index(preflight) < workflow.index(warmup)
+    # Modal GPU cold starts can legitimately exceed the web health probe's first
+    # attempt. Validate/warm the complete model set first, then require the full
+    # dependency preflight to pass fail-closed.
+    assert workflow.index(warmup) < workflow.index(preflight)
 
 
 def test_modal_docs_name_every_live_web_dependency_key():
