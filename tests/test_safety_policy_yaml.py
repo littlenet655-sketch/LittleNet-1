@@ -23,9 +23,11 @@ def test_configured_high_confidence_firearm_hard_blocks():
 
 
 def test_review_only_family_never_escalates_to_detector_hard_block_by_confidence_alone():
-    result = classify_detections([{"label": "kitchen knife", "confidence": 0.99}])
+    result = classify_detections([{"label": "power drill", "confidence": 0.99}])
     assert result["block"] is False
     assert result["review"] is True
+    decision = decide({"category": "IMAGE", "model_signals": {"yolo": {"detections": [{"label": "power drill", "confidence": 0.99}]}}})
+    assert decision.action == "REVIEW"
 
 
 def test_ai_total_failure_remains_fail_closed():
