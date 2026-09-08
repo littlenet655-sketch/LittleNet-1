@@ -5,6 +5,7 @@ import '../../core/theme/colors.dart';
 import '../../core/theme/spacing.dart';
 import '../../core/theme/typography.dart';
 import '../../core/widgets/app_button.dart';
+import 'comments_sheet.dart';
 
 class FeedScreen extends StatefulWidget {
   const FeedScreen({super.key, required this.authState});
@@ -329,19 +330,82 @@ class _FeedScreenState extends State<FeedScreen> {
                             ? AppColors.error
                             : AppColors.textSecondary,
                       ),
-                      onPressed: () {
+                      onPressed: () async {
+                        final postId = item['post_id'] as int?;
+                        if (postId == null) return;
+                        final wasLiked = item['viewer_liked'] == true;
                         setState(() {
-                          item['viewer_liked'] =
-                              !(item['viewer_liked'] == true);
+                          item['viewer_liked'] = !wasLiked;
                         });
+                        try {
+                          final res = await widget.authState.apiClient.post(
+                            '/api/mobile/v1/kids/posts/$postId/like',
+                          );
+                          if (mounted) {
+                            setState(() {
+                              item['viewer_liked'] = res['liked'] == true;
+                            });
+                          }
+                        } catch (_) {
+                          if (mounted) {
+                            setState(() {
+                              item['viewer_liked'] = wasLiked;
+                            });
+                          }
+                        }
                       },
                     ),
                     const Text('Helpful', style: AppTypography.caption),
+                    const SizedBox(width: AppSpacing.sm),
+                    IconButton(
+                      icon: const Icon(Icons.chat_bubble_outline_rounded,
+                          color: AppColors.textSecondary),
+                      onPressed: () {
+                        final postId = item['post_id'] as int?;
+                        if (postId != null) {
+                          CommentsSheet.show(
+                            context,
+                            authState: widget.authState,
+                            postId: postId,
+                            postCaption: item['caption']?.toString(),
+                          );
+                        }
+                      },
+                    ),
                     const Spacer(),
                     IconButton(
-                      icon: const Icon(Icons.bookmark_border_rounded,
-                          color: AppColors.textSecondary),
-                      onPressed: () {},
+                      icon: Icon(
+                        item['viewer_saved'] == true
+                            ? Icons.bookmark_rounded
+                            : Icons.bookmark_border_rounded,
+                        color: item['viewer_saved'] == true
+                            ? AppColors.kidsAccent
+                            : AppColors.textSecondary,
+                      ),
+                      onPressed: () async {
+                        final postId = item['post_id'] as int?;
+                        if (postId == null) return;
+                        final wasSaved = item['viewer_saved'] == true;
+                        setState(() {
+                          item['viewer_saved'] = !wasSaved;
+                        });
+                        try {
+                          final res = await widget.authState.apiClient.post(
+                            '/api/mobile/v1/kids/posts/$postId/save',
+                          );
+                          if (mounted) {
+                            setState(() {
+                              item['viewer_saved'] = res['saved'] == true;
+                            });
+                          }
+                        } catch (_) {
+                          if (mounted) {
+                            setState(() {
+                              item['viewer_saved'] = wasSaved;
+                            });
+                          }
+                        }
+                      },
                     ),
                   ],
                 ),

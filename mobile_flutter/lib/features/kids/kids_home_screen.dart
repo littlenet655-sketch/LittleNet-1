@@ -102,6 +102,14 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.chat_bubble_outline_rounded,
+                color: AppColors.textPrimary),
+            tooltip: 'Messages',
+            onPressed: () {
+              Navigator.of(context).pushNamed('/kids/messages');
+            },
+          ),
           // Screen time pill indicator
           Container(
             margin: const EdgeInsets.only(right: AppSpacing.md),

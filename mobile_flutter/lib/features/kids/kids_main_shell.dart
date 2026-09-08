@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
+import '../create_post/create_post_screen.dart';
 import '../feed/feed_screen.dart';
 import '../kids/kids_home_screen.dart';
+import '../profile/profile_screen.dart';
 import '../reels/reels_screen.dart';
 
 class KidsMainShell extends StatefulWidget {
@@ -25,9 +27,9 @@ class _KidsMainShellState extends State<KidsMainShell> {
     _pages = [
       KidsHomeScreen(authState: widget.authState),
       FeedScreen(authState: widget.authState),
-      const _CreatePlaceholder(),
+      CreatePostScreen(authState: widget.authState),
       ReelsScreen(authState: widget.authState),
-      const _ProfilePlaceholder(),
+      ProfileScreen(authState: widget.authState),
     ];
   }
 
@@ -76,11 +78,7 @@ class _KidsMainShellState extends State<KidsMainShell> {
                     const Text('Share drawings, crafts, or learning moments'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text(
-                            'Module 11 Create Post will be enabled in next slice.')),
-                  );
+                  setState(() => _currentIndex = 2);
                 },
               ),
               ListTile(
@@ -89,15 +87,18 @@ class _KidsMainShellState extends State<KidsMainShell> {
                   child:
                       Icon(Icons.videocam_rounded, color: AppColors.kidsGold),
                 ),
-                title: const Text('Educational Short Video'),
+                title: const Text('Educational Short Video / Reel'),
                 subtitle:
                     const Text('Explain a science trick or recite a poem'),
                 onTap: () {
                   Navigator.pop(ctx);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                        content: Text(
-                            'Module 11 Create Post will be enabled in next slice.')),
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => CreatePostScreen(
+                        authState: widget.authState,
+                        initialKind: PostKind.reel,
+                      ),
+                    ),
                   );
                 },
               ),
@@ -148,29 +149,6 @@ class _KidsMainShellState extends State<KidsMainShell> {
             label: 'Profile',
           ),
         ],
-      ),
-    );
-  }
-}
-
-class _CreatePlaceholder extends StatelessWidget {
-  const _CreatePlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const SizedBox.shrink();
-  }
-}
-
-class _ProfilePlaceholder extends StatelessWidget {
-  const _ProfilePlaceholder();
-
-  @override
-  Widget build(BuildContext context) {
-    return const SafeArea(
-      child: Center(
-        child: Text('Profile Module 14 in upcoming slice',
-            style: TextStyle(color: Colors.black54)),
       ),
     );
   }

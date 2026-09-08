@@ -32,6 +32,10 @@ class AppColors {
   static const Color error = Color(0xFFD63031);
   static const Color info = Color(0xFF0984E3);
 
+  // Dark / Elevated Surfaces & Muted variants
+  static const Color cardDark = Color(0xFF1E272E);
+  static const Color textMutedDark = Color(0xFF8E959E);
+
   // Safety Gate Colors
   static const Color safeAllowed = Color(0xFF00B894);
   static const Color safeReview = Color(0xFFF39C12);

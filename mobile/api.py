@@ -859,7 +859,8 @@ def register_mobile_api(bp):
             saved = True
         return jsonify(ok=True, saved=saved)
 
-    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comment", methods=["POST"])
+    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comments", methods=["GET"])
+    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comment", methods=["GET", "POST"])
     @csrf.exempt
     @_require_mobile("CHILD")
     def mobile_comment(post_id):
@@ -870,6 +871,23 @@ def register_mobile_api(bp):
         post = post_visible_to(uid, post_id)
         if not post:
             return jsonify(error="post_not_found"), 404
+        if request.method == "GET":
+            rows = fetch_all(
+                """SELECT c.comment_id, c.post_id, c.child_id, c.comment_text, c.created_at,
+                          u.full_name, u.username, cp.profile_picture
+                   FROM comments c
+                   JOIN users u ON u.user_id = c.child_id
+                   LEFT JOIN child_profiles cp ON cp.child_id = c.child_id
+                   WHERE c.post_id = %s AND c.moderation_status = 'ALLOWED'
+                   ORDER BY c.created_at ASC""",
+                (post_id,),
+            )
+            out = []
+            for r in rows:
+                item = dict(r)
+                item["avatar_url"] = _asset_url(item.pop("profile_picture", None))
+                out.append(_clean(item))
+            return jsonify(ok=True, comments=out)
         text = str((request.get_json(silent=True) or {}).get("text") or "").strip()
         if not text:
             return jsonify(error="empty_comment"), 400
@@ -881,7 +899,7 @@ def register_mobile_api(bp):
         if decision.action == "BLOCK":
             record(uid, "COMMENT", None, signals, decision)
             parent_notify(uid, "COMMENT_BLOCKED", decision.reason, "/parent/safety/")
-            return jsonify(blocked=True, error="comment_blocked"), 400
+            return jsonify(blocked=True, error="comment_blocked", reason=decision.reason), 400
         row = execute(
             "INSERT INTO comments(post_id,child_id,comment_text,moderation_status) VALUES(%s,%s,%s,%s) RETURNING comment_id",
             (post_id, uid, text, "ALLOWED" if decision.action == "ALLOW" else "REVIEW"),
@@ -908,9 +926,10 @@ def register_mobile_api(bp):
         category = category if category in SAFE_CATEGORIES else "Other"
         if category not in effective_categories(uid):
             return jsonify(error="category_disabled_by_parent"), 403
-        audience = str(request.form.get("audience_age_group") or "ALL")
-        if audience not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
-            audience = "ALL"
+        audience_raw = request.form.get("audience_age_group")
+        if audience_raw is not None and str(audience_raw) not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
+            return jsonify(error="invalid_audience_age_group"), 400
+        audience = str(audience_raw or "ALL")
         if caption and scan_pii(caption).get("detected"):
             parent_notify(uid, "CONTENT_BLOCKED", "Personal contact information cannot be shared in captions", "/parent/safety/")
             return jsonify(error="caption_pii_blocked"), 400
@@ -1077,6 +1096,95 @@ def register_mobile_api(bp):
             return jsonify(error="post_not_found"), 404
         state = record_feed_view(uid, post_id)
         return jsonify(ok=True, **_clean(state))
+
+    @bp.route("/api/mobile/v1/kids/settings")
+    @_require_mobile("CHILD")
+    def mobile_kids_settings():
+        uid = int(g.mobile_user["user_id"])
+        limit_row = fetch_one("SELECT daily_limit_minutes FROM child_time_limits WHERE child_id=%s", (uid,))
+        daily_limit = int(limit_row["daily_limit_minutes"]) if limit_row else 60
+        safety_row = fetch_one("SELECT safety_level FROM parent_safety_settings WHERE child_id=%s", (uid,))
+        s_level = safety_row["safety_level"] if safety_row else "STRICT"
+        return jsonify(
+            ok=True,
+            profile=_profile_json(get_child_profile(uid)),
+            controls=_clean(controls_for_child(uid)),
+            minutes_today=minutes_today(uid),
+            daily_limit=daily_limit,
+            has_face=bool(fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s", (uid,))),
+            safety_level=s_level,
+        )
+
+    @bp.route("/api/mobile/v1/kids/blocked-users")
+    @_require_mobile("CHILD")
+    def mobile_kids_blocked_users():
+        uid = int(g.mobile_user["user_id"])
+        rows = fetch_all(
+            """SELECT u.user_id, u.username, u.full_name, cp.profile_picture, b.created_at
+               FROM blocked_users b
+               JOIN users u ON u.user_id = b.blocked_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE b.blocker_id = %s
+               ORDER BY b.created_at DESC""",
+            (uid,),
+        )
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["avatar_url"] = _asset_url(item.pop("profile_picture", None))
+            out.append(_clean(item))
+        return jsonify(ok=True, blocked_users=out)
+
+    @bp.route("/api/mobile/v1/kids/block/<int:target_id>", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_block(target_id):
+        uid = int(g.mobile_user["user_id"])
+        if target_id == uid:
+            return jsonify(error="cannot_block_self"), 400
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "block").lower()
+        if action == "unblock":
+            execute("DELETE FROM blocked_users WHERE blocker_id=%s AND blocked_id=%s", (uid, target_id))
+            return jsonify(ok=True, blocked=False)
+        execute("INSERT INTO blocked_users(blocker_id,blocked_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, target_id))
+        execute("DELETE FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)", (uid, target_id, target_id, uid))
+        return jsonify(ok=True, blocked=True)
+
+    @bp.route("/api/mobile/v1/kids/muted-users")
+    @_require_mobile("CHILD")
+    def mobile_kids_muted_users():
+        uid = int(g.mobile_user["user_id"])
+        rows = fetch_all(
+            """SELECT u.user_id, u.username, u.full_name, cp.profile_picture, m.created_at
+               FROM muted_users m
+               JOIN users u ON u.user_id = m.muted_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE m.muter_id = %s
+               ORDER BY m.created_at DESC""",
+            (uid,),
+        )
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["avatar_url"] = _asset_url(item.pop("profile_picture", None))
+            out.append(_clean(item))
+        return jsonify(ok=True, muted_users=out)
+
+    @bp.route("/api/mobile/v1/kids/mute/<int:target_id>", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_mute(target_id):
+        uid = int(g.mobile_user["user_id"])
+        if target_id == uid:
+            return jsonify(error="cannot_mute_self"), 400
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "mute").lower()
+        if action == "unmute":
+            execute("DELETE FROM muted_users WHERE muter_id=%s AND muted_id=%s", (uid, target_id))
+            return jsonify(ok=True, muted=False)
+        execute("INSERT INTO muted_users(muter_id,muted_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, target_id))
+        return jsonify(ok=True, muted=True)
 
     @bp.route("/api/mobile/v1/parent/dashboard")
     @_require_mobile("PARENT")

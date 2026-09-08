@@ -18,6 +18,7 @@ class AppTextField extends StatefulWidget {
     this.onSubmitted,
     this.enabled = true,
     this.autofillHints,
+    this.maxLines = 1,
   });
 
   final TextEditingController controller;
@@ -33,6 +34,7 @@ class AppTextField extends StatefulWidget {
   final ValueChanged<String>? onSubmitted;
   final bool enabled;
   final Iterable<String>? autofillHints;
+  final int? maxLines;
 
   @override
   State<AppTextField> createState() => _AppTextFieldState();
@@ -71,6 +73,7 @@ class _AppTextFieldState extends State<AppTextField> {
     return TextFormField(
       controller: widget.controller,
       obscureText: widget.isPassword ? _obscureText : false,
+      maxLines: widget.isPassword ? 1 : widget.maxLines,
       keyboardType: widget.keyboardType,
       textInputAction: widget.textInputAction,
       enabled: widget.enabled,
