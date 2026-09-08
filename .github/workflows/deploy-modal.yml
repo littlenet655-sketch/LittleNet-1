@@ -125,7 +125,7 @@ jobs:
           done
           test "$ok" = 1 || (echo "Public /healthz never became healthy" && exit 1)
           cat healthz.json
-          curl --connect-timeout 10 --max-time 90 --fail-with-body -fsS "$URL/readyz" | tee readyz.json
+          curl --connect-timeout 10 --max-time 90 --fail-with-body -sS "$URL/readyz" | tee readyz.json
           python - <<'PY'
           import json
           data=json.load(open('readyz.json',encoding='utf-8'))
@@ -143,7 +143,7 @@ jobs:
         run: |
           set -euo pipefail
           URL="${LIVE_URL%/}"
-          curl --connect-timeout 10 --max-time 60 --fail-with-body -fsS "$URL/api/mobile/v1/health" | tee mobile-health.json
+          curl --connect-timeout 10 --max-time 60 --fail-with-body -sS "$URL/api/mobile/v1/health" | tee mobile-health.json
           python - <<'PY'
           import json
           data=json.load(open('mobile-health.json',encoding='utf-8'))
