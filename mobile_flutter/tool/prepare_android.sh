@@ -15,7 +15,27 @@ MANIFEST="android/app/src/main/AndroidManifest.xml"
 DRAWABLE="android/app/src/main/res/drawable"
 DRAWABLE_V21="android/app/src/main/res/drawable-v21"
 VALUES="android/app/src/main/res/values"
+BUILD_GRADLE="android/app/build.gradle.kts"
 mkdir -p "$DRAWABLE" "$DRAWABLE_V21" "$VALUES"
+
+# Preserve LittleNet's existing Android package identity rather than shipping the
+# Flutter rewrite as a second unrelated app.
+python3 - <<'PY'
+from pathlib import Path
+p = Path('android/app/build.gradle.kts')
+s = p.read_text()
+s = s.replace('com.littlenet.littlenet_native', 'com.littlenet.app')
+p.write_text(s)
+PY
+rm -rf android/app/src/main/kotlin/com/littlenet/littlenet_native
+mkdir -p android/app/src/main/kotlin/com/littlenet/app
+cat > android/app/src/main/kotlin/com/littlenet/app/MainActivity.kt <<'KT'
+package com.littlenet.app
+
+import io.flutter.embedding.android.FlutterActivity
+
+class MainActivity : FlutterActivity()
+KT
 
 # Keep a vector fallback, but prefer the repository's real LittleNet launcher
 # assets so the Flutter APK uses the exact same branding as the web/PWA app.
@@ -100,11 +120,15 @@ if grep -R -n -E 'android\.webkit\.WebView|WebViewClient|loadUrl\(' android/app/
   exit 1
 fi
 
-# Branding contract: the real launcher icon and branded splash must exist.
+# Branding/package contract: exact launcher, branded splash, and the existing
+# LittleNet Android application id must all be present.
 test -f android/app/src/main/res/mipmap-xxxhdpi/ic_littlenet.png
 test -f "$DRAWABLE/littlenet_brand.png"
 grep -q 'littlenet_brand' "$DRAWABLE/launch_background.xml"
 grep -q 'littlenet_brand' "$DRAWABLE_V21/launch_background.xml"
 grep -q '@mipmap/ic_littlenet' "$MANIFEST"
+grep -q 'applicationId = "com.littlenet.app"' "$BUILD_GRADLE"
+grep -q 'namespace = "com.littlenet.app"' "$BUILD_GRADLE"
+grep -q '^package com.littlenet.app$' android/app/src/main/kotlin/com/littlenet/app/MainActivity.kt
 
-echo "Prepared native LittleNet Android runner with exact logo/icon assets, branded splash and no WebView."
+echo "Prepared native LittleNet Android runner with exact logo/icon assets, branded splash, preserved package id and no WebView."
