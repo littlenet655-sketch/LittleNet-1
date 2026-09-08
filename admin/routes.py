@@ -13,6 +13,14 @@ def _admin_audit(action, target_type=None, target_id=None, details=None):
              json.dumps(details or {})))
 
 
+def _admin_audit_cursor(cur, action, target_type=None, target_id=None, details=None):
+    """Write an admin transition into the same transaction as the state change."""
+    cur.execute('''INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                   VALUES(%s,%s,%s,%s,%s::jsonb)''',
+                (session['user_id'], action, target_type, target_id,
+                 json.dumps(details or {})))
+
+
 def _stats():
     return {
         'children': (fetch_one("SELECT COUNT(*) n FROM users WHERE role='CHILD'") or {'n':0})['n'],
@@ -119,8 +127,9 @@ def block_review_event(event_id):
             cur.execute("UPDATE comments SET moderation_status='BLOCKED' WHERE comment_id=%s",(e['content_id'],))
         elif e['content_type']=='MESSAGE' and e['content_id']:
             cur.execute("UPDATE child_messages SET moderation_status='BLOCKED' WHERE child_message_id=%s",(e['content_id'],))
-        cur.execute("UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s",(event_id,));conn.commit()
-        _admin_audit('MODERATOR_BLOCK','MODERATION_EVENT',event_id,{'child_id':e['child_id'],'content_type':e['content_type']})
+        cur.execute("UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s",(event_id,))
+        _admin_audit_cursor(cur,'MODERATOR_BLOCK','MODERATION_EVENT',event_id,{'child_id':e['child_id'],'content_type':e['content_type']})
+        conn.commit()
         if e['child_id']:
             from services.social import parent_notify
             parent_notify(e['child_id'],'MODERATOR_BLOCK','A moderator blocked a reviewed item.','/parent/safety/')
@@ -133,11 +142,17 @@ def block_review_event(event_id):
 @admin_bp.route('/admin/post/<int:post_id>/remove/', methods=['POST'])
 @admin_required
 def remove_post(post_id):
-    row=fetch_one('SELECT post_id,child_id,moderation_status,is_safe FROM posts WHERE post_id=%s',(post_id,))
-    if not row:return ('Not found',404)
-    if row['moderation_status']!='BLOCKED' or row['is_safe']:
-        execute("UPDATE posts SET moderation_status='BLOCKED',is_safe=FALSE,moderation_reason=COALESCE(moderation_reason,'Removed by moderator') WHERE post_id=%s",(post_id,))
-    _admin_audit('POST_REMOVED','POST',post_id,{'child_id':row['child_id'],'previous_status':row['moderation_status']})
+    conn=get_db_connection()
+    try:
+        cur=conn.cursor();cur.execute('SELECT post_id,child_id,moderation_status,is_safe FROM posts WHERE post_id=%s FOR UPDATE',(post_id,));row=cur.fetchone()
+        if not row:conn.rollback();return ('Not found',404)
+        if row['moderation_status']!='BLOCKED' or row['is_safe']:
+            cur.execute("UPDATE posts SET moderation_status='BLOCKED',is_safe=FALSE,moderation_reason=COALESCE(moderation_reason,'Removed by moderator') WHERE post_id=%s",(post_id,))
+        _admin_audit_cursor(cur,'POST_REMOVED','POST',post_id,{'child_id':row['child_id'],'previous_status':row['moderation_status']})
+        conn.commit()
+    except Exception:
+        conn.rollback();raise
+    finally:conn.close()
     from services.social import parent_notify
     parent_notify(row['child_id'],'MODERATOR_POST_BLOCK','A moderator removed a post from Kids Mode.','/parent/notifications/')
     return redirect(request.referrer or '/admin/moderation/')
