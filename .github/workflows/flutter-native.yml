@@ -1,0 +1,88 @@
+name: LittleNet Native Flutter APK
+
+on:
+  push:
+    branches:
+      - feature/flutter-native-app
+      - main
+    paths:
+      - 'mobile_flutter/**'
+      - 'mobile/**'
+      - 'parent/api.py'
+      - '.github/workflows/flutter-native.yml'
+  pull_request:
+    paths:
+      - 'mobile_flutter/**'
+      - 'mobile/**'
+      - 'parent/api.py'
+      - '.github/workflows/flutter-native.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  native-flutter-apk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Flutter toolchain
+        run: flutter --version
+
+      - name: Generate and brand Android runner
+        working-directory: mobile_flutter
+        run: bash tool/prepare_android.sh
+
+      - name: Install Dart dependencies
+        working-directory: mobile_flutter
+        run: flutter pub get
+
+      - name: Prove client contains no WebView package or WebView code
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'webview_flutter|InAppWebView|android\.webkit\.WebView|WebViewClient|loadUrl\(' mobile_flutter/lib mobile_flutter/android 2>/dev/null; then
+            echo 'WebView dependency/code found in native app' >&2
+            exit 1
+          fi
+
+      - name: Flutter analyze
+        working-directory: mobile_flutter
+        run: flutter analyze
+
+      - name: Flutter tests
+        working-directory: mobile_flutter
+        run: flutter test
+
+      - name: Build release APK
+        working-directory: mobile_flutter
+        run: >-
+          flutter build apk --release
+          --dart-define=LITTLENET_API_BASE=https://littlenet655--littlenet-web-web.modal.run
+
+      - name: Verify APK
+        run: |
+          set -euo pipefail
+          APK=mobile_flutter/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          echo "apk_bytes=$(stat -c%s "$APK")"
+          sha256sum "$APK" | tee LittleNet-native-apk.sha256
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libflutter.so'
+          ! unzip -l "$APK" | grep -qi 'webview_flutter'
+
+      - name: Upload native APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: LittleNet-native-Flutter-APK
+          path: |
+            mobile_flutter/build/app/outputs/flutter-apk/app-release.apk
+            LittleNet-native-apk.sha256
+          if-no-files-found: error
+          retention-days: 30
