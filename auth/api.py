@@ -171,9 +171,6 @@ def persist_child_media_to_r2(response):
                     _unlink_local(local)
                     failures.append(('MESSAGE',row['child_message_id']))
     except Exception:
-        # A storage transaction must never leave newly accepted media public on
-        # ephemeral local disk. Rows discovered above are already fail-closed;
-        # this fallback also converts any current-request rows we can identify.
         if hasattr(g,'littlenet_post_floor'):
             rows=fetch_all('SELECT post_id,media_path FROM posts WHERE child_id=%s AND post_id>%s',(uid,int(g.littlenet_post_floor)))
             for row in rows:
@@ -401,3 +398,13 @@ def api_login():
     session.clear(); session['user_id']=u['user_id'];session['role']=u['role'];session['full_name']=u['full_name']
     if u['role']=='CHILD': session['usage_session_key']=str(start_session(u['user_id'])['session_key'])
     return jsonify(success=True,role=u['role'],user_id=u['user_id'],full_name=u['full_name'],has_profile=profile_exists(u['user_id']) if u['role']=='CHILD' else True)
+
+
+# Attach the canonical native Flutter JSON API to the already-registered API
+# blueprint. Keeping this at module end avoids circular imports during blueprint
+# construction while ensuring `/api/mobile/v1/*` exists in the real Flask app.
+from mobile.api import register_mobile_api
+from mobile.admin_api import register_mobile_admin_api
+
+register_mobile_api(api_bp)
+register_mobile_admin_api(api_bp)
