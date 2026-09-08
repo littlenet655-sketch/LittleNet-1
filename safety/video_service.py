@@ -30,15 +30,23 @@ def _sample_frames(path: str, requested: int):
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
     if total <= 0:
         cap.release()
-        return [], []
+        return [], [], []
     indices = combined_frame_indices(path, total, requested)
     outs = []
     inspected = []
+    failed = []
     try:
         for idx in indices:
             cap.set(cv2.CAP_PROP_POS_FRAMES, int(idx))
             good, frame = cap.read()
             if not good:
+                failed.append(int(idx))
+                outs.append(normalize_signals({
+                    "category":"IMAGE",
+                    "total_safety_failure":True,
+                    "errors":["video_frame_decode_failed"],
+                    "frame_index":int(idx),
+                },category="IMAGE"))
                 continue
             fd, tmp = tempfile.mkstemp(suffix=".jpg")
             os.close(fd)
@@ -56,7 +64,7 @@ def _sample_frames(path: str, requested: int):
                     pass
     finally:
         cap.release()
-    return outs, inspected
+    return outs, inspected, failed
 
 
 def check_video(path: str, max_frames=None):
@@ -74,7 +82,7 @@ def check_video(path: str, max_frames=None):
 
     try:
         requested = _video_sample_count(path, max_frames)
-        outs, indices = timed_call(
+        outs, indices, failed_indices = timed_call(
             "video_frames",
             lambda: _sample_frames(path, requested),
             timeout_seconds("video_frames", 240),
@@ -87,14 +95,17 @@ def check_video(path: str, max_frames=None):
         keys = ["adult_score", "sexual_score", "weapon_score", "violence_score", "general_score"]
         out = {k: max(float(x.get(k, 0)) for x in outs) for k in keys}
         out["toxicity_score"] = 0
-        out["partial_safety_failure"] = any(x.get("partial_safety_failure") for x in outs)
-        out["total_safety_failure"] = all(x.get("total_safety_failure") for x in outs)
+        any_total_failure=any(x.get("total_safety_failure") is True for x in outs)
+        out["partial_safety_failure"] = bool(failed_indices) or any_total_failure or any(x.get("partial_safety_failure") is True for x in outs)
+        out["total_safety_failure"] = bool(outs) and all(x.get("total_safety_failure") is True for x in outs)
         out["errors"] = [err for x in outs for err in x.get("errors", [])]
         out["model_signals"] = {
             "sampling_strategy": "pyscenedetect_plus_uniform",
             "sampled_frames": len(outs),
+            "inspected_frames": len(indices),
             "requested_frames": requested,
             "frame_indices": indices,
+            "failed_frame_indices": failed_indices,
             "frames": [x.get("model_signals", {}) for x in outs],
         }
         out["category"] = (
