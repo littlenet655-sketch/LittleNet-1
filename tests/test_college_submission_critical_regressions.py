@@ -160,3 +160,18 @@ def test_parent_media_uses_canonical_ownership_helper():
     assert "from parent.service import owns" in src
     assert "if not owns(uid,p['child_id'])" in src
     assert "if not owns(uid,m['sender_child_id'])" in src
+
+
+def test_canonical_parent_ownership_requires_active_parent_and_approved_link():
+    src=(Path(__file__).parents[1]/'parent/service.py').read_text(encoding='utf-8')
+    assert "p.account_status='ACTIVE'" in src
+    assert "m.approved=TRUE" in src
+    assert "m.approval_status='APPROVED'" in src
+    assert "m.verified_parent_id=%s" in src
+
+
+def test_admin_moderation_state_and_audit_share_transaction():
+    src=(Path(__file__).parents[1]/'admin/routes.py').read_text(encoding='utf-8')
+    block=src[src.index('def block_review_event'):src.index('@admin_bp.route(\'/admin/post/')]
+    assert '_admin_audit_cursor(cur' in block
+    assert block.index('_admin_audit_cursor(cur') < block.index('conn.commit()')
