@@ -4,6 +4,7 @@ import '../features/auth/email_otp_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/parent_liveness_screen.dart';
 import '../features/auth/parent_signup_screen.dart';
+import '../features/parent/child_enrollment_screen.dart';
 import '../screens/admin.dart' as old_admin;
 import '../screens/kids.dart' as old_kids;
 import '../screens/parent.dart' as old_parent;
@@ -51,6 +52,12 @@ class AppRouter {
                 '',
             email: args['email']?.toString(),
           ),
+          settings: settings,
+        );
+
+      case '/parent/children/add':
+        return MaterialPageRoute(
+          builder: (_) => ChildEnrollmentScreen(authState: authState),
           settings: settings,
         );
 

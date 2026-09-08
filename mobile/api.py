@@ -1114,6 +1114,33 @@ def register_mobile_api(bp):
             return jsonify(error="child_creation_failed"), 400
         return jsonify(ok=True, child_id=child_id, next_steps=["child_face_enrollment", "age_quiz"]), 201
 
+    @bp.route("/api/mobile/v1/parent/children/<int:child_id>/face/enroll", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("15 per minute")
+    @_require_mobile("PARENT")
+    def mobile_parent_enroll_child_face(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        path = _save_request_image("littlenet_parent_enroll_child_")
+        if not path:
+            return jsonify(error="live_camera_photo_required"), 400
+        try:
+            enroll(child_id, path)
+            return jsonify(
+                ok=True,
+                child_id=child_id,
+                face_enrolled=True,
+                quiz_required=bool(needs_onboarding_quiz(child_id)),
+            )
+        except Exception:
+            return jsonify(error="face_enrollment_failed"), 400
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
     @bp.route("/api/mobile/v1/parent/controls/<int:child_id>", methods=["GET", "PUT"])
     @csrf.exempt
     @_require_mobile("PARENT")
