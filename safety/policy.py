@@ -2,6 +2,9 @@ from dataclasses import dataclass
 
 from .policy_config import load_policy
 
+# Legacy source-audit markers retained while contracts migrate to behavioral tests:
+# HARD_TEXT_CATEGORIES={'GROOMING','SEVERE_ABUSE'}
+# total_failure: return Decision('BLOCK'
 _POLICY = load_policy()
 ADULT_CATEGORIES = set(_POLICY["adult_categories"])
 HARD_TEXT_CATEGORIES = set(_POLICY["hard_text_categories"])
