@@ -4,11 +4,22 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from database.connection import fetch_one, execute
 
+CURATED_CATEGORIES = [
+    'Family & Community',
+    'Nature & Animals',
+    'Art & Creative Hobbies',
+    'Science & Gardening',
+    'Culinary Arts & Food',
+]
 SAFE_CATEGORIES = [
     'Other','Science','Math','Art','Sports','Music','Technology','Education',
-    'Nature','Books','Coding','General Knowledge'
+    'Nature','Books','Coding','General Knowledge',
+    *CURATED_CATEGORIES,
 ]
-EDUCATIONAL_CATEGORIES = ['Science','Math','Technology','Education','Nature','Books','Coding','General Knowledge']
+EDUCATIONAL_CATEGORIES = [
+    'Science','Math','Technology','Education','Nature','Books','Coding','General Knowledge',
+    'Nature & Animals','Art & Creative Hobbies','Science & Gardening','Culinary Arts & Food',
+]
 FEATURE_COLUMNS = {
     'reels':'allow_reels',
     'stories':'allow_stories',
