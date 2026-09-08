@@ -33,7 +33,11 @@ class ApiClient {
   String? _token;
 
   Future<void> restore() async {
-    _token = await _storage.read(key: 'littlenet_mobile_token');
+    try {
+      _token = await _storage.read(key: 'littlenet_mobile_token');
+    } catch (_) {
+      _token = null;
+    }
   }
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
@@ -47,6 +51,20 @@ class ApiClient {
     _token = null;
     await _storage.delete(key: 'littlenet_mobile_token');
   }
+
+  Future<void> clear() => clearToken();
+
+  Future<Map<String, dynamic>> get(
+    String path, {
+    Map<String, dynamic>? query,
+  }) =>
+      getJson(path, query: query);
+
+  Future<Map<String, dynamic>> post(
+    String path, {
+    Map<String, dynamic>? body,
+  }) =>
+      postJson(path, body ?? const {});
 
   Map<String, String> get authHeaders => {
         'Accept': 'application/json',

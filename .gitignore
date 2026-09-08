@@ -7,7 +7,7 @@ __pycache__/
 .venv/
 venv/
 uploads/
-models/
+/models/
 model_cache/
 *.log
 .DS_Store
