@@ -17,8 +17,6 @@ on:
         required: true
         type: boolean
         default: true
-  # Any runtime behavior used in the college demo must redeploy automatically
-  # after main changes, otherwise the hosted demo can silently lag behind source.
   push:
     branches: [ main ]
     paths:
@@ -30,7 +28,6 @@ on:
       - 'auth/**'
       - 'mailg/**'
       - 'safety/**'
-      - 'safety/face_service.py'
       - 'services/**'
       - 'parent/**'
       - 'child/**'
@@ -40,8 +37,6 @@ on:
       - 'quiz/**'
       - 'mobile/**'
       - 'static/js/**'
-      - 'static/js/parent_liveness_mediapipe.js'
-      - 'services/object_storage.py'
       - 'db/migrations/**'
       - 'database/**'
       - 'tools/install_mediapipe_assets.py'
@@ -101,12 +96,12 @@ jobs:
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
         run: modal run modal_web.py --seed
 
+      - name: Warm and validate every locked-scope AI model
+        run: modal run modal_ai.py
+
       - name: Run DB, AI, Presidio, liveness, mail, R2 and BASE_URL preflight
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
         run: modal run modal_web.py --preflight
-
-      - name: Warm and validate every locked-scope AI model
-        run: modal run modal_ai.py
 
       - name: Require public health and ready endpoints
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
@@ -125,7 +120,7 @@ jobs:
           done
           test "$ok" = 1 || (echo "Public /healthz never became healthy" && exit 1)
           cat healthz.json
-          curl --connect-timeout 10 --max-time 60 --fail-with-body -fsS "$URL/readyz" | tee readyz.json
+          curl --connect-timeout 10 --max-time 90 --fail-with-body -fsS "$URL/readyz" | tee readyz.json
           python - <<'PY'
           import json
           data=json.load(open('readyz.json',encoding='utf-8'))
@@ -135,6 +130,21 @@ jobs:
               if data.get(key) is not True:
                   raise SystemExit(f"Live /readyz {key} is not true: {data}")
           print('Public readiness: PASS')
+          PY
+
+      - name: Require native mobile API health
+        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          URL="${LIVE_URL%/}"
+          curl --connect-timeout 10 --max-time 60 --fail-with-body -fsS "$URL/api/mobile/v1/health" | tee mobile-health.json
+          python - <<'PY'
+          import json
+          data=json.load(open('mobile-health.json',encoding='utf-8'))
+          if data.get('ok') is not True:
+              raise SystemExit(f"Native mobile API is not healthy: {data}")
+          print('Native mobile API health: PASS')
           PY
 
       - name: Set up Node for public browser smoke
@@ -164,13 +174,12 @@ jobs:
           path: |
             healthz.json
             readyz.json
+            mobile-health.json
             playwright-report
             test-results
           if-no-files-found: ignore
           retention-days: 14
 
-  # The live artifact must be the native Flutter client, never the retired
-  # Android WebView wrapper.
   live-apk:
     needs: deploy
     if: ${{ github.event_name == 'push' || inputs.deploy_web }}
