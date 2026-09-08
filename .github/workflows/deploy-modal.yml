@@ -17,9 +17,8 @@ on:
         required: true
         type: boolean
         default: true
-  # Auth, mail and camera/liveness changes are production behavior, not just
-  # source changes. They must redeploy automatically or users keep seeing the
-  # previous Modal image even after main is updated.
+  # Any runtime behavior used in the college demo must redeploy automatically
+  # after main changes, otherwise the hosted demo can silently lag behind source.
   push:
     branches: [ main ]
     paths:
@@ -30,12 +29,19 @@ on:
       - 'app.py'
       - 'auth/**'
       - 'mailg/**'
-      - 'safety/face_service.py'
-      - 'safety/remote_client.py'
-      - 'static/js/parent_liveness_mediapipe.js'
-      - 'tools/install_mediapipe_assets.py'
+      - 'safety/**'
+      - 'services/**'
+      - 'parent/**'
+      - 'child/**'
+      - 'childMessage/**'
+      - 'uploadPost/**'
+      - 'admin/**'
+      - 'quiz/**'
+      - 'static/js/**'
       - 'services/object_storage.py'
       - 'db/migrations/**'
+      - 'database/**'
+      - 'tools/install_mediapipe_assets.py'
       - 'tools/seed_quizzes.py'
 
 permissions:
@@ -80,9 +86,6 @@ jobs:
       - name: Deploy AI service
         run: modal deploy modal_ai.py --stream-logs
 
-      # Validate cheaper web/runtime dependencies before invoking the expensive
-      # T4 model warm gate. This avoids burning GPU credits only to discover a
-      # missing DB, mail, R2 or BASE_URL configuration later in the release.
       - name: Deploy web service
         if: ${{ github.event_name == 'push' || inputs.deploy_web }}
         run: modal deploy modal_web.py --stream-logs
