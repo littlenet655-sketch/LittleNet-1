@@ -178,6 +178,10 @@ jobs:
           distribution: temurin
           java-version: '17'
       - uses: android-actions/setup-android@v3
+      - name: Install Android SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
       - uses: gradle/actions/setup-gradle@v5
         with:
           gradle-version: '8.9'
@@ -198,9 +202,12 @@ jobs:
         env:
           BACKEND_URL: ${{ env.LIVE_URL }}
         run: |
+          set -euo pipefail
           APK=android/app/build/outputs/apk/debug/app-debug.apk
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
           test -s "$APK"
-          aapt dump badging "$APK" | grep -q "package: name='com.littlenet.app'"
+          test -x "$AAPT"
+          "$AAPT" dump badging "$APK" | grep -q "package: name='com.littlenet.app'"
           strings "$APK" | grep -F "${BACKEND_URL%/}" >/dev/null || strings "$APK" | grep -F "$BACKEND_URL" >/dev/null
 
       - name: Upload live APK
