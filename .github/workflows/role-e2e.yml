@@ -34,6 +34,9 @@ jobs:
       GEMINI_API_KEY: ''
       GOOGLE_API_KEY: ''
       AI_SERVICE_URL: ''
+      DBMATE_MIGRATIONS_DIR: db/migrations
+      DBMATE_NO_DUMP_SCHEMA: 'true'
+      DBMATE_STRICT: 'true'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -44,12 +47,18 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-core.txt "pydantic>=2,<3" pytest
-      - name: Build disposable LittleNet schema
+          curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.34.1/dbmate-linux-amd64
+          chmod +x /usr/local/bin/dbmate
+          dbmate --version
+      - name: Build disposable LittleNet schema and production migrations
         env:
           PGPASSWORD: littlenet
         run: |
+          set -euo pipefail
           psql -h 127.0.0.1 -U postgres -d safeconnect_db -v ON_ERROR_STOP=1 -f database/schema.sql
           psql -h 127.0.0.1 -U postgres -d safeconnect_db -v ON_ERROR_STOP=1 -f database/upgrade.sql
           psql -h 127.0.0.1 -U postgres -d safeconnect_db -v ON_ERROR_STOP=1 -f database/friendship_upgrade.sql
+          dbmate --no-dump-schema --migrations-dir db/migrations up
+          dbmate --no-dump-schema --migrations-dir db/migrations status
       - name: Run authenticated Kid Parent Admin smoke
         run: python -m pytest tests/test_real_postgres_role_smoke.py -q -rs
