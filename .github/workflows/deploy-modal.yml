@@ -38,6 +38,7 @@ on:
       - 'uploadPost/**'
       - 'admin/**'
       - 'quiz/**'
+      - 'mobile/**'
       - 'static/js/**'
       - 'static/js/parent_liveness_mediapipe.js'
       - 'services/object_storage.py'
@@ -168,6 +169,8 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The live artifact must be the native Flutter client, never the retired
+  # Android WebView wrapper.
   live-apk:
     needs: deploy
     if: ${{ github.event_name == 'push' || inputs.deploy_web }}
@@ -175,47 +178,59 @@ jobs:
     timeout-minutes: 35
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-java@v4
+
+      - name: Set up Flutter stable
+        uses: subosito/flutter-action@v2
         with:
-          distribution: temurin
-          java-version: '17'
-      - uses: android-actions/setup-android@v3
-      - name: Install Android SDK packages
-        run: |
-          yes | sdkmanager --licenses >/dev/null || true
-          sdkmanager 'platform-tools' 'platforms;android-35' 'build-tools;35.0.0'
-      - uses: gradle/actions/setup-gradle@v5
-        with:
-          gradle-version: '8.9'
+          channel: stable
+          cache: true
 
-      - name: Inject the same verified live URL
-        env:
-          BACKEND_URL: ${{ env.LIVE_URL }}
-        run: |
-          python tools/set_backend_url.py "$BACKEND_URL"
-          grep -F "$BACKEND_URL" android/app/src/main/res/values/strings.xml
-          ! grep -q 'YOUR-LITTLENET-BACKEND' android/app/src/main/res/values/strings.xml
+      - name: Generate exact-branded native Android runner
+        working-directory: mobile_flutter
+        run: bash tool/prepare_android.sh
 
-      - name: Build installable live APK
-        working-directory: android
-        run: gradle --no-daemon :app:assembleDebug
+      - name: Install Dart dependencies
+        working-directory: mobile_flutter
+        run: flutter pub get
 
-      - name: Verify APK package and embedded backend URL
-        env:
-          BACKEND_URL: ${{ env.LIVE_URL }}
+      - name: Prove live client has no WebView
         run: |
           set -euo pipefail
-          APK=android/app/build/outputs/apk/debug/app-debug.apk
-          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
-          test -s "$APK"
-          test -x "$AAPT"
-          "$AAPT" dump badging "$APK" | grep -q "package: name='com.littlenet.app'"
-          strings "$APK" | grep -F "${BACKEND_URL%/}" >/dev/null || strings "$APK" | grep -F "$BACKEND_URL" >/dev/null
+          if grep -R -n -E 'webview_flutter|InAppWebView|android\.webkit\.WebView|WebViewClient|loadUrl\(' mobile_flutter/lib mobile_flutter/android 2>/dev/null; then
+            echo 'WebView dependency/code found in live native app' >&2
+            exit 1
+          fi
 
-      - name: Upload live APK
+      - name: Analyze and test native client
+        working-directory: mobile_flutter
+        run: |
+          flutter analyze --no-fatal-warnings --no-fatal-infos
+          flutter test
+
+      - name: Build installable native live APK
+        working-directory: mobile_flutter
+        env:
+          BACKEND_URL: ${{ env.LIVE_URL }}
+        run: flutter build apk --release --dart-define=LITTLENET_API_BASE="${BACKEND_URL%/}"
+
+      - name: Verify native package, Flutter engine and no WebView
+        run: |
+          set -euo pipefail
+          APK=mobile_flutter/build/app/outputs/flutter-apk/app-release.apk
+          test -s "$APK"
+          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n 1)"
+          test -n "$AAPT"
+          "$AAPT" dump badging "$APK" | grep -q "package: name='com.littlenet.app'"
+          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libflutter.so'
+          ! unzip -l "$APK" | grep -qi 'webview_flutter'
+          sha256sum "$APK" | tee LittleNet-live-native-apk.sha256
+
+      - name: Upload live native APK
         uses: actions/upload-artifact@v4
         with:
-          name: LittleNet-live-verified-apk
-          path: android/app/build/outputs/apk/debug/app-debug.apk
+          name: LittleNet-live-native-Flutter-APK
+          path: |
+            mobile_flutter/build/app/outputs/flutter-apk/app-release.apk
+            LittleNet-live-native-apk.sha256
           if-no-files-found: error
           retention-days: 30

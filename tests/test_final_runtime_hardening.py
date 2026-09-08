@@ -147,16 +147,23 @@ def test_parent_mode_uses_full_document_navigation_for_page_specific_scripts():
     assert "document.addEventListener('click'" in parent
 
 
-def test_retired_audio_is_absent_from_android_runtime_surface():
-    manifest = _text("android/app/src/main/AndroidManifest.xml")
-    activity = _text("android/app/src/main/java/com/littlenet/app/MainActivity.java")
-    assert "android.permission.RECORD_AUDIO" not in manifest
-    assert "RECORD_SOUND_ACTION" not in activity
-    assert "RESOURCE_AUDIO_CAPTURE" not in activity
-    assert "pendingWebPermission" in activity
-    assert "onRequestPermissionsResult" in activity
-    assert "MIXED_CONTENT_NEVER_ALLOW" in activity
-    assert "WebView.setWebContentsDebuggingEnabled(false)" in activity
+def test_retired_audio_and_webview_are_absent_from_native_flutter_runtime():
+    pubspec = _text("mobile_flutter/pubspec.yaml")
+    prepare = _text("mobile_flutter/tool/prepare_android.sh")
+    auth = _text("mobile_flutter/lib/screens/auth.dart")
+
+    assert "webview_flutter" not in pubspec.lower()
+    assert "android.permission.RECORD_AUDIO" not in prepare
+    assert "android.permission.CAMERA" in prepare
+    assert "FlutterActivity" in prepare
+    # The only WebViewClient reference is deliberately inside the fail-closed
+    # grep detector that prevents generated Android code from regressing to a
+    # WebView wrapper. It is not application/runtime code.
+    assert "WebViewClient" in prepare
+    assert "ERROR: WebView code found in native Flutter Android runner." in prepare
+    assert "image_picker" in pubspec
+    assert "ImageSource.camera" in auth
+    assert not (ROOT / "android/app/src/main/java/com/littlenet/app/MainActivity.java").exists()
 
 
 def test_stale_kivy_ngrok_entrypoint_is_removed():

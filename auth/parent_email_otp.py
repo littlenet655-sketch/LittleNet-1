@@ -6,6 +6,7 @@ succeeds. OTP values are never stored in plaintext and expire after ten minutes.
 """
 import hashlib
 import hmac
+import os
 import secrets
 from datetime import date, datetime
 
@@ -250,7 +251,6 @@ def resend_parent_email_otp(user_id):
 
     if not _send_code(user_id, user['email'], user['full_name'], code):
         if os.getenv('RESEND_API_KEY'):
-            return False, 'Email delivery failed. In Resend testing mode, use the account email (littlenet655@gmail.com) or verify your domain in Resend.'
-        return False, 'Email delivery is unavailable. Check SMTP configuration and try again.'
+            return False, 'Email delivery failed. Check the verified Resend sender/domain configuration and try again.'
+        return False, 'Email delivery is unavailable. Check Resend/SMTP configuration and try again.'
     return True, None
-

@@ -1,36 +1,96 @@
 from pathlib import Path
-import ast,shutil,os,sys
-R=Path(__file__).parents[1]
-checks=[]
-def add(name,ok,detail=''):checks.append((name,bool(ok),detail))
+import ast
+import os
+import shutil
+import sys
 
-bad=[]
+R = Path(__file__).parents[1]
+checks = []
+
+
+def add(name, ok, detail=''):
+    checks.append((name, bool(ok), detail))
+
+
+bad = []
 for p in R.rglob('*.py'):
-    if any(part in ('__pycache__', '.venv', 'venv', 'node_modules', '.git') for part in p.parts):continue
-    try:ast.parse(p.read_text(encoding='utf-8'))
-    except Exception as e:bad.append(f'{p.relative_to(R)}:{e}')
-add('Python source parses',not bad,'; '.join(bad))
-add('No Git metadata',not (R/'.git').exists())
-for rel in [
- 'safety/visual_service.py','safety/audio_service.py','safety/face_service.py','safety/document_service.py',
- 'services/behavior.py','admin/templates/admin_dashboard.html','admin/templates/admin_moderation.html',
- 'child/templates/live_safety.html','static/js/live_safety.js','uploadPost/templates/reels.html',
- 'child/templates/stories_viewer.html','parent/templates/safety_review.html','Dockerfile','Dockerfile.web','Dockerfile.ai','ai_server.py','safety/remote_client.py','railway.toml','docker-entrypoint.sh','DEPLOYMENT_FREE.md','.github/workflows/ci.yml','.github/workflows/build-apk.yml',
- 'modal_ai.py','modal_web.py','MODAL_DEPLOYMENT.md','requirements-modal.txt','.github/workflows/deploy-modal.yml',
- 'android/app/src/main/java/com/littlenet/app/MainActivity.java'
-]:add(rel,(R/rel).exists())
-add('Backend URL configured','YOUR-LITTLENET-BACKEND' not in (R/'android/app/src/main/res/values/strings.xml').read_text(),'requires final hosted HTTPS backend')
-add('Gradle available',bool(shutil.which('gradle') or (R/'tools/gradle-8.9/gradle-8.9/bin/gradle.bat').exists()),'Android Studio/Gradle needed for APK binary')
-add('Android SDK configured',bool(os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT') or (Path.home()/'AppData/Local/Android/sdk').exists()),'Android SDK needed for APK binary')
-add('APK binary compiled', (R/'android/app/build/outputs/apk/debug/app-debug.apk').exists(), 'Local build output only; production APK is a CI artifact after live readiness passes')
+    if any(part in ('__pycache__', '.venv', 'venv', 'node_modules', '.git') for part in p.parts):
+        continue
+    try:
+        ast.parse(p.read_text(encoding='utf-8'))
+    except Exception as exc:
+        bad.append(f'{p.relative_to(R)}:{exc}')
+add('Python source parses', not bad, '; '.join(bad))
+add('No Git metadata', not (R / '.git').exists())
+
+required_source = [
+    'safety/visual_service.py', 'safety/audio_service.py', 'safety/face_service.py',
+    'safety/document_service.py', 'services/behavior.py',
+    'admin/templates/admin_dashboard.html', 'admin/templates/admin_moderation.html',
+    'child/templates/live_safety.html', 'static/js/live_safety.js',
+    'uploadPost/templates/reels.html', 'child/templates/stories_viewer.html',
+    'parent/templates/safety_review.html',
+    'Dockerfile', 'Dockerfile.web', 'Dockerfile.ai', 'ai_server.py',
+    'safety/remote_client.py', 'railway.toml', 'docker-entrypoint.sh',
+    'DEPLOYMENT_FREE.md', '.github/workflows/ci.yml',
+    'modal_ai.py', 'modal_web.py', 'MODAL_DEPLOYMENT.md',
+    'requirements-modal.txt', '.github/workflows/deploy-modal.yml',
+    # Canonical native Android client.
+    'mobile/api.py', 'mobile_flutter/pubspec.yaml', 'mobile_flutter/lib/main.dart',
+    'mobile_flutter/lib/api.dart', 'mobile_flutter/lib/widgets.dart',
+    'mobile_flutter/lib/screens/auth.dart', 'mobile_flutter/lib/screens/kids.dart',
+    'mobile_flutter/lib/screens/kids_feed.dart',
+    'mobile_flutter/lib/screens/kids_learning.dart',
+    'mobile_flutter/lib/screens/kids_onboarding.dart',
+    'mobile_flutter/lib/screens/parent.dart', 'mobile_flutter/lib/screens/admin.dart',
+    'mobile_flutter/tool/prepare_android.sh',
+    '.github/workflows/flutter-native.yml', '.github/workflows/release-android.yml',
+]
+for rel in required_source:
+    add(rel, (R / rel).exists())
+
+pubspec = (R / 'mobile_flutter/pubspec.yaml').read_text(encoding='utf-8')
+main_dart = (R / 'mobile_flutter/lib/main.dart').read_text(encoding='utf-8')
+api_dart = (R / 'mobile_flutter/lib/api.dart').read_text(encoding='utf-8')
+prepare = (R / 'mobile_flutter/tool/prepare_android.sh').read_text(encoding='utf-8')
+mobile_api = (R / 'mobile/api.py').read_text(encoding='utf-8')
+
+add('Native Flutter client declared', 'flutter:' in pubspec and 'LittleNetApp' in main_dart)
+add('Native secure token storage', 'flutter_secure_storage' in pubspec and 'FlutterSecureStorage' in api_dart)
+add('Native camera/media support', 'image_picker' in pubspec and 'android.permission.CAMERA' in prepare)
+add('Native client has no WebView dependency', 'webview_flutter' not in pubspec.lower())
+add('Generated Android runner is FlutterActivity', 'FlutterActivity' in prepare and 'com.littlenet.app' in prepare)
+add('Android cleartext disabled', 'android:usesCleartextTraffic="false"' in prepare)
+add('Mobile API declares Flutter/no-WebView', 'client="flutter"' in mobile_api and 'webview=False' in mobile_api)
+add('Mobile API auth routes exist', '/api/mobile/v1/auth/login' in mobile_api and '/api/mobile/v1/auth/face-login' in mobile_api)
+add('Backend URL configured', 'YOUR-LITTLENET-BACKEND' not in api_dart and 'https://' in api_dart,
+    'native APK must target the final hosted HTTPS backend')
+
+# Toolchain checks are useful locally but are not source-readiness blockers.
+add('Flutter available', bool(shutil.which('flutter')), 'Flutter SDK required for a local APK build')
+add('Android SDK configured', bool(
+    os.environ.get('ANDROID_HOME') or os.environ.get('ANDROID_SDK_ROOT') or
+    (Path.home() / 'AppData/Local/Android/sdk').exists()
+), 'Android SDK required for a local APK build')
+
+release_apk = R / 'mobile_flutter/build/app/outputs/flutter-apk/app-release.apk'
+add('Native release APK compiled', release_apk.exists(),
+    'production APK is generated by the native Flutter CI/release workflow')
+
 print('LittleNet readiness')
-for n,ok,d in checks:print(('PASS' if ok else 'WAIT').ljust(5),n,('- '+d) if d else '')
-external={'Backend URL configured','Gradle available','Android SDK configured','No Git metadata'}
-artifacts={'APK binary compiled'}
-source_ready=all(ok for n,ok,d in checks if n not in external|artifacts)
-apk_ready=(R/'android/app/build/outputs/apk/debug/app-debug.apk').exists()
-print('\nSOURCE_READY=',source_ready)
-print('APK_BINARY_READY=',apk_ready)
+for name, ok, detail in checks:
+    print(('PASS' if ok else 'WAIT').ljust(5), name, ('- ' + detail) if detail else '')
+
+external = {
+    'No Git metadata', 'Backend URL configured', 'Flutter available',
+    'Android SDK configured',
+}
+artifacts = {'Native release APK compiled'}
+source_ready = all(ok for name, ok, _ in checks if name not in external | artifacts)
+apk_ready = release_apk.exists()
+print('\nSOURCE_READY=', source_ready)
+print('APK_BINARY_READY=', apk_ready)
+
 if '--source-only' in sys.argv:
     raise SystemExit(0 if source_ready else 1)
 raise SystemExit(0 if (source_ready and apk_ready) else 1)

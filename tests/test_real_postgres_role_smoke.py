@@ -1,8 +1,9 @@
 """Real PostgreSQL authenticated role smoke for college-submission verification.
 
 This module is intentionally skipped in the normal unit suite. CI enables it in a
-separate job with a disposable PostgreSQL service so Kid/Parent/Admin route guards
-are exercised against the actual schema instead of mocks.
+separate job with a disposable PostgreSQL service so Kid/Parent/Admin browser and
+native bearer-API guards are exercised against the actual production migration
+chain instead of mocks.
 """
 import os
 
@@ -22,11 +23,27 @@ ADMIN_ID = 9103
 
 def _db_exec(sql, params=()):
     import psycopg2
+
     conn = psycopg2.connect(os.environ["DATABASE_URL"])
     try:
         with conn.cursor() as cur:
             cur.execute(sql, params)
         conn.commit()
+    finally:
+        conn.close()
+
+
+def _db_fetchone(sql, params=()):
+    import psycopg2
+    from psycopg2.extras import RealDictCursor
+
+    conn = psycopg2.connect(os.environ["DATABASE_URL"])
+    try:
+        with conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(sql, params)
+            row = cur.fetchone()
+        conn.commit()
+        return dict(row) if row else None
     finally:
         conn.close()
 
@@ -76,10 +93,18 @@ def _login(client, user_id, role, name):
         sess["full_name"] = name
 
 
+def _mobile_headers(user_id, role, name):
+    from mobile.api import _issue_token
+
+    token = _issue_token({"user_id": user_id, "role": role, "full_name": name})
+    return {"Authorization": f"Bearer {token}"}
+
+
 def test_real_postgres_kid_parent_admin_routes_and_live_status_guards():
     _seed_role_fixture()
 
     from app import create_app
+
     app = create_app()
     app.config.update(TESTING=True, WTF_CSRF_ENABLED=False)
 
@@ -101,11 +126,68 @@ def test_real_postgres_kid_parent_admin_routes_and_live_status_guards():
         wrong_role = client.get("/admin/users/", follow_redirects=False)
         assert wrong_role.status_code in {302, 401, 403}
 
-        # Live account status is authoritative; a stale signed session must stop
-        # working immediately once the account is suspended in PostgreSQL.
+        # Native Flutter bearer routes must work against the same real database.
+        kid_mobile = client.get(
+            "/api/mobile/v1/kids/home",
+            headers=_mobile_headers(CHILD_ID, "CHILD", "CI Child"),
+        )
+        assert kid_mobile.status_code == 200, kid_mobile.get_data(as_text=True)[:500]
+        assert kid_mobile.get_json()["ok"] is True
+
+        parent_mobile = client.get(
+            "/api/mobile/v1/parent/dashboard",
+            headers=_mobile_headers(PARENT_ID, "PARENT", "CI Parent"),
+        )
+        assert parent_mobile.status_code == 200, parent_mobile.get_data(as_text=True)[:500]
+        assert any(int(k["user_id"]) == CHILD_ID for k in parent_mobile.get_json()["children"])
+
+        admin_mobile = client.get(
+            "/api/mobile/v1/admin/dashboard",
+            headers=_mobile_headers(ADMIN_ID, "ADMIN", "CI Admin"),
+        )
+        assert admin_mobile.status_code == 200, admin_mobile.get_data(as_text=True)[:500]
+
+        # ESCALATE must append an audit-trail row while leaving the event open,
+        # then a later final APPROVE must succeed for the same event. This proves
+        # the production migration removed the old one-review-per-event trap.
+        event = _db_fetchone(
+            """INSERT INTO moderation_events(child_id,content_type,risk_score,decision,reason,status)
+               VALUES(%s,'TEXT',55,'REVIEW','CI native escalation smoke','OPEN')
+               RETURNING event_id""",
+            (CHILD_ID,),
+        )
+        event_id = int(event["event_id"])
+        admin_headers = _mobile_headers(ADMIN_ID, "ADMIN", "CI Admin")
+
+        escalated = client.post(
+            f"/api/mobile/v1/admin/reviews/{event_id}",
+            headers=admin_headers,
+            json={"action": "ESCALATE", "notes": "CI escalation"},
+        )
+        assert escalated.status_code == 200, escalated.get_data(as_text=True)[:500]
+        assert escalated.get_json()["status"] == "OPEN"
+
+        approved = client.post(
+            f"/api/mobile/v1/admin/reviews/{event_id}",
+            headers=admin_headers,
+            json={"action": "APPROVE", "notes": "CI final decision"},
+        )
+        assert approved.status_code == 200, approved.get_data(as_text=True)[:500]
+        assert approved.get_json()["status"] == "RESOLVED"
+        reviews = _db_fetchone(
+            "SELECT COUNT(*)::int n FROM moderation_reviews WHERE event_id=%s",
+            (event_id,),
+        )
+        assert reviews["n"] == 2
+
+        # Live account status is authoritative; a stale signed browser and
+        # native token must stop working immediately after suspension.
         _login(client, PARENT_ID, "PARENT", "CI Parent")
+        parent_headers = _mobile_headers(PARENT_ID, "PARENT", "CI Parent")
         _db_exec("UPDATE users SET account_status='SUSPENDED' WHERE user_id=%s", (PARENT_ID,))
         suspended = client.get(f"/parent/usage-report/?child_id={CHILD_ID}", follow_redirects=False)
         assert suspended.status_code in {302, 403}
+        suspended_mobile = client.get("/api/mobile/v1/parent/dashboard", headers=parent_headers)
+        assert suspended_mobile.status_code == 401
 
         _db_exec("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s", (PARENT_ID,))
