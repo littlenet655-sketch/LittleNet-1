@@ -17,7 +17,7 @@ def test_modal_preflight_covers_full_live_stack():
         assert required in src
 
 
-def test_deploy_workflow_runs_cheap_runtime_gates_before_gpu_then_smoke_and_apk():
+def test_deploy_workflow_runs_runtime_gates_then_builds_native_flutter_apk():
     workflow = (ROOT / '.github/workflows/deploy-modal.yml').read_text(encoding='utf-8')
     required_order = [
         'modal deploy modal_ai.py',
@@ -28,11 +28,16 @@ def test_deploy_workflow_runs_cheap_runtime_gates_before_gpu_then_smoke_and_apk(
         'modal run modal_ai.py',
         '/readyz',
         "E2E_REQUIRE_READY: '1'",
-        ':app:assembleDebug',
+        'Generate exact-branded native Android runner',
+        'flutter build apk --release',
     ]
     positions = [workflow.index(token) for token in required_order]
     assert positions == sorted(positions)
-    assert 'LittleNet-live-verified-apk' in workflow
+    assert 'LITTLENET_API_BASE' in workflow
+    assert 'LittleNet-live-native-Flutter-APK' in workflow
+    assert "package: name='com.littlenet.app'" in workflow
+    assert 'lib/arm64-v8a/libflutter.so' in workflow
+    assert 'WebView dependency/code found in live native app' in workflow
 
 
 def test_live_browser_smoke_can_fail_closed_on_degraded_readyz():
