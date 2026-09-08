@@ -37,8 +37,9 @@ import io.flutter.embedding.android.FlutterActivity
 class MainActivity : FlutterActivity()
 KT
 
-# Keep a vector fallback, but prefer the repository's real LittleNet launcher
-# assets so the Flutter APK uses the exact same branding as the web/PWA app.
+# Keep a vector fallback, but use the repository's real LittleNet logo PNG for
+# both launcher branding and splash. This makes the native client independent of
+# the retired Android WebView project.
 cat > "$DRAWABLE/ic_littlenet.xml" <<'XML'
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -54,24 +55,10 @@ cat > "$DRAWABLE/ic_littlenet.xml" <<'XML'
 XML
 
 BRAND_LOGO="../static/icons/app_logo.png"
-if [ -f "$BRAND_LOGO" ]; then
-  cp "$BRAND_LOGO" "$DRAWABLE/littlenet_brand.png"
-fi
+test -f "$BRAND_LOGO"
+cp "$BRAND_LOGO" "$DRAWABLE/littlenet_brand.png"
 
-# Reuse the exact density-specific launcher icons already shipped by LittleNet.
-for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
-  src="../android/app/src/main/res/mipmap-${density}/ic_littlenet.png"
-  dst="android/app/src/main/res/mipmap-${density}"
-  if [ -f "$src" ]; then
-    mkdir -p "$dst"
-    cp "$src" "$dst/ic_littlenet.png"
-  fi
-done
-
-SPLASH_ICON="@drawable/ic_littlenet"
-if [ -f "$DRAWABLE/littlenet_brand.png" ]; then
-  SPLASH_ICON="@drawable/littlenet_brand"
-fi
+SPLASH_ICON="@drawable/littlenet_brand"
 
 write_launch_background() {
   local target="$1"
@@ -101,7 +88,7 @@ for permission in permissions:
         s=s.replace('<application', permission+'\n    <application', 1)
 s=s.replace('android:label="littlenet_native"', 'android:label="LittleNet"')
 s=s.replace('android:label="littlenet native"', 'android:label="LittleNet"')
-launcher = '@mipmap/ic_littlenet' if Path('android/app/src/main/res/mipmap-xxxhdpi/ic_littlenet.png').exists() else '@drawable/ic_littlenet'
+launcher = '@drawable/littlenet_brand'
 s=re.sub(r'android:icon="[^"]+"', f'android:icon="{launcher}"', s)
 if 'android:icon=' not in s:
     s=s.replace('<application', f'<application\n        android:icon="{launcher}"', 1)
@@ -120,15 +107,14 @@ if grep -R -n -E 'android\.webkit\.WebView|WebViewClient|loadUrl\(' android/app/
   exit 1
 fi
 
-# Branding/package contract: exact launcher, branded splash, and the existing
+# Branding/package contract: exact repo logo, branded splash, and the existing
 # LittleNet Android application id must all be present.
-test -f android/app/src/main/res/mipmap-xxxhdpi/ic_littlenet.png
 test -f "$DRAWABLE/littlenet_brand.png"
 grep -q 'littlenet_brand' "$DRAWABLE/launch_background.xml"
 grep -q 'littlenet_brand' "$DRAWABLE_V21/launch_background.xml"
-grep -q '@mipmap/ic_littlenet' "$MANIFEST"
+grep -q '@drawable/littlenet_brand' "$MANIFEST"
 grep -q 'applicationId = "com.littlenet.app"' "$BUILD_GRADLE"
 grep -q 'namespace = "com.littlenet.app"' "$BUILD_GRADLE"
 grep -q '^package com.littlenet.app$' android/app/src/main/kotlin/com/littlenet/app/MainActivity.kt
 
-echo "Prepared native LittleNet Android runner with exact logo/icon assets, branded splash, preserved package id and no WebView."
+echo "Prepared native LittleNet Android runner with exact logo, branded splash, preserved package id and no WebView."
