@@ -4,21 +4,15 @@ from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from database.connection import fetch_one, execute
 
-CURATED_CATEGORIES = [
-    'Family & Community',
-    'Nature & Animals',
-    'Art & Creative Hobbies',
-    'Science & Gardening',
-    'Culinary Arts & Food',
-]
 SAFE_CATEGORIES = [
     'Other','Science','Math','Art','Sports','Music','Technology','Education',
     'Nature','Books','Coding','General Knowledge',
-    *CURATED_CATEGORIES,
+    'Family & Community','Nature & Animals','Art & Creative Hobbies',
+    'Science & Gardening','Culinary Arts & Food'
 ]
 EDUCATIONAL_CATEGORIES = [
     'Science','Math','Technology','Education','Nature','Books','Coding','General Knowledge',
-    'Nature & Animals','Art & Creative Hobbies','Science & Gardening','Culinary Arts & Food',
+    'Nature & Animals','Art & Creative Hobbies','Science & Gardening','Culinary Arts & Food'
 ]
 FEATURE_COLUMNS = {
     'reels':'allow_reels',
@@ -152,7 +146,5 @@ def save_controls(parent_id,child_id,form):
       allowed_categories=EXCLUDED.allowed_categories,updated_at=NOW()''',(
         child_id,parent_id,values['allow_reels'],values['allow_stories'],values['allow_messaging'],values['allow_posting'],
         values['allow_discover'],values['quiet_hours_enabled'],qstart,qend,values['educational_only_feed'],json.dumps(allowed)))
-    # Settings must take effect immediately. Without invalidating this cache,
-    # Parent Mode could show/enforce stale values for up to the cache TTL.
     _controls_cache.pop(child_id, None)
     return controls_for_child(child_id)
