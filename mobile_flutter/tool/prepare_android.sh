@@ -58,14 +58,23 @@ BRAND_LOGO="../static/icons/app_logo.png"
 test -f "$BRAND_LOGO"
 cp "$BRAND_LOGO" "$DRAWABLE/littlenet_brand.png"
 
-SPLASH_ICON="@drawable/littlenet_brand"
+cat > "$VALUES/colors.xml" <<'XML'
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="littlenet_splash_bg">#FFF9F4</color>
+</resources>
+XML
 
 write_launch_background() {
   local target="$1"
-  cat > "$target" <<XML
+  cat > "$target" <<'XML'
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="#FFF9F4" />
-    <item android:gravity="center" android:width="132dp" android:height="132dp" android:drawable="$SPLASH_ICON" />
+    <item android:drawable="@color/littlenet_splash_bg" />
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@drawable/littlenet_brand" />
+    </item>
 </layer-list>
 XML
 }
@@ -112,6 +121,7 @@ fi
 test -f "$DRAWABLE/littlenet_brand.png"
 grep -q 'littlenet_brand' "$DRAWABLE/launch_background.xml"
 grep -q 'littlenet_brand' "$DRAWABLE_V21/launch_background.xml"
+grep -q 'littlenet_splash_bg' "$VALUES/colors.xml"
 grep -q '@drawable/littlenet_brand' "$MANIFEST"
 grep -q 'applicationId = "com.littlenet.app"' "$BUILD_GRADLE"
 grep -q 'namespace = "com.littlenet.app"' "$BUILD_GRADLE"
