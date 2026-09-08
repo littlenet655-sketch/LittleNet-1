@@ -106,7 +106,8 @@ class ApiClient {
     request.headers.addAll(authHeaders);
     request.fields.addAll(fields ?? const {});
     if (file != null) {
-      request.files.add(await http.MultipartFile.fromPath(fileField, file.path));
+      request.files
+          .add(await http.MultipartFile.fromPath(fileField, file.path));
     }
     final streamed = await request.send();
     final response = await http.Response.fromStream(streamed);

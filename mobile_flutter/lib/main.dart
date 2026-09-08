@@ -142,7 +142,8 @@ class _LaunchScreen extends StatelessWidget {
           children: [
             _BrandMark(size: 88),
             SizedBox(height: 18),
-            Text('LittleNet', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
+            Text('LittleNet',
+                style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
             SizedBox(height: 18),
             CircularProgressIndicator(),
           ],
@@ -169,7 +170,8 @@ class _BrandMark extends StatelessWidget {
         ),
         borderRadius: BorderRadius.circular(size * .28),
         boxShadow: const [
-          BoxShadow(color: Color(0x332563EB), blurRadius: 24, offset: Offset(0, 10)),
+          BoxShadow(
+              color: Color(0x332563EB), blurRadius: 24, offset: Offset(0, 10)),
         ],
       ),
       child: Icon(Icons.shield_rounded, color: Colors.white, size: size * .56),

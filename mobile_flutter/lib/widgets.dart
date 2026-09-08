@@ -118,7 +118,8 @@ class _NativeMediaState extends State<NativeMedia> {
   @override
   void didUpdateWidget(covariant NativeMedia oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.url != widget.url || oldWidget.mediaType != widget.mediaType) {
+    if (oldWidget.url != widget.url ||
+        oldWidget.mediaType != widget.mediaType) {
       controller?.dispose();
       controller = null;
       initialize = null;
@@ -135,7 +136,8 @@ class _NativeMediaState extends State<NativeMedia> {
     controller = c;
     initialize = c.initialize().then((_) async {
       await c.setLooping(true);
-      await c.setVolume(0); // LittleNet intentionally ships silent moderated video.
+      await c.setVolume(
+          0); // LittleNet intentionally ships silent moderated video.
       if (widget.autoPlay) await c.play();
       if (mounted) setState(() {});
     });
@@ -176,7 +178,8 @@ class _NativeMediaState extends State<NativeMedia> {
     return FutureBuilder<void>(
       future: initialize,
       builder: (_, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done || !c.value.isInitialized) {
+        if (snapshot.connectionState != ConnectionState.done ||
+            !c.value.isInitialized) {
           return const ColoredBox(
             color: Colors.black,
             child: Center(child: CircularProgressIndicator()),
@@ -188,7 +191,8 @@ class _NativeMediaState extends State<NativeMedia> {
             color: Colors.black,
             child: Center(
               child: AspectRatio(
-                aspectRatio: c.value.aspectRatio == 0 ? 9 / 16 : c.value.aspectRatio,
+                aspectRatio:
+                    c.value.aspectRatio == 0 ? 9 / 16 : c.value.aspectRatio,
                 child: VideoPlayer(c),
               ),
             ),

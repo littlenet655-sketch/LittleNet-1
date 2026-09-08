@@ -64,6 +64,13 @@ from services.controls import (
     quiet_hours_state,
     save_controls,
 )
+from services.curated_feed import (
+    _child_real_age,
+    authorize_curated_media,
+    get_feed_page,
+    record_feed_impression,
+    search_curated_content,
+)
 from services.social import (
     active_stories,
     can_interact,
@@ -315,6 +322,25 @@ def _media_allowed(uid: int, role: str, ref: str) -> bool:
         if role == "PARENT":
             return owns(uid, f["child_id"])
         return can_discover_child(uid, f["child_id"])
+    cur = fetch_one(
+        """SELECT cc.content_id, cc.min_age, cc.max_age, cc.publish_status, cat.display_name, cat.active,
+                  cma.moderation_status, cma.is_safe
+           FROM curated_media_assets cma
+           JOIN curated_content cc ON cc.asset_id = cma.asset_id
+           JOIN content_categories cat ON cat.category_id = cc.category_id
+           WHERE cma.delivery_object_key = %s OR cma.original_object_key = %s OR cma.poster_object_key = %s OR cma.thumbnail_object_key = %s""",
+        (ref, ref, ref, ref),
+    )
+    if cur:
+        if role in {"ADMIN", "PARENT"}:
+            return True
+        if role == "CHILD":
+            if cur.get("publish_status") != "PUBLISHED" or cur.get("moderation_status") != "ALLOWED" or not cur.get("is_safe"):
+                return False
+            if not cur.get("active") or cur.get("display_name") not in effective_categories(uid):
+                return False
+            child_age = _child_real_age(uid)
+            return bool(cur["min_age"] <= child_age <= cur["max_age"])
     return ref == "uploads/profile_pictures/download.webp" and role in {"CHILD", "PARENT", "ADMIN"}
 
 
@@ -1215,3 +1241,146 @@ def register_mobile_api(bp):
     def mobile_admin_reviews():
         rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
         return jsonify(ok=True, events=_clean(rows))
+
+    @bp.route("/api/mobile/v2/kids/feed")
+    @_require_mobile("CHILD")
+    def mobile_kids_feed_v2():
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        try:
+            cursor = max(0, int(request.args.get("cursor", 0)))
+        except (TypeError, ValueError):
+            cursor = 0
+        try:
+            limit = min(50, max(1, int(request.args.get("limit", 10))))
+        except (TypeError, ValueError):
+            limit = 10
+        session_id = request.args.get("session_id")
+        page = get_feed_page(uid, surface="FEED", cursor=cursor, limit=limit, session_id=session_id)
+        for item in page["items"]:
+            if item.get("media_reference"):
+                item["media_url"] = _asset_url(item["media_reference"])
+            if item.get("poster_reference"):
+                item["poster_url"] = _asset_url(item["poster_reference"])
+        return jsonify(ok=True, **_clean(page))
+
+    @bp.route("/api/mobile/v2/kids/reels")
+    @_require_mobile("CHILD")
+    def mobile_kids_reels_v2():
+        gate = _child_gate("reels")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        try:
+            cursor = max(0, int(request.args.get("cursor", 0)))
+        except (TypeError, ValueError):
+            cursor = 0
+        try:
+            limit = min(50, max(1, int(request.args.get("limit", 10))))
+        except (TypeError, ValueError):
+            limit = 10
+        session_id = request.args.get("session_id")
+        page = get_feed_page(uid, surface="REELS", cursor=cursor, limit=limit, session_id=session_id)
+        for item in page["items"]:
+            if item.get("media_reference"):
+                item["media_url"] = _asset_url(item["media_reference"])
+            if item.get("poster_reference"):
+                item["poster_url"] = _asset_url(item["poster_reference"])
+        return jsonify(ok=True, **_clean(page))
+
+    @bp.route("/api/mobile/v2/curated/media/<int:content_id>")
+    @_require_mobile("CHILD")
+    def mobile_curated_media(content_id):
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        try:
+            payload = authorize_curated_media(uid, content_id)
+            return jsonify(ok=True, **_clean(payload))
+        except FileNotFoundError:
+            return jsonify(error="content_not_found"), 404
+        except PermissionError as exc:
+            return jsonify(error=str(exc)), 403
+
+    @bp.route("/api/mobile/v2/kids/impressions", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_record_impression():
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        session_id = str(data.get("session_id") or "").strip()
+        source_type = str(data.get("source_type") or "").strip().upper()
+        try:
+            source_id = int(data.get("source_id"))
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_source_id"), 400
+        surface = str(data.get("surface") or "FEED").strip().upper()
+        watched_ms = data.get("watched_ms")
+        if watched_ms is not None:
+            try:
+                watched_ms = max(0, int(watched_ms))
+            except (TypeError, ValueError):
+                watched_ms = None
+        completed = bool(data.get("completed", False))
+        liked = bool(data.get("liked", False))
+        saved = bool(data.get("saved", False))
+
+        ok = record_feed_impression(
+            uid, session_id, source_type, source_id, surface,
+            watched_ms=watched_ms, completed=completed, liked=liked, saved=saved
+        )
+        if not ok:
+            return jsonify(error="invalid_session_item"), 403
+        return jsonify(ok=True)
+
+    @bp.route("/api/mobile/v2/kids/discover")
+    @_require_mobile("CHILD")
+    def mobile_kids_discover_v2():
+        gate = _child_gate("discover")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        q = str(request.args.get("q") or "").strip()
+        if q and scan_pii(q).get("detected"):
+            return jsonify(ok=True, pii_warning=True, children=[], posts=[], curated=[])
+
+        kids = discoverable_children(uid, q.lstrip("#") if q and not q.startswith("#") else None, 30)
+        out_kids = []
+        for child in kids:
+            row = dict(child)
+            row["avatar_url"] = _asset_url(row.get("profile_picture"))
+            row["is_following"] = is_following(uid, row["user_id"])
+            row["is_pending"] = is_follow_pending(uid, row["user_id"])
+            row.pop("profile_picture", None)
+            out_kids.append(_clean(row))
+
+        posts = visible_posts(uid, False, 30, 0)
+        if q:
+            needle = q.lstrip("#").casefold()
+            posts = [
+                p for p in posts
+                if needle in str(p.get("caption") or "").casefold()
+                or needle in str(p.get("content_category") or "").casefold()
+                or needle in str(p.get("full_name") or "").casefold()
+            ]
+
+        curated = search_curated_content(uid, q, limit=20) if q else []
+        for item in curated:
+            if item.get("media_reference"):
+                item["media_url"] = _asset_url(item["media_reference"])
+            if item.get("poster_reference"):
+                item["poster_url"] = _asset_url(item["poster_reference"])
+
+        return jsonify(
+            ok=True,
+            pii_warning=False,
+            children=out_kids,
+            posts=[_post_json(p, uid) for p in posts],
+            curated=_clean(curated),
+        )

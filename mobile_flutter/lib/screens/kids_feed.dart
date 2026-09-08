@@ -479,8 +479,7 @@ class _PostCardState extends State<PostCard> {
             ),
             if (media != null)
               AspectRatio(
-                aspectRatio:
-                    widget.post['media_type'] == 'VIDEO' ? 9 / 14 : 1,
+                aspectRatio: widget.post['media_type'] == 'VIDEO' ? 9 / 14 : 1,
                 child: NativeMedia(
                   api: widget.api,
                   url: media,
@@ -581,7 +580,8 @@ class _ReelsPageState extends State<ReelsPage> {
           }
           final reels = listMaps(snapshot.data?['reels']);
           if (reels.isEmpty) {
-            return const Center(child: Text('No safe reels available right now.'));
+            return const Center(
+                child: Text('No safe reels available right now.'));
           }
           return PageView.builder(
             scrollDirection: Axis.vertical,
