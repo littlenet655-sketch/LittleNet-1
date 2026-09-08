@@ -116,6 +116,8 @@ def warm_models():
 
     A failed component raises after reporting all failures, turning this command
     into a deployment/release gate rather than a diagnostic that can be ignored.
+    Only plain serializable metadata is returned to Modal; model/session objects
+    stay inside the remote container and are never sent back to the caller.
     """
     os.chdir("/root/littlenet")
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
@@ -142,7 +144,14 @@ def warm_models():
             raise RuntimeError("Detoxify multilingual model is missing sexual_explicit output")
         return {"labels": sorted(scores.keys())}
     run("detoxify_multilingual_explicit", detoxify_explicit)
-    run("nudenet", lambda: __import__("nudenet").NudeDetector())
+
+    def nudenet_validate():
+        from nudenet import NudeDetector
+        detector = NudeDetector()
+        # NudeDetector owns an ONNX Runtime InferenceSession, which is not
+        # pickleable. Validate construction here but return only plain metadata.
+        return {"loaded": detector is not None}
+    run("nudenet", nudenet_validate)
 
     def clip():
         from transformers import CLIPModel, CLIPProcessor
@@ -162,7 +171,7 @@ def warm_models():
         matched = dangerous_label_coverage(model.names)
         if len(matched) < 3:
             raise RuntimeError(f"YOLO checkpoint exposes insufficient dangerous-object labels: {matched}")
-        return {"dangerous_labels": matched}
+        return {"dangerous_labels": list(matched)}
     run("yolo_oiv7", yolo)
 
     def face():
