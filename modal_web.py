@@ -39,10 +39,13 @@ web_image = (
             "LITTLENET_DEVICE": "cpu",
             "LITTLENET_ENABLE_PRESIDIO": "1",
             "LITTLENET_PRESIDIO_SPACY_MODEL": "en_core_web_sm",
+            "LITTLENET_RESEND_FROM_EMAIL": "no-reply@littlenet.in",
+            "LITTLENET_RESEND_DOMAIN_VERIFIED": "1",
+            "STRICT_PRODUCTION_PREFLIGHT": "1",
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
-            "LITTLENET_DEPLOY_VERSION": "11",
+            "LITTLENET_DEPLOY_VERSION": "12",
         }
     )
     .add_local_dir(
@@ -82,9 +85,6 @@ def web():
 
     flask_app = create_app()
 
-    # Recover private-object deletions left pending by a process crash. The first
-    # deployment before migrations may not have the outbox table yet, so startup
-    # recovery is best effort; the release preflight below is the strict gate.
     try:
         from services.media_outbox import reconcile_pending_deletes
 
@@ -263,9 +263,6 @@ def web_preflight():
         and r2.get("ok")
         and media_outbox.get("ok")
     )
-    # Modal serializes remote return values back to the local caller. Normalize
-    # any DB-driver mapping subclasses or provider-specific values to plain JSON
-    # primitives so GitHub Actions does not need psycopg2/boto/etc. installed.
     return json.loads(json.dumps(report, default=str))
 
 
@@ -282,8 +279,6 @@ def main(
     if seed:
         print("quizzes", seed_quizzes.remote())
     if reconcile_media:
-        # web_preflight already performs strict reconciliation; this flag is a
-        # convenient operator entrypoint that keeps the same dependency checks.
         report = web_preflight.remote()
         print("media reconciliation", report.get("media_delete_outbox"))
         if not report.get("media_delete_outbox", {}).get("ok"):
