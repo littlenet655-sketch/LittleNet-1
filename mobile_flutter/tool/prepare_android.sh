@@ -13,9 +13,12 @@ rm -f test/widget_test.dart
 
 MANIFEST="android/app/src/main/AndroidManifest.xml"
 DRAWABLE="android/app/src/main/res/drawable"
+DRAWABLE_V21="android/app/src/main/res/drawable-v21"
 VALUES="android/app/src/main/res/values"
-mkdir -p "$DRAWABLE" "$VALUES"
+mkdir -p "$DRAWABLE" "$DRAWABLE_V21" "$VALUES"
 
+# Keep a vector fallback, but prefer the repository's real LittleNet launcher
+# assets so the Flutter APK uses the exact same branding as the web/PWA app.
 cat > "$DRAWABLE/ic_littlenet.xml" <<'XML'
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="108dp"
@@ -30,12 +33,38 @@ cat > "$DRAWABLE/ic_littlenet.xml" <<'XML'
 </vector>
 XML
 
-cat > "$DRAWABLE/launch_background.xml" <<'XML'
+BRAND_LOGO="../static/icons/app_logo.png"
+if [ -f "$BRAND_LOGO" ]; then
+  cp "$BRAND_LOGO" "$DRAWABLE/littlenet_brand.png"
+fi
+
+# Reuse the exact density-specific launcher icons already shipped by LittleNet.
+for density in mdpi hdpi xhdpi xxhdpi xxxhdpi; do
+  src="../android/app/src/main/res/mipmap-${density}/ic_littlenet.png"
+  dst="android/app/src/main/res/mipmap-${density}"
+  if [ -f "$src" ]; then
+    mkdir -p "$dst"
+    cp "$src" "$dst/ic_littlenet.png"
+  fi
+done
+
+SPLASH_ICON="@drawable/ic_littlenet"
+if [ -f "$DRAWABLE/littlenet_brand.png" ]; then
+  SPLASH_ICON="@drawable/littlenet_brand"
+fi
+
+write_launch_background() {
+  local target="$1"
+  cat > "$target" <<XML
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="#FFF9F4" />
-    <item android:gravity="center" android:width="108dp" android:height="108dp" android:drawable="@drawable/ic_littlenet" />
+    <item android:gravity="center" android:width="132dp" android:height="132dp" android:drawable="$SPLASH_ICON" />
 </layer-list>
 XML
+}
+
+write_launch_background "$DRAWABLE/launch_background.xml"
+write_launch_background "$DRAWABLE_V21/launch_background.xml"
 
 python3 - <<'PY'
 from pathlib import Path
@@ -52,19 +81,30 @@ for permission in permissions:
         s=s.replace('<application', permission+'\n    <application', 1)
 s=s.replace('android:label="littlenet_native"', 'android:label="LittleNet"')
 s=s.replace('android:label="littlenet native"', 'android:label="LittleNet"')
-s=re.sub(r'android:icon="[^"]+"', 'android:icon="@drawable/ic_littlenet"', s)
+launcher = '@mipmap/ic_littlenet' if Path('android/app/src/main/res/mipmap-xxxhdpi/ic_littlenet.png').exists() else '@drawable/ic_littlenet'
+s=re.sub(r'android:icon="[^"]+"', f'android:icon="{launcher}"', s)
 if 'android:icon=' not in s:
-    s=s.replace('<application', '<application\n        android:icon="@drawable/ic_littlenet"', 1)
+    s=s.replace('<application', f'<application\n        android:icon="{launcher}"', 1)
 if 'android:roundIcon=' not in s:
-    s=s.replace('android:icon="@drawable/ic_littlenet"', 'android:icon="@drawable/ic_littlenet"\n        android:roundIcon="@drawable/ic_littlenet"', 1)
+    s=s.replace(f'android:icon="{launcher}"', f'android:icon="{launcher}"\n        android:roundIcon="{launcher}"', 1)
+else:
+    s=re.sub(r'android:roundIcon="[^"]+"', f'android:roundIcon="{launcher}"', s)
 if 'android:usesCleartextTraffic=' not in s:
-    s=s.replace('android:roundIcon="@drawable/ic_littlenet"', 'android:roundIcon="@drawable/ic_littlenet"\n        android:usesCleartextTraffic="false"', 1)
+    s=s.replace(f'android:roundIcon="{launcher}"', f'android:roundIcon="{launcher}"\n        android:usesCleartextTraffic="false"', 1)
 p.write_text(s)
 PY
 
+# Fail closed if the generated Android app ever regresses to a WebView wrapper.
 if grep -R -n -E 'android\.webkit\.WebView|WebViewClient|loadUrl\(' android/app/src/main 2>/dev/null; then
   echo 'ERROR: WebView code found in native Flutter Android runner.' >&2
   exit 1
 fi
 
-echo "Prepared native LittleNet Android runner with branded icon/splash and no WebView."
+# Branding contract: the real launcher icon and branded splash must exist.
+test -f android/app/src/main/res/mipmap-xxxhdpi/ic_littlenet.png
+test -f "$DRAWABLE/littlenet_brand.png"
+grep -q 'littlenet_brand' "$DRAWABLE/launch_background.xml"
+grep -q 'littlenet_brand' "$DRAWABLE_V21/launch_background.xml"
+grep -q '@mipmap/ic_littlenet' "$MANIFEST"
+
+echo "Prepared native LittleNet Android runner with exact logo/icon assets, branded splash and no WebView."
