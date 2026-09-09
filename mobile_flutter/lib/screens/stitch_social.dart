@@ -192,8 +192,11 @@ class PostDetailScreen extends StatefulWidget {
 
 class _PostDetailScreenState extends State<PostDetailScreen> {
   final comment = TextEditingController();
+  final commentFocus = FocusNode();
   Future<Map<String, dynamic>>? future;
   bool sending = false;
+  int? replyingToCommentId;
+  String? replyingToName;
 
   @override
   void initState() {
@@ -202,7 +205,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
   }
 
   void _load() => setState(() {
-        future = widget.api.getJson('/api/mobile/v1/kids/posts/${widget.postId}');
+        future = widget.api.getJson('/api/mobile/v1/kids/posts/');
       });
 
   Future<void> _comment() async {
@@ -210,13 +213,23 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     if (text.isEmpty || sending) return;
     setState(() => sending = true);
     try {
+      final payload = <String, dynamic>{'text': text};
+      if (replyingToCommentId != null) {
+        payload['parent_comment_id'] = replyingToCommentId;
+      }
       final result = await widget.api.postJson(
-        '/api/mobile/v1/kids/posts/${widget.postId}/comment',
-        {'text': text},
+        '/api/mobile/v1/kids/posts//comment',
+        payload,
       );
       comment.clear();
-      if (mounted && result['status'] == 'REVIEW') {
-        toast(context, 'Your comment is waiting for a safety review.');
+      if (mounted) {
+        setState(() {
+          replyingToCommentId = null;
+          replyingToName = null;
+        });
+        if (result['status'] == 'REVIEW') {
+          toast(context, 'Your comment is waiting for a safety review.');
+        }
       }
       _load();
     } catch (e) {
@@ -226,10 +239,18 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     }
   }
 
+  void _startReply(Map<String, dynamic> item) {
+    setState(() {
+      replyingToCommentId = asInt(item['comment_id']);
+      replyingToName = item['full_name']?.toString() ?? item['username']?.toString() ?? 'student';
+    });
+    commentFocus.requestFocus();
+  }
+
   Future<void> _toggle(String action) async {
     try {
       await widget.api.postJson(
-        '/api/mobile/v1/kids/posts/${widget.postId}/$action',
+        '/api/mobile/v1/kids/posts//',
         const {},
       );
       _load();
@@ -238,9 +259,108 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
     }
   }
 
+  List<Widget> _buildCommentsTree(List<Map<String, dynamic>> comments) {
+    final topLevel = comments.where((c) => c['parent_comment_id'] == null).toList();
+    final replies = comments.where((c) => c['parent_comment_id'] != null).toList();
+    final widgets = <Widget>[];
+
+    for (final item in topLevel) {
+      final commentId = asInt(item['comment_id']);
+      final itemReplies = replies.where((r) => asInt(r['parent_comment_id']) == commentId).toList();
+
+      widgets.add(
+        ListTile(
+          leading: Avatar(
+            api: widget.api,
+            url: item['avatar_url']?.toString(),
+            radius: 18,
+          ),
+          title: Text(
+            item['full_name']?.toString() ?? 'Student',
+            style: const TextStyle(fontWeight: FontWeight.w700),
+          ),
+          subtitle: Text(item['comment_text']?.toString() ?? ''),
+          onTap: () => Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => OtherUserProfileScreen(
+                api: widget.api,
+                userId: asInt(item['child_id']),
+              ),
+            ),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Reply',
+                icon: const Icon(Icons.reply_rounded, size: 20),
+                onPressed: () => _startReply(item),
+              ),
+              IconButton(
+                tooltip: 'Report comment',
+                onPressed: () => showReportSheet(
+                  context,
+                  api: widget.api,
+                  targetType: 'COMMENT',
+                  targetId: commentId,
+                ),
+                icon: const Icon(Icons.more_horiz_rounded, size: 20),
+              ),
+            ],
+          ),
+        ),
+      );
+
+      for (final reply in itemReplies) {
+        widgets.add(
+          Padding(
+            padding: const EdgeInsets.only(left: 46, right: 12, bottom: 4),
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border(
+                  left: BorderSide(
+                    color: Theme.of(context).colorScheme.primary.withValues(alpha: 0.35),
+                    width: 2,
+                  ),
+                ),
+              ),
+              padding: const EdgeInsets.only(left: 8),
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Avatar(
+                  api: widget.api,
+                  url: reply['avatar_url']?.toString(),
+                  radius: 14,
+                ),
+                title: Text(
+                  reply['full_name']?.toString() ?? 'Student',
+                  style: const TextStyle(fontWeight: FontWeight.w700, fontSize: 13),
+                ),
+                subtitle: Text(reply['comment_text']?.toString() ?? ''),
+                trailing: IconButton(
+                  tooltip: 'Report reply',
+                  icon: const Icon(Icons.more_horiz_rounded, size: 18),
+                  onPressed: () => showReportSheet(
+                    context,
+                    api: widget.api,
+                    targetType: 'COMMENT',
+                    targetId: asInt(reply['comment_id']),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+      }
+    }
+    return widgets;
+  }
+
   @override
   void dispose() {
     comment.dispose();
+    commentFocus.dispose();
     super.dispose();
   }
 
@@ -273,7 +393,7 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           post['full_name']?.toString() ?? 'LittleNet student',
                           style: const TextStyle(fontWeight: FontWeight.w800),
                         ),
-                        subtitle: Text('@${post['username'] ?? ''}'),
+                        subtitle: Text('@'),
                         onTap: creatorId <= 0
                             ? null
                             : () => Navigator.of(context).push(
@@ -317,13 +437,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                                     : Icons.favorite_border_rounded,
                               ),
                             ),
-                            Text('${post['likes'] ?? 0}'),
+                            Text(''),
                             IconButton(
                               tooltip: 'Comments',
-                              onPressed: () => FocusScope.of(context).requestFocus(FocusNode()),
+                              onPressed: () => commentFocus.requestFocus(),
                               icon: const Icon(Icons.chat_bubble_outline_rounded),
                             ),
-                            Text('${post['comments_count'] ?? comments.length}'),
+                            Text(''),
                             IconButton(
                               tooltip: 'Share',
                               onPressed: () => showSharePostSheet(
@@ -364,42 +484,40 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                           padding: EdgeInsets.all(24),
                           child: Center(child: Text('No comments yet.')),
                         ),
-                      for (final item in comments)
-                        ListTile(
-                          leading: Avatar(
-                            api: widget.api,
-                            url: item['avatar_url']?.toString(),
-                            radius: 18,
-                          ),
-                          title: Text(
-                            item['full_name']?.toString() ?? 'Student',
-                            style: const TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                          subtitle: Text(item['comment_text']?.toString() ?? ''),
-                          onTap: () => Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => OtherUserProfileScreen(
-                                api: widget.api,
-                                userId: asInt(item['child_id']),
-                              ),
-                            ),
-                          ),
-                          trailing: IconButton(
-                            tooltip: 'Report comment',
-                            onPressed: () => showReportSheet(
-                              context,
-                              api: widget.api,
-                              targetType: 'COMMENT',
-                              targetId: asInt(item['comment_id']),
-                            ),
-                            icon: const Icon(Icons.more_horiz_rounded),
-                          ),
-                        ),
+                      ..._buildCommentsTree(comments),
                       const SizedBox(height: 24),
                     ],
                   ),
                 ),
               ),
+              if (replyingToCommentId != null)
+                Container(
+                  color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.6),
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                  child: Row(
+                    children: [
+                      Icon(Icons.reply_rounded, size: 16, color: Theme.of(context).colorScheme.primary),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          'Replying to ',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close_rounded, size: 16),
+                        onPressed: () => setState(() {
+                          replyingToCommentId = null;
+                          replyingToName = null;
+                        }),
+                      ),
+                    ],
+                  ),
+                ),
               SafeArea(
                 top: false,
                 child: Padding(
@@ -409,12 +527,13 @@ class _PostDetailScreenState extends State<PostDetailScreen> {
                       Expanded(
                         child: TextField(
                           controller: comment,
+                          focusNode: commentFocus,
                           maxLength: 800,
                           minLines: 1,
                           maxLines: 3,
-                          decoration: const InputDecoration(
+                          decoration: InputDecoration(
                             counterText: '',
-                            hintText: 'Add a kind comment…',
+                            hintText: replyingToName != null ? 'Reply to ...' : 'Add a kind comment...',
                           ),
                           onSubmitted: (_) => _comment(),
                         ),

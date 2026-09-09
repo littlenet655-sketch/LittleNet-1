@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS comments (
  comment_id BIGSERIAL PRIMARY KEY, post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, comment_text TEXT NOT NULL,
  moderation_status VARCHAR(20) NOT NULL DEFAULT 'ALLOWED' CHECK (moderation_status IN ('PENDING','ALLOWED','REVIEW','BLOCKED')),
+ parent_comment_id BIGINT REFERENCES comments(comment_id) ON DELETE CASCADE,
  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS followers (
@@ -297,3 +298,10 @@ CREATE TABLE IF NOT EXISTS parent_weekly_digests (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_parent_digests_child ON parent_weekly_digests(child_id, week_start_date DESC);
+
+CREATE TABLE IF NOT EXISTS revoked_tokens (
+    token_hash VARCHAR(64) PRIMARY KEY,
+    revoked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_created ON revoked_tokens(revoked_at);
+

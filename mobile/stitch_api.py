@@ -32,7 +32,7 @@ def _can_view_profile(viewer_id: int, target_id: int) -> bool:
 
 def _comment_rows(viewer_id: int, post_id: int):
     rows = fetch_all(
-        """SELECT c.comment_id,c.post_id,c.child_id,c.comment_text,c.created_at,
+        """SELECT c.comment_id,c.post_id,c.child_id,c.comment_text,c.created_at,c.parent_comment_id,
                   u.full_name,u.username,cp.profile_picture
            FROM comments c
            JOIN users u ON u.user_id=c.child_id
@@ -321,3 +321,99 @@ def register_mobile_stitch_api(bp):
                 'If something feels wrong, keep it hidden and ask a parent for help.',
             ],
         )
+
+    @bp.route('/api/mobile/v1/kids/users/<int:target_id>/connections')
+    @_require_mobile('CHILD')
+    def mobile_kids_user_connections(target_id):
+        blocked = _gate()
+        if blocked:
+            return blocked
+        uid = int(g.mobile_user['user_id'])
+        if not _target_child(target_id) or not _can_view_profile(uid, target_id):
+            return jsonify(error='profile_not_found'), 404
+        followers = fetch_all(
+            """SELECT u.user_id,u.full_name,u.username,cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id=f.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id=u.user_id
+               WHERE f.following_child_id=%s AND f.approved=TRUE
+               ORDER BY u.full_name,u.user_id LIMIT 100""",
+            (target_id,),
+        )
+        following = fetch_all(
+            """SELECT u.user_id,u.full_name,u.username,cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id=f.following_child_id
+               LEFT JOIN child_profiles cp ON cp.child_id=u.user_id
+               WHERE f.child_id=%s AND f.approved=TRUE
+               ORDER BY u.full_name,u.user_id LIMIT 100""",
+            (target_id,),
+        )
+        return jsonify(
+            ok=True,
+            followers=[_profile_json(r) for r in followers],
+            following=[_profile_json(r) for r in following],
+        )
+
+    @bp.route('/api/mobile/v1/kids/follow-requests')
+    @_require_mobile('CHILD')
+    def mobile_kids_follow_requests():
+        blocked = _gate()
+        if blocked:
+            return blocked
+        uid = int(g.mobile_user['user_id'])
+        incoming = fetch_all(
+            """SELECT f.follower_id,f.created_at,u.user_id,u.full_name,u.username,cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id=f.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id=u.user_id
+               WHERE f.following_child_id=%s AND f.approved=FALSE
+               ORDER BY f.created_at DESC LIMIT 50""",
+            (uid,),
+        )
+        outgoing = fetch_all(
+            """SELECT f.follower_id,f.created_at,u.user_id,u.full_name,u.username,cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id=f.following_child_id
+               LEFT JOIN child_profiles cp ON cp.child_id=u.user_id
+               WHERE f.child_id=%s AND f.approved=FALSE
+               ORDER BY f.created_at DESC LIMIT 50""",
+            (uid,),
+        )
+        return jsonify(
+            ok=True,
+            incoming=[{**_profile_json(r), 'follower_id': int(r['follower_id']), 'created_at': r['created_at'].isoformat() if hasattr(r['created_at'], 'isoformat') else str(r['created_at'])} for r in incoming],
+            outgoing=[{**_profile_json(r), 'follower_id': int(r['follower_id']), 'created_at': r['created_at'].isoformat() if hasattr(r['created_at'], 'isoformat') else str(r['created_at'])} for r in outgoing],
+        )
+
+    @bp.route('/api/mobile/v1/kids/chat/<int:peer_id>/info')
+    @_require_mobile('CHILD')
+    def mobile_kids_chat_info(peer_id):
+        blocked = _child_gate('messaging')
+        if blocked:
+            return blocked
+        uid = int(g.mobile_user['user_id'])
+        target = _target_child(peer_id)
+        if not target:
+            return jsonify(error='peer_not_found'), 404
+        muted = fetch_one('SELECT 1 FROM muted_users WHERE muter_id=%s AND muted_id=%s', (uid, peer_id)) is not None
+        blocked_user = fetch_one('SELECT 1 FROM blocked_users WHERE blocker_id=%s AND blocked_id=%s', (uid, peer_id)) is not None
+        shared_count = (fetch_one(
+            """SELECT COUNT(*) c FROM messages
+               WHERE ((sender_child_id=%s AND receiver_child_id=%s) OR (sender_child_id=%s AND receiver_child_id=%s))
+                 AND media_url IS NOT NULL AND media_url != ''""",
+            (uid, peer_id, peer_id, uid),
+        ) or {'c': 0})['c']
+        return jsonify(
+            ok=True,
+            peer=_profile_json(target),
+            is_muted=muted,
+            is_blocked=blocked_user,
+            shared_media_count=int(shared_count),
+            guidelines=[
+                'All conversations are monitored by LittleNet safety AI and parents.',
+                'Never share phone numbers, addresses, school names, or passwords.',
+                'Be supportive, respectful, and kind to your classmates.',
+            ],
+        )
+

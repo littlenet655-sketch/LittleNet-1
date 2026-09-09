@@ -8,6 +8,7 @@ import '../widgets.dart';
 import 'kids_feed.dart';
 import 'creator_editors.dart';
 import 'kids_learning.dart';
+import 'social_connections.dart';
 
 class KidsShell extends StatefulWidget {
   const KidsShell({
@@ -370,7 +371,27 @@ class _MessagesPageState extends State<MessagesPage> {
               ),
             ),
           ),
+          IconButton(
+            tooltip: 'New Safe Chat',
+            icon: const Icon(Icons.edit_square),
+            onPressed: () async {
+              await Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => NewMessageScreen(api: widget.api)),
+              );
+              _load();
+            },
+          ),
         ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () async {
+          await Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => NewMessageScreen(api: widget.api)),
+          );
+          _load();
+        },
+        icon: const Icon(Icons.edit_square),
+        label: const Text('New Safe Chat'),
       ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: future,
@@ -455,7 +476,24 @@ class _ChatPageState extends State<ChatPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text(widget.peerName)),
+      appBar: AppBar(
+        title: Text(widget.peerName),
+        actions: [
+          IconButton(
+            tooltip: 'Chat Details',
+            icon: const Icon(Icons.info_outline_rounded),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => ChatInfoScreen(
+                  api: widget.api,
+                  peerId: widget.peerId,
+                  peerName: widget.peerName,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Expanded(
@@ -473,6 +511,42 @@ class _ChatPageState extends State<ChatPage> {
                     itemCount: rows.length,
                     itemBuilder: (_, reverseIndex) {
                       final item = rows[rows.length - 1 - reverseIndex];
+                      final isBlocked = item['moderation_status'] == 'BLOCKED' || item['status'] == 'BLOCKED';
+                      if (isBlocked) {
+                        return Center(
+                          child: Container(
+                            constraints: const BoxConstraints(maxWidth: 320),
+                            margin: const EdgeInsets.symmetric(vertical: 6),
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFEF2F2),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: const Color(0xFFFCA5A5)),
+                            ),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.shield_outlined, color: Color(0xFFDC2626), size: 20),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      const Text(
+                                        'Message Hidden by Safety AI',
+                                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFF991B1B)),
+                                      ),
+                                      Text(
+                                        item['reason']?.toString() ?? 'Content did not meet student safety standards.',
+                                        style: const TextStyle(fontSize: 11, color: Color(0xFF7F1D1D)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      }
                       final mine = asInt(item['receiver_child_id']) == widget.peerId;
                       final text = item['message_text']?.toString();
                       final media = item['media_url']?.toString();
@@ -615,7 +689,18 @@ class _ProfilePageState extends State<ProfilePage> {
                 const SizedBox(height: 18),
                 Row(mainAxisAlignment: MainAxisAlignment.spaceAround, children: [
                   _Count(label: 'Posts', value: counts['posts']),
-                  _Count(label: 'Friends', value: counts['followers']),
+                  _Count(
+                    label: 'Friends',
+                    value: counts['followers'],
+                    onTap: () => Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => FriendsListScreen(
+                          api: widget.api,
+                          userId: asInt(profile['child_id']),
+                        ),
+                      ),
+                    ),
+                  ),
                   _Count(label: 'Minutes', value: data['minutes_today']),
                 ]),
                 const SizedBox(height: 14),
@@ -623,6 +708,28 @@ class _ProfilePageState extends State<ProfilePage> {
                   Expanded(child: OutlinedButton.icon(onPressed: () => _edit(profile), icon: const Icon(Icons.edit_outlined), label: const Text('Edit profile'))),
                   const SizedBox(width: 10),
                   Expanded(child: OutlinedButton.icon(onPressed: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => LearningScreen(api: widget.api))), icon: const Icon(Icons.school_outlined), label: const Text('Learning'))),
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => FollowRequestsScreen(api: widget.api)),
+                      ),
+                      icon: const Icon(Icons.person_add_outlined),
+                      label: const Text('Requests'),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute(builder: (_) => const SettingsLanguageScreen()),
+                      ),
+                      icon: const Icon(Icons.settings_outlined),
+                      label: const Text('Settings'),
+                    ),
+                  ),
                 ]),
                 const SizedBox(height: 8),
                 OutlinedButton.icon(onPressed: widget.onLogout, icon: const Icon(Icons.logout_rounded), label: const Text('Log out')),
@@ -641,9 +748,24 @@ class _ProfilePageState extends State<ProfilePage> {
 }
 
 class _Count extends StatelessWidget {
-  const _Count({required this.label, required this.value});
+  const _Count({required this.label, required this.value, this.onTap});
   final String label;
   final dynamic value;
+  final VoidCallback? onTap;
   @override
-  Widget build(BuildContext context) => Column(children: [Text('${value ?? 0}', style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900)), Text(label, style: const TextStyle(color: Colors.black54))]);
+  Widget build(BuildContext context) {
+    final content = Column(children: [
+      Text('${value ?? 0}', style: const TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+      Text(label, style: const TextStyle(color: Colors.black54)),
+    ]);
+    if (onTap == null) return content;
+    return InkWell(
+      borderRadius: BorderRadius.circular(8),
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        child: content,
+      ),
+    );
+  }
 }

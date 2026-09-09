@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import os
 import tempfile
 import uuid
@@ -135,7 +136,12 @@ def _load_claims():
     if not token:
         return None
     try:
-        return _serializer(_AUTH_SALT).loads(token, max_age=_TOKEN_TTL)
+        claims = _serializer(_AUTH_SALT).loads(token, max_age=_TOKEN_TTL)
+        token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+        revoked = fetch_one("SELECT 1 FROM revoked_tokens WHERE token_hash=%s", (token_hash,))
+        if revoked:
+            return None
+        return claims
     except (BadSignature, SignatureExpired):
         return None
 
@@ -154,7 +160,8 @@ def _require_mobile(*roles):
                 (int(claims.get("uid") or 0),),
             )
             if not user or user.get("account_status") != "ACTIVE":
-                return jsonify(error="account_inactive"), 401
+                err = "account_suspended" if user and user.get("account_status") == "SUSPENDED" else "account_inactive"
+                return jsonify(error=err), 401
             if allowed and str(user.get("role") or "").upper() not in allowed:
                 return jsonify(error="role_forbidden"), 403
             if str(user.get("role")) != str(claims.get("role")):
@@ -405,6 +412,13 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("CHILD", "PARENT", "ADMIN")
     def mobile_logout():
+        token = _bearer_token()
+        if token:
+            token_hash = hashlib.sha256(token.encode('utf-8')).hexdigest()
+            try:
+                execute("INSERT INTO revoked_tokens(token_hash) VALUES(%s) ON CONFLICT DO NOTHING", (token_hash,))
+            except Exception:
+                pass
         key = (g.mobile_claims or {}).get("usage_session_key")
         if key:
             try:
@@ -844,9 +858,16 @@ def register_mobile_api(bp):
         post = post_visible_to(uid, post_id)
         if not post:
             return jsonify(error="post_not_found"), 404
-        text = str((request.get_json(silent=True) or {}).get("text") or "").strip()
+        body = request.get_json(silent=True) or {}
+        text = str(body.get("text") or "").strip()
         if not text:
             return jsonify(error="empty_comment"), 400
+        parent_comment_id = body.get("parent_comment_id")
+        if parent_comment_id is not None:
+            try:
+                parent_comment_id = int(parent_comment_id)
+            except (ValueError, TypeError):
+                parent_comment_id = None
         pii = scan_pii(text)
         if pii.get("detected") and pii.get("policy_action") == "BLOCK":
             parent_notify(uid, "COMMENT_BLOCKED", "Attempted contact/PII sharing in comment", "/parent/safety/")
@@ -857,8 +878,8 @@ def register_mobile_api(bp):
             parent_notify(uid, "COMMENT_BLOCKED", decision.reason, "/parent/safety/")
             return jsonify(blocked=True, error="comment_blocked"), 400
         row = execute(
-            "INSERT INTO comments(post_id,child_id,comment_text,moderation_status) VALUES(%s,%s,%s,%s) RETURNING comment_id",
-            (post_id, uid, text, "ALLOWED" if decision.action == "ALLOW" else "REVIEW"),
+            "INSERT INTO comments(post_id,child_id,comment_text,moderation_status,parent_comment_id) VALUES(%s,%s,%s,%s,%s) RETURNING comment_id",
+            (post_id, uid, text, "ALLOWED" if decision.action == "ALLOW" else "REVIEW", parent_comment_id),
             returning=True,
         )
         record(uid, "COMMENT", row["comment_id"], signals, decision)
@@ -1088,6 +1109,23 @@ def register_mobile_api(bp):
             return jsonify(error="child_creation_failed"), 400
         return jsonify(ok=True, child_id=child_id, next_steps=["child_face_enrollment", "age_quiz"]), 201
 
+    @bp.route("/api/mobile/v1/parent/children/<int:child_id>/reset-password", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("10 per minute")
+    @_require_mobile("PARENT")
+    def mobile_parent_reset_child_password(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="forbidden"), 403
+        data = request.get_json(silent=True) or {}
+        new_password = str(data.get("new_password") or "").strip()
+        if len(new_password) < 6:
+            return jsonify(error="password_too_short"), 400
+        from werkzeug.security import generate_password_hash
+        hashed = generate_password_hash(new_password)
+        execute("UPDATE users SET password_hash=%s WHERE user_id=%s", (hashed, child_id))
+        return jsonify(ok=True, message="Child password reset successfully.")
+
     @bp.route("/api/mobile/v1/parent/controls/<int:child_id>", methods=["GET", "PUT"])
     @csrf.exempt
     @_require_mobile("PARENT")
@@ -1215,3 +1253,173 @@ def register_mobile_api(bp):
     def mobile_admin_reviews():
         rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
         return jsonify(ok=True, events=_clean(rows))
+
+    # ── Phase 3 Completion Routes ──────────────────────────────────────────────
+
+    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comments")
+    @_require_mobile("CHILD")
+    def mobile_get_comments(post_id):
+        """GET comments on a post (Screen 21 – Reel Comments, completes PARTIAL)."""
+        uid = int(g.mobile_user["user_id"])
+        if not post_visible_to(uid, post_id):
+            return jsonify(error="post_not_found"), 404
+        rows = fetch_all(
+            """SELECT c.comment_id, c.child_id, c.comment_text, c.created_at,
+                      c.parent_comment_id, u.full_name, u.username,
+                      cp.profile_picture
+               FROM comments c
+               JOIN users u ON u.user_id = c.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = c.child_id
+               WHERE c.post_id = %s AND c.moderation_status = 'ALLOWED'
+               ORDER BY c.created_at ASC LIMIT 200""",
+            (post_id,),
+        )
+        for row in rows:
+            if row.get("profile_picture"):
+                row["avatar_url"] = _asset_url(row["profile_picture"])
+        return jsonify(ok=True, post_id=post_id, comments=_clean(rows))
+
+    @bp.route("/api/mobile/v1/kids/posts/preview", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("60 per hour")
+    @_require_mobile("CHILD")
+    def mobile_post_preview():
+        """Pre-flight safety check before publishing (Screens 13, 19, 24 – completes PARTIAL).
+        Accepts caption + optional media; returns moderation decision without storing."""
+        uid = int(g.mobile_user["user_id"])
+        gate = _child_gate()
+        if gate:
+            return gate
+        caption = str((request.form.get("caption") or "")).strip()
+        media = request.files.get("media")
+        import tempfile, os as _os
+        signals, text_decision = evaluate(uid, "TEXT", caption or "")
+        if text_decision.action == "BLOCK":
+            return jsonify(ok=False, status="BLOCK", reason=text_decision.reason, field="caption"), 200
+        media_decision_action = "ALLOW"
+        if media and media.filename:
+            ext = _os.path.splitext(media.filename)[1].lower().lstrip(".")
+            if ext in {"jpg", "jpeg", "png", "webp"}:
+                content_type = "IMAGE"
+            elif ext in {"mp4", "mov", "avi", "mkv", "webm"}:
+                content_type = "VIDEO"
+            else:
+                return jsonify(error="unsupported_media"), 400
+            fd, path = tempfile.mkstemp(prefix="littlenet_preview_", suffix=f".{ext}")
+            _os.close(fd)
+            try:
+                media.save(path)
+                media_signals, media_decision = evaluate(uid, content_type, path)
+                media_decision_action = media_decision.action
+                if media_decision.action == "BLOCK":
+                    return jsonify(ok=False, status="BLOCK", reason=media_decision.reason, field="media"), 200
+            finally:
+                try:
+                    _os.unlink(path)
+                except Exception:
+                    pass
+        final_status = "ALLOW" if (text_decision.action == "ALLOW" and media_decision_action == "ALLOW") else "REVIEW"
+        return jsonify(ok=True, status=final_status, caption_safe=(text_decision.action == "ALLOW"))
+
+    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/share")
+    @_require_mobile("CHILD")
+    def mobile_share_post(post_id):
+        """Get shareable metadata for a post (Screen 25 – Reel Detail/Share, completes PARTIAL)."""
+        uid = int(g.mobile_user["user_id"])
+        post = post_visible_to(uid, post_id)
+        if not post:
+            return jsonify(error="post_not_found"), 404
+        row = dict(post)
+        if row.get("media_path"):
+            row["media_url"] = _asset_url(row["media_path"])
+        share_url = f"/posts/{post_id}/"
+        like_count = (fetch_one("SELECT COUNT(*) n FROM likes WHERE post_id=%s", (post_id,)) or {"n": 0})["n"]
+        comment_count = (fetch_one("SELECT COUNT(*) n FROM comments WHERE post_id=%s AND moderation_status='ALLOWED'", (post_id,)) or {"n": 0})["n"]
+        return jsonify(ok=True, post=_clean(row), share_url=share_url, likes=like_count, comments=comment_count)
+
+    @bp.route("/api/mobile/v1/kids/contacts")
+    @_require_mobile("CHILD")
+    def mobile_contacts():
+        """List approved connections available for direct message compose
+        (Screen 32 – New Message, completes PARTIAL)."""
+        uid = int(g.mobile_user["user_id"])
+        gate = _child_gate("messaging")
+        if gate:
+            return gate
+        rows = fetch_all(
+            """SELECT u.user_id, u.full_name, u.username, cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id = f.following_child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.child_id = %s AND f.approval_stage = 'ACTIVE'
+               ORDER BY u.full_name ASC LIMIT 200""",
+            (uid,),
+        )
+        for row in rows:
+            if row.get("profile_picture"):
+                row["avatar_url"] = _asset_url(row["profile_picture"])
+        return jsonify(ok=True, contacts=_clean(rows))
+
+    @bp.route("/api/mobile/v1/kids/block/<int:target_id>", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_block_user(target_id):
+        """Block a user (Screen 34 – Chat Info/Block/Report, completes PARTIAL)."""
+        uid = int(g.mobile_user["user_id"])
+        if target_id == uid:
+            return jsonify(error="self_block"), 400
+        # Check if already blocked
+        existing = fetch_one(
+            "SELECT 1 FROM blocked_users WHERE blocker_id=%s AND blocked_id=%s", (uid, target_id)
+        )
+        if existing:
+            execute("DELETE FROM blocked_users WHERE blocker_id=%s AND blocked_id=%s", (uid, target_id))
+            return jsonify(ok=True, action="unblocked")
+        execute(
+            "INSERT INTO blocked_users(blocker_id, blocked_id) VALUES(%s,%s) ON CONFLICT DO NOTHING",
+            (uid, target_id),
+        )
+        # Remove any follower relationships
+        execute(
+            "DELETE FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)",
+            (uid, target_id, target_id, uid),
+        )
+        parent_notify(uid, "USER_BLOCKED", f"Blocked a user", "/parent/safety/")
+        return jsonify(ok=True, action="blocked")
+
+    @bp.route("/api/mobile/v1/kids/report/user", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("20 per hour")
+    @_require_mobile("CHILD")
+    def mobile_report_user():
+        """Report a USER (Screen 34 – Chat Info/Block/Report, completes PARTIAL).
+        Distinct from reporting content on a post."""
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        try:
+            target_id = int(data["target_id"])
+        except (KeyError, TypeError, ValueError):
+            return jsonify(error="target_id_required"), 400
+        reason = str(data.get("reason") or "inappropriate_behaviour").strip()[:200]
+        if target_id == uid:
+            return jsonify(error="self_report"), 400
+        row = execute(
+            """INSERT INTO reports(reporter_id, target_type, target_id, reason, status)
+               VALUES(%s, 'USER', %s, %s, 'OPEN') RETURNING report_id""",
+            (uid, target_id, reason),
+            returning=True,
+        )
+        parent_notify(uid, "REPORT_SUBMITTED", "A user report was submitted", "/parent/safety/")
+        return jsonify(ok=True, report_id=row["report_id"] if row else None)
+
+    @bp.route("/api/mobile/v1/parent/time-limit/<int:child_id>", methods=["GET"])
+    @_require_mobile("PARENT")
+    def mobile_parent_time_limit_get(child_id):
+        """GET current time limit for a child (Screen 57 – Smart Controls, completes PARTIAL)."""
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        limit = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))
+        minutes_used = minutes_today(child_id)
+        return jsonify(ok=True, limit=_clean(limit), minutes_used_today=minutes_used)
+

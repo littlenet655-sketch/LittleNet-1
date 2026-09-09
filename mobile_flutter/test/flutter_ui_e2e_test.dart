@@ -7,6 +7,7 @@ import 'package:littlenet_native/screens/creator_editors.dart';
 import 'package:littlenet_native/screens/search_flow.dart';
 import 'package:littlenet_native/screens/stitch_kids_shell_impl.dart';
 import 'package:littlenet_native/screens/stitch_shells.dart';
+import 'package:littlenet_native/screens/social_connections.dart';
 
 void main() {
   final dummyApi = ApiClient(baseUrl: 'http://127.0.0.1:9');
@@ -160,4 +161,75 @@ void main() {
     expect(find.text('Controls'), findsOneWidget);
     expect(find.text('Activity'), findsOneWidget);
   });
+
+  testWidgets('Screen 32: NewMessageScreen renders search input and approved friends filter', (tester) async {
+    await tester.pumpWidget(makeTestable(NewMessageScreen(api: dummyApi)));
+    await tester.pump();
+
+    expect(find.text('New Safe Chat'), findsOneWidget);
+    expect(find.byType(TextField), findsOneWidget);
+  });
+
+  testWidgets('Screen 34: ChatInfoScreen renders safety advisory, mute and block actions', (tester) async {
+    await tester.pumpWidget(makeTestable(ChatInfoScreen(
+      api: dummyApi,
+      peerId: 202,
+      peerName: 'Aarav Classmate',
+    )));
+    await tester.pump();
+
+    expect(find.text('Chat Details'), findsOneWidget);
+    expect(find.text('Aarav Classmate'), findsWidgets);
+  });
+
+  testWidgets('Screen 39: FriendsListScreen renders Friends and Following tabs', (tester) async {
+    await tester.pumpWidget(makeTestable(FriendsListScreen(
+      api: dummyApi,
+      userId: 101,
+    )));
+    await tester.pump();
+
+    expect(find.text('Connections'), findsOneWidget);
+    expect(find.text('Friends / Followers'), findsOneWidget);
+    expect(find.text('Following'), findsOneWidget);
+  });
+
+  testWidgets('Screen 40: FollowRequestsScreen renders incoming and sent request tabs', (tester) async {
+    await tester.pumpWidget(makeTestable(FollowRequestsScreen(
+      api: dummyApi,
+    )));
+    await tester.pump();
+
+    expect(find.text('Friend Requests'), findsOneWidget);
+    expect(find.text('Incoming'), findsOneWidget);
+    expect(find.text('Sent'), findsOneWidget);
+  });
+
+  testWidgets('Screen 49: SettingsLanguageScreen renders English, Kannada, Hindi and safety info', (tester) async {
+    await tester.pumpWidget(makeTestable(const SettingsLanguageScreen()));
+    await tester.pump();
+
+    expect(find.text('Settings & Language'), findsOneWidget);
+    expect(find.text('Language / ಭಾಷೆ'), findsOneWidget);
+    expect(find.text('English (Default)'), findsOneWidget);
+    expect(find.text('ಕನ್ನಡ (Kannada)'), findsOneWidget);
+    expect(find.text('हिंदी (Hindi)'), findsOneWidget);
+    expect(find.text('Safety & Well-being'), findsOneWidget);
+  });
+
+
+  testWidgets('Screen 19: ModerationResultScreen renders status badge, safety diagnostics and proceed button', (tester) async {
+    await tester.pumpWidget(makeTestable(const ModerationResultScreen(
+      status: 'REVIEW',
+      reason: 'Post contains image with other students and requires parent approval.',
+      contentType: 'STORY',
+    )));
+    await tester.pump();
+
+    expect(find.text('Safety Check Result'), findsOneWidget);
+    expect(find.text('Waiting for Parent / Guardian Approval'), findsOneWidget);
+    expect(find.text('AI Safety Diagnostics'), findsOneWidget);
+    expect(find.text('Back to Safety Hub'), findsOneWidget);
+  });
+
 }

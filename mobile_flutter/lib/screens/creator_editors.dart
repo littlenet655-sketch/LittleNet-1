@@ -450,3 +450,131 @@ class StudyCircleScreen extends StatelessWidget {
     );
   }
 }
+
+class ModerationResultScreen extends StatelessWidget {
+  const ModerationResultScreen({
+    super.key,
+    required this.status,
+    required this.reason,
+    this.contentType = 'POST',
+    this.caption,
+    this.mediaUrl,
+    this.onProceed,
+  });
+
+  final String status;
+  final String reason;
+  final String contentType;
+  final String? caption;
+  final String? mediaUrl;
+  final VoidCallback? onProceed;
+
+  @override
+  Widget build(BuildContext context) {
+    final isAllowed = status == 'ALLOWED' || status == 'ACTIVE';
+    final isReview = status == 'REVIEW';
+
+    final color = isAllowed
+        ? const Color(0xFF16A34A)
+        : isReview
+            ? const Color(0xFFD97706)
+            : const Color(0xFFDC2626);
+
+    final title = isAllowed
+        ? 'Passed Safety Review'
+        : isReview
+            ? 'Waiting for Parent / Guardian Approval'
+            : 'Content Needs Adjustment';
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Safety Check Result')),
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          Center(
+            child: Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isAllowed
+                    ? Icons.check_circle_rounded
+                    : isReview
+                        ? Icons.schedule_rounded
+                        : Icons.error_rounded,
+                size: 48,
+                color: color,
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            title,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: color,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            reason,
+            textAlign: TextAlign.center,
+            style: const TextStyle(fontSize: 14, color: Colors.black87),
+          ),
+          const SizedBox(height: 24),
+          Card(
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('AI Safety Diagnostics', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+                  const Divider(height: 20),
+                  _DiagRow(label: 'Content Type', value: contentType),
+                  const _DiagRow(label: 'Safety Policy', value: 'COPPA & DPDP Child Safe'),
+                  const _DiagRow(label: 'PII Check', value: 'Passed — No contact info leaked'),
+                  const _DiagRow(label: 'Visual Protection', value: 'Active'),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 32),
+          FilledButton.icon(
+            onPressed: () {
+              Navigator.of(context).pop();
+              if (onProceed != null) onProceed!();
+            },
+            icon: Icon(isAllowed ? Icons.done_all_rounded : Icons.arrow_back_rounded),
+            label: Text(isAllowed ? 'Continue to Feed' : 'Back to Safety Hub'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DiagRow extends StatelessWidget {
+  const _DiagRow({required this.label, required this.value});
+  final String label;
+  final String value;
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(color: Colors.black54)),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+}
+
