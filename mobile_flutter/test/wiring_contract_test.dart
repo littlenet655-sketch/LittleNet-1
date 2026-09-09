@@ -31,14 +31,15 @@ void main() {
 
   test('Reels expose all primary interaction controls', () {
     final shell = File('lib/screens/stitch_kids_shell_impl.dart').readAsStringSync();
-    for (final tooltip in const [
+    for (final fragment in const [
       "tooltip: 'Like'",
       "tooltip: 'Comments'",
       "tooltip: 'Share'",
-      "tooltip: 'Save'",
+      "tooltip: saved ? 'Unsave' : 'Save'",
       "tooltip: 'Report'",
+      "'/api/mobile/v1/kids/posts/\$postId/save'",
     ]) {
-      expect(shell, contains(tooltip), reason: 'Missing Reel action $tooltip');
+      expect(shell, contains(fragment), reason: 'Missing Reel action $fragment');
     }
   });
 }
