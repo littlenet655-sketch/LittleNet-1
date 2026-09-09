@@ -1,0 +1,106 @@
+{
+  "Model_3_Detoxify": [
+    {
+      "label": "SAFE",
+      "text": "Great project, well done!",
+      "latency_ms": 32601.5,
+      "decision": "ALLOW",
+      "risk_score": 0.046601041685789824,
+      "toxicity_score": 0.00046601041685789824,
+      "adult_score": 4.026892565889284e-05,
+      "detoxify_model": "unknown",
+      "detoxify_scores": {},
+      "pass": true
+    },
+    {
+      "label": "MILD_NEGATIVE",
+      "text": "I do not like this project.",
+      "latency_ms": 1035.46,
+      "decision": "ALLOW",
+      "risk_score": 0.05444108974188566,
+      "toxicity_score": 0.0005444108974188566,
+      "adult_score": 2.364583451708313e-05,
+      "detoxify_model": "unknown",
+      "detoxify_scores": {},
+      "pass": true
+    },
+    {
+      "label": "BULLYING",
+      "text": "nobody likes you, you are useless, loser",
+      "latency_ms": 1075.51,
+      "decision": "BLOCK",
+      "risk_score": 99.64123368263245,
+      "toxicity_score": 0.9964123368263245,
+      "adult_score": 0.001470934716053307,
+      "detoxify_model": "unknown",
+      "detoxify_scores": {},
+      "pass": true
+    },
+    {
+      "label": "SEVERE_ABUSE",
+      "text": "i will kill you, you deserve to die",
+      "latency_ms": 1055.2,
+      "decision": "BLOCK",
+      "risk_score": 100.0,
+      "toxicity_score": 1.0,
+      "adult_score": 0.06372737139463425,
+      "detoxify_model": "unknown",
+      "detoxify_scores": {},
+      "pass": true
+    }
+  ],
+  "Model_5_Semantic": {
+    "latency_ms": 6471.32,
+    "ranked_items": [
+      {
+        "id": 101,
+        "score": 0.7467191219329834
+      },
+      {
+        "id": 102,
+        "score": 0.6333338022232056
+      },
+      {
+        "id": 103,
+        "score": 0.5885581374168396
+      }
+    ],
+    "top_candidate_id": 101,
+    "pass": true
+  },
+  "Model_1_Adult": {
+    "clean_adult_score": 0.0964970588684082,
+    "clean_decision": "ALLOW",
+    "clean_latency_ms": 7691.7,
+    "adult_benchmark_score": 0.9970318078994751,
+    "adult_benchmark_decision": "BLOCK",
+    "adult_benchmark_latency_ms": 2180.21,
+    "pass": true
+  },
+  "Model_2_Weapon": {
+    "clean_weapon_score": 0.01214559469372034,
+    "clean_decision": "ALLOW",
+    "clean_yolo_detections": null,
+    "latency_ms": 7691.7,
+    "pass": true
+  },
+  "Model_4_Face": {
+    "non_face_rejected": true,
+    "latency_ms": 1518.92,
+    "service_endpoints": [
+      "/ai/face/embedding",
+      "/ai/face/verify",
+      "/ai/face/adult"
+    ],
+    "physical_device_required": "Physical camera required for live biometric capture",
+    "pass": true
+  },
+  "Audio_Moderation": {
+    "status": "RETIRED",
+    "standalone_audio_action": "BLOCK",
+    "standalone_voice_action": "BLOCK",
+    "reason": "Standalone audio and voice uploads are disabled in LittleNet",
+    "video_audio_sanitizer": "FFmpeg -an strips audio before persistence",
+    "pass": true
+  }
+}
