@@ -32,7 +32,10 @@ def test_reported_user_moderation_has_preview_enforcement_and_migrated_escalatio
 
     escalation = source.split("if requested == 'ESCALATE':", 1)[1].split("db_status =", 1)[0]
     assert 'INSERT INTO moderation_reviews' in escalation
-    assert "status='OPEN'" not in escalation  # escalation leaves the locked event unchanged/open
+    # ESCALATE should leave the locked moderation event open by not issuing a
+    # database UPDATE that rewrites its status. Returning status='OPEN' in the
+    # JSON response is expected and must not be mistaken for a DB mutation.
+    assert "UPDATE moderation_events SET status='OPEN'" not in escalation
     assert "status='OPEN'" in source  # event lock requires an open review
 
     assert 'DROP CONSTRAINT IF EXISTS moderation_reviews_event_id_key' in migration
