@@ -2,9 +2,10 @@ import 'package:flutter/material.dart';
 
 import 'api.dart';
 import 'app_theme.dart';
-import 'screens/auth.dart';
+import 'screens/stitch_auth.dart';
 import 'screens/stitch_kids_shell.dart';
 import 'screens/stitch_shells.dart';
+import 'stitch_design.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -69,7 +70,7 @@ class _LittleNetAppState extends State<LittleNetApp> {
       home: loading
           ? const _LaunchScreen()
           : user == null
-              ? LoginScreen(api: widget.api, onSignedIn: _signedIn)
+              ? StitchLoginScreen(api: widget.api, onSignedIn: _signedIn)
               : _roleHome(),
     );
   }
@@ -77,24 +78,12 @@ class _LittleNetAppState extends State<LittleNetApp> {
   Widget _roleHome() {
     final role = user?['role']?.toString().toUpperCase();
     if (role == 'PARENT') {
-      return StitchParentShell(
-        api: widget.api,
-        user: user!,
-        onLogout: _logout,
-      );
+      return StitchParentShell(api: widget.api, user: user!, onLogout: _logout);
     }
     if (role == 'ADMIN') {
-      return StitchAdminShell(
-        api: widget.api,
-        user: user!,
-        onLogout: _logout,
-      );
+      return StitchAdminShell(api: widget.api, user: user!, onLogout: _logout);
     }
-    return StitchKidsShellV2(
-      api: widget.api,
-      user: user!,
-      onLogout: _logout,
-    );
+    return StitchKidsShellV2(api: widget.api, user: user!, onLogout: _logout);
   }
 }
 
@@ -104,50 +93,25 @@ class _LaunchScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const Scaffold(
-      body: Center(
+      backgroundColor: Colors.white,
+      body: SafeArea(
         child: Column(
-          mainAxisSize: MainAxisSize.min,
           children: [
-            _BrandMark(size: 88),
-            SizedBox(height: 18),
+            Spacer(flex: 5),
+            LittleNetWordmark(fontSize: 40, centered: true),
+            SizedBox(height: 12),
             Text(
-              'LittleNet',
-              style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
+              'Safe • Supervised • Social',
+              style: TextStyle(color: StitchTokens.muted, fontSize: 11),
             ),
-            SizedBox(height: 18),
-            CircularProgressIndicator(),
+            Spacer(flex: 5),
+            SizedBox.square(
+              dimension: 18,
+              child: CircularProgressIndicator(strokeWidth: 1.8, color: StitchTokens.blue),
+            ),
+            SizedBox(height: 34),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _BrandMark extends StatelessWidget {
-  const _BrandMark({this.size = 72});
-
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: size,
-      height: size,
-      decoration: BoxDecoration(
-        color: LittleNetTheme.ink,
-        borderRadius: BorderRadius.circular(size * .28),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x220095F6),
-            blurRadius: 24,
-            offset: Offset(0, 10),
-          ),
-        ],
-      ),
-      child: Icon(
-        Icons.shield_rounded,
-        color: LittleNetTheme.primary,
-        size: size * .58,
       ),
     );
   }
