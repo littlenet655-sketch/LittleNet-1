@@ -1,26 +1,21 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
 import '../../api.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
-import '../../core/theme/spacing.dart';
-import '../../core/theme/typography.dart';
-import '../../core/widgets/app_button.dart';
-import '../../core/widgets/app_text_field.dart';
-import '../../core/widgets/gradient_scaffold.dart';
 
-enum PostKind { post, reel, story }
-
-enum PostModerationOutcome {
-  none,
-  allowed,
-  review,
-  blocked,
-  error,
-}
-
+/// LittleNet V2 – Create Post screen.
+///
+/// Visual language:
+/// - Pure white bottom-sheet / full-screen modal (not GradientScaffold)
+/// - Type selector: flat segmented row (Post / Reel / Story)
+/// - Media zone: white with dashed border → preview once selected
+/// - Caption / Category / Audience in clean white card blocks
+/// - Submit button: full-width indigo FilledButton
+/// - Moderation result: compact coloured info banner below button
 class CreatePostScreen extends StatefulWidget {
   const CreatePostScreen({
     super.key,
@@ -34,6 +29,10 @@ class CreatePostScreen extends StatefulWidget {
   @override
   State<CreatePostScreen> createState() => _CreatePostScreenState();
 }
+
+enum PostKind { post, reel, story }
+
+enum PostModerationOutcome { none, allowed, review, blocked, error }
 
 class _CreatePostScreenState extends State<CreatePostScreen> {
   final _picker = ImagePicker();
@@ -64,6 +63,14 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     'Other',
   ];
 
+  static const List<({String label, String value})> _audiences = [
+    (label: 'All Kids', value: 'ALL'),
+    (label: 'Ages 6–8', value: '6-8'),
+    (label: 'Ages 9–11', value: '9-11'),
+    (label: 'Ages 12–13', value: '12-13'),
+    (label: 'Ages 14–18', value: '14-18'),
+  ];
+
   @override
   void initState() {
     super.initState();
@@ -77,6 +84,8 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     super.dispose();
   }
 
+  // ── Media Picking ─────────────────────────────────────
+
   Future<void> _pickImage(ImageSource source) async {
     try {
       final picked = await _picker.pickImage(
@@ -85,14 +94,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         maxHeight: 1280,
         imageQuality: 85,
       );
-      if (picked != null) {
-        _setFile(File(picked.path), isVideo: false);
-      }
+      if (picked != null) _setFile(File(picked.path), isVideo: false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to access photo: $e')),
-      );
+      _showError('Failed to access photo: $e');
     }
   }
 
@@ -104,14 +109,10 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
             ? const Duration(seconds: 30)
             : const Duration(seconds: 60),
       );
-      if (picked != null) {
-        _setFile(File(picked.path), isVideo: true);
-      }
+      if (picked != null) _setFile(File(picked.path), isVideo: true);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to access video: $e')),
-      );
+      _showError('Failed to access video: $e');
     }
   }
 
@@ -128,13 +129,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     });
 
     if (isVideo) {
-      final controller = VideoPlayerController.file(file);
-      _videoController = controller;
-      controller.initialize().then((_) {
+      final c = VideoPlayerController.file(file);
+      _videoController = c;
+      c.initialize().then((_) {
         if (mounted) {
-          controller.setVolume(0.0);
-          controller.setLooping(true);
-          controller.play();
+          c.setVolume(0.0);
+          c.setLooping(true);
+          c.play();
           setState(() {});
         }
       });
@@ -153,13 +154,12 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     });
   }
 
+  // ── Submit ───────────────────────────────────────────
+
   Future<void> _submitPost() async {
     final caption = _captionController.text.trim();
     if (_selectedFile == null && caption.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('Please select an image/video or write a caption')),
-      );
+      _showError('Add a photo/video or write a caption first.');
       return;
     }
 
@@ -180,11 +180,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     });
 
     try {
-      final kindStr = _kind == PostKind.reel
-          ? 'reel'
-          : _kind == PostKind.story
-              ? 'story'
-              : 'post';
+      final kindStr = switch (_kind) {
+        PostKind.reel => 'reel',
+        PostKind.story => 'story',
+        PostKind.post => 'post',
+      };
 
       final res = await widget.authState.apiClient.multipart(
         '/api/mobile/v1/kids/posts',
@@ -199,394 +199,625 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       );
 
       final status = (res['status'] as String? ?? '').toUpperCase();
-      if (res['ok'] == true && status == 'ALLOW') {
-        setState(() {
+      setState(() {
+        if (res['ok'] == true && status == 'ALLOW') {
           _outcome = PostModerationOutcome.allowed;
           _statusMessage = 'Your post passed safety checks and is published!';
-        });
-      } else if (res['ok'] == true && status == 'REVIEW') {
-        setState(() {
+        } else if (res['ok'] == true && status == 'REVIEW') {
           _outcome = PostModerationOutcome.review;
           _statusMessage =
-              'Sent to Parent Safety Review. Your parent will review it before it appears publicly.';
-        });
-      } else {
-        setState(() {
+              'Sent for Parent Safety Review — it will appear once approved.';
+        } else {
           _outcome = PostModerationOutcome.error;
-          _statusMessage = 'Post could not be published at this time.';
-        });
-      }
+          _statusMessage = 'Post could not be published right now.';
+        }
+      });
     } on ApiException catch (e) {
-      if (e.payload?['blocked'] == true || e.message.contains('blocked')) {
-        setState(() {
+      setState(() {
+        if (e.payload?['blocked'] == true || e.message.contains('blocked')) {
           _outcome = PostModerationOutcome.blocked;
           _rejectionReason = e.payload?['reason'] as String? ??
-              'Content could not be shared because it does not follow child safety standards.';
-          _statusMessage =
-              'Content cannot be shared under LittleNet safety rules.';
-        });
-      } else {
-        setState(() {
+              'Content does not follow child safety standards.';
+          _statusMessage = 'Blocked for safety.';
+        } else {
           _outcome = PostModerationOutcome.error;
-          _statusMessage = 'Failed: ${e.message}';
-        });
-      }
+          _statusMessage = e.message;
+        }
+      });
     } catch (_) {
       setState(() {
         _outcome = PostModerationOutcome.error;
-        _statusMessage =
-            'Unable to connect to safety server. Post held safely.';
+        _statusMessage = 'Unable to reach safety server. Post saved safely.';
       });
     } finally {
       if (mounted) setState(() => _isUploading = false);
     }
   }
 
+  void _showError(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg),
+        behavior: SnackBarBehavior.floating,
+        backgroundColor: const Color(0xFFE53935),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      ),
+    );
+  }
+
+  // ── Build ────────────────────────────────────────────
+
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
-      appBar: AppBar(
-        title: Text(
-          _kind == PostKind.reel
-              ? 'Create Reel 🎬'
-              : _kind == PostKind.story
-                  ? 'Add Story 📖'
-                  : 'New Post ✨',
-        ),
-        actions: [
-          if (_selectedFile != null)
-            IconButton(
-              icon: const Icon(Icons.delete_outline),
-              tooltip: 'Clear media',
-              onPressed: _clearSelection,
+    final kindLabel = switch (_kind) {
+      PostKind.reel => 'New Reel',
+      PostKind.story => 'New Story',
+      PostKind.post => 'New Post',
+    };
+
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value:
+          SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        appBar: AppBar(
+          backgroundColor: Colors.white,
+          surfaceTintColor: Colors.white,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close_rounded,
+                color: Color(0xFF262626), size: 24),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: Text(
+            kindLabel,
+            style: const TextStyle(
+              fontSize: 17,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF262626),
             ),
-        ],
-      ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // Kind Selector Tabs
-            Container(
-              padding: const EdgeInsets.all(4),
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.05),
-                borderRadius: BorderRadius.circular(AppRadius.md),
+          ),
+          actions: [
+            if (_selectedFile != null)
+              TextButton(
+                onPressed: _clearSelection,
+                child: const Text('Clear',
+                    style: TextStyle(
+                        color: Color(0xFF8E8E8E), fontWeight: FontWeight.w500)),
               ),
-              child: Row(
+          ],
+          bottom: const PreferredSize(
+            preferredSize: Size.fromHeight(0.5),
+            child: Divider(height: 0.5, thickness: 0.5, color: Color(0xFFDBDBDB)),
+          ),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // ── Post type selector ───────────────────
+              _KindSelector(
+                selected: _kind,
+                onChanged: (k) {
+                  HapticFeedback.selectionClick();
+                  setState(() {
+                    _kind = k;
+                    _clearSelection();
+                  });
+                },
+              ),
+              const SizedBox(height: 20),
+
+              // ── Media zone ───────────────────────────
+              _selectedFile == null
+                  ? _MediaPicker(
+                      kind: _kind,
+                      onPickImage: _pickImage,
+                      onPickVideo: _pickVideo,
+                    )
+                  : _MediaPreview(
+                      file: _selectedFile!,
+                      isVideo: _isVideo,
+                      videoController: _videoController,
+                      onClear: _clearSelection,
+                    ),
+
+              const SizedBox(height: 20),
+
+              // ── Caption ──────────────────────────────
+              _FormCard(
+                child: TextField(
+                  controller: _captionController,
+                  maxLines: 4,
+                  maxLength: 500,
+                  decoration: const InputDecoration(
+                    hintText:
+                        'Write about your project, idea, or discovery…',
+                    hintStyle:
+                        TextStyle(fontSize: 14, color: Color(0xFF8E8E8E)),
+                    border: InputBorder.none,
+                    counterStyle:
+                        TextStyle(fontSize: 11, color: Color(0xFF8E8E8E)),
+                  ),
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
+              // ── Category & Audience row ───────────────
+              Row(
                 children: [
-                  _kindTab('Post', PostKind.post),
-                  _kindTab('Reel', PostKind.reel),
-                  _kindTab('Story', PostKind.story),
+                  Expanded(
+                    child: _FormCard(
+                      label: 'Category',
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _selectedCategory,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        style: const TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFF262626),
+                            fontWeight: FontWeight.w500),
+                        dropdownColor: Colors.white,
+                        items: _categories
+                            .map((c) => DropdownMenuItem(
+                                value: c,
+                                child: Text(c,
+                                    overflow: TextOverflow.ellipsis)))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _selectedCategory = val);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: _FormCard(
+                      label: 'Audience',
+                      child: DropdownButtonFormField<String>(
+                        initialValue: _audience,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        style: const TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFF262626),
+                            fontWeight: FontWeight.w500),
+                        dropdownColor: Colors.white,
+                        items: _audiences
+                            .map((a) => DropdownMenuItem(
+                                value: a.value,
+                                child: Text(a.label,
+                                    overflow: TextOverflow.ellipsis)))
+                            .toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() => _audience = val);
+                          }
+                        },
+                      ),
+                    ),
+                  ),
                 ],
               ),
-            ),
-            const SizedBox(height: AppSpacing.md),
 
-            // Media Preview or Picker Actions
-            if (_selectedFile == null) ...[
+              const SizedBox(height: 12),
+
+              // ── Safety note ──────────────────────────
               Container(
-                height: 220,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.04),
-                  borderRadius: BorderRadius.circular(AppRadius.lg),
-                  border: Border.all(
-                    color: AppColors.kidsAccent.withValues(alpha: 0.3),
-                    style: BorderStyle.solid,
-                  ),
+                  color: const Color(0xFFE8F5E9),
+                  borderRadius: BorderRadius.circular(8),
                 ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+                child: const Row(
                   children: [
-                    const Icon(Icons.add_photo_alternate_outlined,
-                        size: 48, color: AppColors.kidsAccent),
-                    const SizedBox(height: AppSpacing.sm),
-                    const Text('Share what you learned or created',
-                        style: AppTypography.titleMedium),
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      'AI Safe Moderation active · No audio uploads',
-                      style: AppTypography.caption
-                          .copyWith(color: AppColors.textMutedDark),
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        ElevatedButton.icon(
-                          onPressed: () => _pickImage(ImageSource.camera),
-                          icon: const Icon(Icons.camera_alt_outlined),
-                          label: const Text('Camera'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        ElevatedButton.icon(
-                          onPressed: () => _pickImage(ImageSource.gallery),
-                          icon: const Icon(Icons.photo_library_outlined),
-                          label: const Text('Photos'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.1),
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        ElevatedButton.icon(
-                          onPressed: () => _pickVideo(ImageSource.gallery),
-                          icon: const Icon(Icons.videocam_outlined),
-                          label: const Text('Video'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.white.withValues(alpha: 0.1),
-                            foregroundColor: Colors.white,
-                          ),
-                        ),
-                      ],
+                    Icon(Icons.shield_outlined,
+                        size: 16, color: Color(0xFF2E7D32)),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'AI safety moderation is always active. Posts go to Parent Review if flagged.',
+                        style: TextStyle(
+                            fontSize: 12, color: Color(0xFF2E7D32)),
+                      ),
                     ),
                   ],
                 ),
               ),
-            ] else ...[
-              // Media Preview
-              Container(
-                height: 260,
-                decoration: BoxDecoration(
-                  color: Colors.black,
-                  borderRadius: BorderRadius.circular(AppRadius.lg),
-                  border: Border.all(color: AppColors.kidsAccent),
+
+              const SizedBox(height: 20),
+
+              // ── Outcome banner ───────────────────────
+              if (_outcome != PostModerationOutcome.none) ...[
+                _OutcomeBanner(
+                    outcome: _outcome,
+                    message: _statusMessage,
+                    reason: _rejectionReason),
+                const SizedBox(height: 16),
+              ],
+
+              // ── Submit ───────────────────────────────
+              FilledButton(
+                onPressed: _isUploading ? null : _submitPost,
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                  minimumSize: const Size(double.infinity, 50),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                  textStyle: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w600),
                 ),
-                clipBehavior: Clip.antiAlias,
-                child: Stack(
-                  alignment: Alignment.center,
-                  children: [
-                    if (_isVideo) ...[
-                      if (_videoController != null &&
-                          _videoController!.value.isInitialized)
-                        AspectRatio(
-                          aspectRatio: _videoController!.value.aspectRatio,
-                          child: VideoPlayer(_videoController!),
-                        )
-                      else
-                        const CircularProgressIndicator(),
-                    ] else ...[
-                      Image.file(
-                        _selectedFile!,
-                        fit: BoxFit.contain,
-                        width: double.infinity,
-                      ),
-                    ],
-                    Positioned(
-                      top: 8,
-                      right: 8,
-                      child: CircleAvatar(
-                        backgroundColor: Colors.black54,
-                        child: IconButton(
-                          icon: const Icon(Icons.close, color: Colors.white),
-                          onPressed: _clearSelection,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
+                child: _isUploading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : Text(switch (_kind) {
+                        PostKind.reel => 'Share Reel',
+                        PostKind.story => 'Share Story',
+                        PostKind.post => 'Publish Post',
+                      }),
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-            const SizedBox(height: AppSpacing.md),
+// ─────────────────────────────────────────────────────────
+//  Sub-widgets
+// ─────────────────────────────────────────────────────────
 
-            // Category & Caption
-            AppTextField(
-              label: 'Caption / Story',
-              hint: 'Write about your project, idea, or discovery...',
-              controller: _captionController,
-              maxLines: 3,
-              prefixIcon: Icons.edit_note_rounded,
+class _KindSelector extends StatelessWidget {
+  const _KindSelector({required this.selected, required this.onChanged});
+
+  final PostKind selected;
+  final void Function(PostKind) onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 38,
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF0F0F0),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          _tab('Post', PostKind.post),
+          _tab('Reel 🎬', PostKind.reel),
+          _tab('Story 📖', PostKind.story),
+        ],
+      ),
+    );
+  }
+
+  Widget _tab(String label, PostKind kind) {
+    final isSelected = selected == kind;
+    return Expanded(
+      child: GestureDetector(
+        onTap: () => onChanged(kind),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          decoration: BoxDecoration(
+            color: isSelected ? Colors.white : Colors.transparent,
+            borderRadius: BorderRadius.circular(8),
+            boxShadow: isSelected
+                ? [
+                    BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.08),
+                        blurRadius: 4,
+                        offset: const Offset(0, 1))
+                  ]
+                : null,
+          ),
+          child: Center(
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight:
+                    isSelected ? FontWeight.w700 : FontWeight.w400,
+                color: isSelected
+                    ? const Color(0xFF262626)
+                    : const Color(0xFF8E8E8E),
+              ),
             ),
-            const SizedBox(height: AppSpacing.md),
+          ),
+        ),
+      ),
+    );
+  }
+}
 
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _selectedCategory,
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                      labelText: 'Category',
-                      prefixIcon: const Icon(Icons.category_outlined),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                    ),
-                    items: _categories.map((c) {
-                      return DropdownMenuItem(
-                        value: c,
-                        child: Text(c, overflow: TextOverflow.ellipsis),
-                      );
-                    }).toList(),
-                    onChanged: (val) {
-                      if (val != null) setState(() => _selectedCategory = val);
-                    },
-                  ),
-                ),
-                const SizedBox(width: AppSpacing.sm),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    initialValue: _audience,
-                    isExpanded: true,
-                    decoration: InputDecoration(
-                      labelText: 'Audience',
-                      prefixIcon: const Icon(Icons.groups_outlined),
-                      border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(AppRadius.md),
-                      ),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                          value: 'ALL',
-                          child: Text('All Kids',
-                              overflow: TextOverflow.ellipsis)),
-                      DropdownMenuItem(
-                          value: '6-8',
-                          child: Text('Ages 6-8',
-                              overflow: TextOverflow.ellipsis)),
-                      DropdownMenuItem(
-                          value: '9-11',
-                          child: Text('Ages 9-11',
-                              overflow: TextOverflow.ellipsis)),
-                      DropdownMenuItem(
-                          value: '12-13',
-                          child: Text('Ages 12-13',
-                              overflow: TextOverflow.ellipsis)),
-                      DropdownMenuItem(
-                          value: '14-18',
-                          child: Text('Ages 14-18',
-                              overflow: TextOverflow.ellipsis)),
-                    ],
-                    onChanged: (val) {
-                      if (val != null) setState(() => _audience = val);
-                    },
-                  ),
+class _FormCard extends StatelessWidget {
+  const _FormCard({required this.child, this.label});
+
+  final Widget child;
+  final String? label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.fromLTRB(12, label != null ? 8 : 12, 12, 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: const Color(0xFFE8E8E8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (label != null) ...[
+            Text(label!,
+                style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF8E8E8E),
+                    letterSpacing: 0.3)),
+            const SizedBox(height: 2),
+          ],
+          child,
+        ],
+      ),
+    );
+  }
+}
+
+class _MediaPicker extends StatelessWidget {
+  const _MediaPicker({
+    required this.kind,
+    required this.onPickImage,
+    required this.onPickVideo,
+  });
+
+  final PostKind kind;
+  final Future<void> Function(ImageSource) onPickImage;
+  final Future<void> Function(ImageSource) onPickVideo;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 200,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF7F7F7),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+            color: const Color(0xFFDBDBDB), style: BorderStyle.solid),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.add_photo_alternate_outlined,
+              size: 40, color: Color(0xFFBBBBBB)),
+          const SizedBox(height: 10),
+          const Text(
+            'Share what you learned or created',
+            style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF262626)),
+          ),
+          const SizedBox(height: 4),
+          const Text(
+            'AI safety moderation · No audio',
+            style: TextStyle(fontSize: 12, color: Color(0xFF8E8E8E)),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              _PickButton(
+                icon: Icons.camera_alt_outlined,
+                label: 'Camera',
+                onTap: () => onPickImage(ImageSource.camera),
+              ),
+              const SizedBox(width: 10),
+              _PickButton(
+                icon: Icons.photo_library_outlined,
+                label: 'Photos',
+                onTap: () => onPickImage(ImageSource.gallery),
+              ),
+              if (kind != PostKind.story) ...[
+                const SizedBox(width: 10),
+                _PickButton(
+                  icon: Icons.videocam_outlined,
+                  label: 'Video',
+                  onTap: () => onPickVideo(ImageSource.gallery),
                 ),
               ],
-            ),
-
-            const SizedBox(height: AppSpacing.lg),
-
-            // Moderation Outcome Feedback
-            if (_outcome != PostModerationOutcome.none) ...[
-              _buildOutcomeBanner(),
-              const SizedBox(height: AppSpacing.md),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
 
-            // Submit Button
-            AppButton(
-              text: _kind == PostKind.reel
-                  ? 'Share Reel'
-                  : _kind == PostKind.story
-                      ? 'Share Story'
-                      : 'Publish Post',
-              icon: Icons.send_rounded,
-              isLoading: _isUploading,
-              onPressed: _isUploading ? null : _submitPost,
-            ),
+class _PickButton extends StatelessWidget {
+  const _PickButton(
+      {required this.icon, required this.label, required this.onTap});
+
+  final IconData icon;
+  final String label;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: const Color(0xFFDBDBDB)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: const Color(0xFF262626)),
+            const SizedBox(width: 6),
+            Text(label,
+                style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w500,
+                    color: Color(0xFF262626))),
           ],
         ),
       ),
     );
   }
+}
 
-  Widget _kindTab(String title, PostKind kind) {
-    final isSelected = _kind == kind;
-    return Expanded(
-      child: GestureDetector(
-        onTap: () {
-          setState(() {
-            _kind = kind;
-            _clearSelection();
-          });
-        },
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 8),
-          decoration: BoxDecoration(
-            color: isSelected ? AppColors.kidsAccent : Colors.transparent,
-            borderRadius: BorderRadius.circular(AppRadius.sm),
-          ),
-          child: Center(
-            child: Text(
-              title,
-              style: AppTypography.labelLarge.copyWith(
-                color: isSelected ? Colors.black : Colors.white70,
-                fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+class _MediaPreview extends StatelessWidget {
+  const _MediaPreview({
+    required this.file,
+    required this.isVideo,
+    required this.videoController,
+    required this.onClear,
+  });
+
+  final File file;
+  final bool isVideo;
+  final VideoPlayerController? videoController;
+  final VoidCallback onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 260,
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFDBDBDB)),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        alignment: Alignment.center,
+        children: [
+          if (isVideo) ...[
+            if (videoController != null &&
+                videoController!.value.isInitialized)
+              AspectRatio(
+                aspectRatio: videoController!.value.aspectRatio,
+                child: VideoPlayer(videoController!),
+              )
+            else
+              const CircularProgressIndicator(color: Colors.white54),
+          ] else
+            Image.file(file,
+                fit: BoxFit.contain, width: double.infinity),
+          Positioned(
+            top: 8,
+            right: 8,
+            child: GestureDetector(
+              onTap: onClear,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: Colors.black54,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: const Icon(Icons.close_rounded,
+                    color: Colors.white, size: 18),
               ),
             ),
           ),
-        ),
+        ],
       ),
     );
   }
+}
 
-  Widget _buildOutcomeBanner() {
-    Color bg;
-    Color border;
-    IconData icon;
-    String title;
+class _OutcomeBanner extends StatelessWidget {
+  const _OutcomeBanner(
+      {required this.outcome, this.message, this.reason});
 
-    switch (_outcome) {
+  final PostModerationOutcome outcome;
+  final String? message;
+  final String? reason;
+
+  @override
+  Widget build(BuildContext context) {
+    final Color bg;
+    final Color border;
+    final IconData icon;
+    final String title;
+
+    switch (outcome) {
       case PostModerationOutcome.allowed:
-        bg = AppColors.success.withValues(alpha: 0.15);
-        border = AppColors.success;
+        bg = const Color(0xFFE8F5E9);
+        border = const Color(0xFF2E7D32);
         icon = Icons.check_circle_outline;
         title = 'Published!';
       case PostModerationOutcome.review:
-        bg = Colors.amber.withValues(alpha: 0.15);
-        border = Colors.amber;
+        bg = const Color(0xFFFFF8E1);
+        border = const Color(0xFFF59F00);
         icon = Icons.pending_outlined;
-        title = 'Parent Review Required';
+        title = 'Sent for Parent Review';
       case PostModerationOutcome.blocked:
-        bg = AppColors.error.withValues(alpha: 0.15);
-        border = AppColors.error;
+        bg = const Color(0xFFFFEBEE);
+        border = const Color(0xFFE53935);
         icon = Icons.gpp_bad_outlined;
         title = 'Blocked for Safety';
-      case PostModerationOutcome.error:
-      case PostModerationOutcome.none:
-        bg = Colors.grey.withValues(alpha: 0.15);
-        border = Colors.grey;
+      default:
+        bg = const Color(0xFFF3F3F3);
+        border = const Color(0xFF9E9E9E);
         icon = Icons.info_outline;
         title = 'Notice';
     }
 
     return Container(
-      padding: const EdgeInsets.all(AppSpacing.md),
+      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: bg,
-        borderRadius: BorderRadius.circular(AppRadius.md),
+        borderRadius: BorderRadius.circular(10),
         border: Border.all(color: border),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            children: [
-              Icon(icon, color: border),
-              const SizedBox(width: AppSpacing.sm),
-              Text(title,
-                  style: AppTypography.titleMedium.copyWith(color: border)),
-            ],
-          ),
-          if (_statusMessage != null) ...[
+          Row(children: [
+            Icon(icon, color: border, size: 18),
+            const SizedBox(width: 8),
+            Text(title,
+                style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w700,
+                    color: border)),
+          ]),
+          if (message != null) ...[
             const SizedBox(height: 4),
-            Text(_statusMessage!, style: AppTypography.bodyMedium),
+            Text(message!,
+                style: TextStyle(fontSize: 13, color: border.withValues(alpha: 0.85))),
           ],
-          if (_rejectionReason != null) ...[
+          if (reason != null) ...[
             const SizedBox(height: 4),
-            Text(
-              'Reason: $_rejectionReason',
-              style: AppTypography.caption
-                  .copyWith(color: AppColors.textMutedDark),
-            ),
+            Text('Reason: $reason',
+                style: const TextStyle(
+                    fontSize: 12, color: Color(0xFF8E8E8E))),
           ],
         ],
       ),
