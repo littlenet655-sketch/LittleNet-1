@@ -5,9 +5,15 @@ from flask import g, jsonify, request
 from database.connection import fetch_all, fetch_one, get_db_connection
 from extensions import csrf, limiter
 from mobile.api import _clean, _require_mobile
+from mobile.stitch_api import register_mobile_stitch_api
 
 
 def register_mobile_admin_api(bp):
+    # Register the additional native Flutter screen contracts on the same
+    # bearer-token blueprint. Keeping this here avoids a second app blueprint
+    # and preserves the existing /api/mobile/v1/* authentication boundary.
+    register_mobile_stitch_api(bp)
+
     @bp.route('/api/mobile/v1/admin/reviews/<int:event_id>', methods=['GET', 'POST'])
     @csrf.exempt
     @limiter.limit('60 per minute')
