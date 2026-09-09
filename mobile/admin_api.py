@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-
 from flask import g, jsonify, request
 
 from database.connection import fetch_all, fetch_one, get_db_connection
@@ -75,23 +73,16 @@ def register_mobile_admin_api(bp):
                 return jsonify(error='review_already_resolved'), 409
 
             if requested == 'ESCALATE':
-                # moderation_reviews intentionally allows one final decision per
-                # event (APPROVE/BLOCK). Keep an escalation open and preserve it
-                # in the existing activity audit trail instead of violating that
-                # table's action/unique constraints.
-                notes = str(data.get('notes') or 'Escalated by moderator').strip()[:2000]
+                # Production migration 20260908093000 makes moderation_reviews
+                # append-only and permits ESCALATE. Record the escalation while
+                # deliberately leaving the event OPEN for a later final decision.
                 cur.execute(
-                    """INSERT INTO activity_logs(child_id,activity_type,activity_data)
-                       VALUES(%s,'MODERATION_ESCALATED',%s::jsonb)""",
+                    'INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)',
                     (
-                        locked.get('child_id'),
-                        json.dumps(
-                            {
-                                'event_id': int(event_id),
-                                'reviewer_id': int(g.mobile_user['user_id']),
-                                'notes': notes,
-                            }
-                        ),
+                        event_id,
+                        g.mobile_user['user_id'],
+                        'ESCALATE',
+                        str(data.get('notes') or 'Escalated by moderator'),
                     ),
                 )
                 conn.commit()
@@ -117,8 +108,8 @@ def register_mobile_admin_api(bp):
                     (db_status, cid),
                 )
             elif cid and ctype == 'USER' and requested == 'BLOCK':
-                # A child safety report targeting a user must have an actual
-                # enforcement effect when a moderator confirms it.
+                # A confirmed child-safety user report must have an enforcement
+                # effect, not merely resolve the moderation event.
                 cur.execute(
                     "UPDATE users SET account_status='SUSPENDED' WHERE user_id=%s AND role='CHILD'",
                     (cid,),
