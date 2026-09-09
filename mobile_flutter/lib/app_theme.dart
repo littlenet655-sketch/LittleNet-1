@@ -1,39 +1,43 @@
 import 'package:flutter/material.dart';
 
-/// Shared native Flutter design system for the canonical LittleNet Stitch set.
-///
-/// The Stitch HTML is a visual reference only. Production Android builds use
-/// these native Material tokens and never embed or load the HTML designs.
+import 'stitch_design.dart';
+
+/// Native Flutter design system ported from the uploaded LittleNet Stitch UI.
 abstract final class LittleNetTheme {
-  static const Color primary = Color(0xFF0095F6);
-  static const Color ink = Color(0xFF262626);
-  static const Color divider = Color(0xFFDBDBDB);
-  static const Color canvas = Color(0xFFFFFFFF);
-  static const Color softCanvas = Color(0xFFF8FAFC);
-  static const Color success = Color(0xFF16A34A);
-  static const Color warning = Color(0xFFF59E0B);
-  static const Color danger = Color(0xFFDC2626);
+  static const Color primary = StitchTokens.blue;
+  static const Color ink = StitchTokens.ink;
+  static const Color divider = StitchTokens.border;
+  static const Color canvas = StitchTokens.canvas;
+  static const Color softCanvas = StitchTokens.softCanvas;
+  static const Color success = StitchTokens.safe;
+  static const Color warning = StitchTokens.review;
+  static const Color danger = StitchTokens.blocked;
 
   static ThemeData light() {
-    final scheme = ColorScheme.fromSeed(
-      seedColor: primary,
-      brightness: Brightness.light,
-      surface: canvas,
-    ).copyWith(
-      primary: primary,
-      onPrimary: Colors.white,
-      surface: canvas,
-      onSurface: ink,
-      error: danger,
-    );
-
-    const radius = BorderRadius.all(Radius.circular(14));
+    const radius = BorderRadius.all(Radius.circular(8));
+    const inputRadius = BorderRadius.all(Radius.circular(6));
 
     return ThemeData(
       useMaterial3: true,
-      colorScheme: scheme,
+      brightness: Brightness.light,
       scaffoldBackgroundColor: canvas,
+      canvasColor: canvas,
       dividerColor: divider,
+      colorScheme: const ColorScheme.light(
+        primary: primary,
+        onPrimary: Colors.white,
+        surface: canvas,
+        onSurface: ink,
+        error: danger,
+      ),
+      textTheme: const TextTheme(
+        bodyLarge: TextStyle(color: ink, fontSize: 14, height: 1.35),
+        bodyMedium: TextStyle(color: ink, fontSize: 13, height: 1.35),
+        bodySmall: TextStyle(color: StitchTokens.muted, fontSize: 11, height: 1.25),
+        titleLarge: TextStyle(color: ink, fontSize: 20, fontWeight: FontWeight.w700),
+        titleMedium: TextStyle(color: ink, fontSize: 15, fontWeight: FontWeight.w700),
+        titleSmall: TextStyle(color: ink, fontSize: 13, fontWeight: FontWeight.w700),
+      ),
       appBarTheme: const AppBarTheme(
         centerTitle: false,
         elevation: 0,
@@ -41,23 +45,35 @@ abstract final class LittleNetTheme {
         backgroundColor: canvas,
         foregroundColor: ink,
         surfaceTintColor: Colors.transparent,
+        toolbarHeight: 48,
+        titleSpacing: 16,
+        iconTheme: IconThemeData(color: ink, size: 24),
         titleTextStyle: TextStyle(
           color: ink,
-          fontSize: 20,
-          fontWeight: FontWeight.w800,
+          fontSize: 18,
+          fontWeight: FontWeight.w700,
+          letterSpacing: -.35,
         ),
       ),
-      navigationBarTheme: NavigationBarThemeData(
-        height: 68,
+      bottomNavigationBarTheme: const BottomNavigationBarThemeData(
         backgroundColor: canvas,
-        indicatorColor: const Color(0x1A0095F6),
-        labelTextStyle: WidgetStateProperty.resolveWith(
-          (states) => TextStyle(
-            color: states.contains(WidgetState.selected) ? ink : Colors.black54,
-            fontSize: 11,
-            fontWeight: states.contains(WidgetState.selected)
-                ? FontWeight.w800
-                : FontWeight.w600,
+        selectedItemColor: ink,
+        unselectedItemColor: ink,
+        showSelectedLabels: false,
+        showUnselectedLabels: false,
+        type: BottomNavigationBarType.fixed,
+        elevation: 0,
+      ),
+      navigationBarTheme: NavigationBarThemeData(
+        height: 52,
+        backgroundColor: canvas,
+        elevation: 0,
+        indicatorColor: Colors.transparent,
+        labelBehavior: NavigationDestinationLabelBehavior.alwaysHide,
+        iconTheme: WidgetStateProperty.resolveWith(
+          (states) => IconThemeData(
+            color: ink,
+            size: states.contains(WidgetState.selected) ? 26 : 24,
           ),
         ),
       ),
@@ -65,56 +81,82 @@ abstract final class LittleNetTheme {
         elevation: 0,
         color: canvas,
         margin: EdgeInsets.zero,
+        surfaceTintColor: Colors.transparent,
         shape: RoundedRectangleBorder(
           borderRadius: radius,
-          side: BorderSide(color: Color(0xFFE8ECF1)),
+          side: BorderSide(color: Color(0xFFEDEDED), width: .7),
         ),
       ),
       inputDecorationTheme: const InputDecorationTheme(
         filled: true,
-        fillColor: softCanvas,
+        fillColor: Color(0xFFF5F5F5),
+        isDense: true,
+        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 13),
+        hintStyle: TextStyle(color: StitchTokens.muted, fontSize: 13),
+        labelStyle: TextStyle(color: StitchTokens.muted, fontSize: 13),
         border: OutlineInputBorder(
-          borderRadius: radius,
+          borderRadius: inputRadius,
           borderSide: BorderSide(color: divider),
         ),
         enabledBorder: OutlineInputBorder(
-          borderRadius: radius,
+          borderRadius: inputRadius,
           borderSide: BorderSide(color: divider),
         ),
         focusedBorder: OutlineInputBorder(
-          borderRadius: radius,
-          borderSide: BorderSide(color: primary, width: 1.5),
+          borderRadius: inputRadius,
+          borderSide: BorderSide(color: primary, width: 1),
         ),
       ),
       bottomSheetTheme: const BottomSheetThemeData(
         backgroundColor: canvas,
         modalBackgroundColor: canvas,
+        surfaceTintColor: Colors.transparent,
         showDragHandle: true,
+        dragHandleColor: Color(0xFFC7C7C7),
+        dragHandleSize: Size(36, 4),
         shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
         ),
       ),
       dialogTheme: const DialogThemeData(
         backgroundColor: canvas,
         surfaceTintColor: Colors.transparent,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(20))),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.all(Radius.circular(12))),
       ),
       filledButtonTheme: FilledButtonThemeData(
         style: FilledButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          textStyle: const TextStyle(fontWeight: FontWeight.w800),
+          backgroundColor: primary,
+          foregroundColor: Colors.white,
+          minimumSize: const Size(48, 44),
+          elevation: 0,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
-          minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          side: const BorderSide(color: divider),
           foregroundColor: ink,
-          textStyle: const TextStyle(fontWeight: FontWeight.w700),
+          minimumSize: const Size(48, 40),
+          padding: const EdgeInsets.symmetric(horizontal: 14),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(6)),
+          side: const BorderSide(color: divider),
+          textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
         ),
       ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: primary,
+          textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w700),
+        ),
+      ),
+      chipTheme: const ChipThemeData(
+        backgroundColor: softCanvas,
+        side: BorderSide(color: divider),
+        labelStyle: TextStyle(color: ink, fontSize: 11, fontWeight: FontWeight.w600),
+        shape: StadiumBorder(),
+      ),
+      splashColor: Colors.black12,
+      highlightColor: Colors.transparent,
     );
   }
 }
