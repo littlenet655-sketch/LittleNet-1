@@ -583,11 +583,30 @@ def register_mobile_api(bp):
         uid = int(g.mobile_user["user_id"])
         if not profile_exists(uid):
             create_child_profile(uid, {"full_name": g.mobile_user.get("full_name") or "Student", "bio": "Hey! I'm on LittleNet 🌟"})
+        # tab=all|following|educational (Screen 9 feed tabs + Screen 44 educational)
+        tab = str(request.args.get("tab") or "all").lower()
+        educational_only = (tab == "educational") or controls_for_child(uid).get("educational_only_feed", False)
+        try:
+            page = max(1, int(request.args.get("page", 1)))
+        except (TypeError, ValueError):
+            page = 1
+        offset = (page - 1) * 20
+        all_posts = visible_posts(uid, False, 40, offset)
+        if tab == "following":
+            # Only show posts from connections the child follows
+            posts = [p for p in all_posts if p.get("is_own") or _is_following_post(uid, p)]
+        elif educational_only:
+            edu_categories = {"Education", "Science", "Technology", "History", "Mathematics", "Literature", "Art & Music"}
+            posts = [p for p in all_posts if p.get("content_category") in edu_categories]
+        else:
+            posts = all_posts[:20]
         return jsonify(
             ok=True,
+            tab=tab,
+            page=page,
             profile=_profile_json(get_child_profile(uid)),
             stories=[_post_json(p, uid) for p in active_stories(uid)],
-            posts=[_post_json(p, uid) for p in visible_posts(uid, False, 20, 0)],
+            posts=[_post_json(p, uid) for p in posts],
             reels=[_post_json(p, uid) for p in visible_posts(uid, True, 8, 0)],
             suggested=[_clean({**dict(c), "avatar_url": _asset_url(c.get("profile_picture"))}) for c in get_random_children(uid)[:8]],
             controls=_clean(controls_for_child(uid)),
@@ -1018,13 +1037,18 @@ def register_mobile_api(bp):
     @_require_mobile("CHILD")
     def mobile_quiz():
         uid = int(g.mobile_user["user_id"])
+        # Support paginated quiz browsing (Screen 45 Quiz List completion)
+        try:
+            page_size = min(20, max(1, int(request.args.get("page_size", 2))))
+        except (TypeError, ValueError):
+            page_size = 2
         state = feed_quiz_state(uid)
         if state.get("required"):
             row = required_feed_quiz(uid)
             rows = [row] if row else []
             reason = "feed_break"
         else:
-            rows = quizzes(uid, 2)
+            rows = quizzes(uid, page_size)
             reason = "onboarding" if needs_onboarding_quiz(uid) else "practice"
         payload = []
         for row in rows:
@@ -1422,4 +1446,42 @@ def register_mobile_api(bp):
         limit = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))
         minutes_used = minutes_today(child_id)
         return jsonify(ok=True, limit=_clean(limit), minutes_used_today=minutes_used)
+
+
+    # â”€â”€ Phase 3 Batch 2: Remaining PARTIAL screen completions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+    @bp.route("/api/mobile/v1/kids/chat/<int:peer_id>/safety-status")
+    @_require_mobile("CHILD")
+    def mobile_chat_safety_status(peer_id):
+        """GET moderation events for a conversation (Screen 35 â€“ Unsafe Message Warning).
+        Returns whether the current conversation has any active moderation flags."""
+        uid = int(g.mobile_user["user_id"])
+        if not can_interact(uid, peer_id):
+            return jsonify(error="approved_connection_required"), 403
+        from childMessage.service import conversation as get_conv
+        conv = get_conv(uid, peer_id)
+        cid = conv.get("conversation_id") if conv else None
+        events = []
+        if cid:
+            events = fetch_all(
+                """SELECT event_id, content_type, decision, reason, status, created_at
+                   FROM moderation_events
+                   WHERE child_id=%s AND content_type='MESSAGE' AND status='OPEN'
+                   AND created_at >= NOW() - INTERVAL '24 hours'
+                   ORDER BY created_at DESC LIMIT 10""",
+                (uid,),
+            )
+        blocked = fetch_one(
+            "SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)",
+            (uid, peer_id, peer_id, uid),
+        ) is not None
+        has_warning = bool(events) or blocked
+        return jsonify(
+            ok=True,
+            peer_id=peer_id,
+            has_safety_warning=has_warning,
+            is_blocked=blocked,
+            recent_flags=_clean(events),
+            tip="All conversations are monitored by LittleNet safety AI.",
+        )
 

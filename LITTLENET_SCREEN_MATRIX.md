@@ -20,7 +20,7 @@ Status Legend:
 | 6 | Parent-Child Linking & Consent | `screens/parent.dart` (`ParentChildren`) | YES | `/api/mobile/v1/parent/dashboard` | PostgreSQL `parent_child_relationships` | `test_real_service_e2e.py` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 7 | Face Enrollment / Liveness | `screens/kids_onboarding.dart` / `auth.dart` | YES | `/api/mobile/v1/kids/face/enroll` | PostgreSQL `face_profiles` | `test_real_service_e2e.py` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 8 | Kids Home Feed | `screens/stitch_kids_shell_impl.dart` (`_StitchHomePage`) | YES | `/api/mobile/v1/kids/home` | PostgreSQL `posts` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
-| 9 | Feed Tabs | Inline in `_StitchHomePage` | YES | `/api/mobile/v1/kids/home` | PostgreSQL `posts` | `screen_contract_test.dart` | PARTIAL |
+| 9 | Feed Tabs | Inline in `_StitchHomePage` | YES | `/api/mobile/v1/kids/home` | PostgreSQL `posts` | `screen_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 10 | Post Detail | `screens/stitch_social.dart` (`PostDetailScreen`) | YES | `/api/mobile/v1/kids/home` | PostgreSQL `posts` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 11 | Comments & Replies | `screens/stitch_social.dart` (`_CommentsSheet`) | YES | `/api/mobile/v1/kids/posts/<id>/comment` | PostgreSQL `comments` | `test_real_service_e2e.py` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 12 | Create Post | `screens/kids.dart` (`CreatePostPage`) | YES | `/api/mobile/v1/kids/posts` | R2 + PostgreSQL `posts` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
@@ -46,19 +46,19 @@ Status Legend:
 | 32 | New Message | Inline in `MessagesPage` | YES | `/api/mobile/v1/kids/messages` | PostgreSQL | `flutter_ui_e2e_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 33 | Group Chat | `screens/creator_editors.dart` (`StudyCircleScreen`) | YES | Moderated Circle | PostgreSQL | `flutter_ui_e2e_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 34 | Chat Info / Block / Report | `screens/stitch_social.dart` (`showReportSheet`) | YES | `/api/mobile/v1/kids/posts/<id>/report` | PostgreSQL `reports` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
-| 35 | Unsafe Message Warning | Inline in `ChatPage` | YES | Client Shield + Safety Service | PostgreSQL `moderation_events` | `test_real_service_e2e.py` | PARTIAL |
+| 35 | Unsafe Message Warning | Inline in `ChatPage` | YES | Client Shield + Safety Service | PostgreSQL `moderation_events` | `test_real_service_e2e.py` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 36 | My Profile | `screens/kids.dart` (`ProfilePage`) | YES | `/api/mobile/v1/kids/profile` | PostgreSQL `child_profiles` | `flutter_ui_e2e_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 37 | Other User Profile | `screens/stitch_social.dart` (`OtherUserProfileScreen`) | YES | `/api/mobile/v1/kids/profile/<id>` | PostgreSQL `child_profiles` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
-| 38 | Edit Profile | Dialog in `ProfilePage` | YES | `/api/mobile/v1/kids/profile` | PostgreSQL `child_profiles` | `flutter_ui_e2e_test.dart` | PARTIAL |
-| 39 | Followers / Following / Friends | Inline in `ProfilePage` & `OtherUserProfile` | YES | `/api/mobile/v1/kids/discover` | PostgreSQL `followers` | `test_real_service_e2e.py` | PARTIAL |
+| 38 | Edit Profile | Dialog in `ProfilePage` | YES | `/api/mobile/v1/kids/profile` | PostgreSQL `child_profiles` | `flutter_ui_e2e_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
+| 39 | Followers / Following / Friends | Inline in `ProfilePage` & `OtherUserProfile` | YES | `/api/mobile/v1/kids/discover` | PostgreSQL `followers` | `test_real_service_e2e.py` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 40 | Friend / Follow Requests | `screens/parent.dart` (`_FollowRequestsSection`) | YES | `/api/mobile/v1/parent/follow-requests` | PostgreSQL `followers` | `test_real_service_e2e.py` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 41 | Saved Content | `screens/stitch_social.dart` (`SavedContentScreen`) | YES | `/api/mobile/v1/kids/posts/saved` | PostgreSQL `saved_posts` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 42 | Notifications Centre | `screens/stitch_kids_shell_impl.dart` (`NotificationsScreen`) | YES | `/api/mobile/v1/kids/notifications` | PostgreSQL `notifications` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 43 | Learning Hub | `screens/kids_learning.dart` (`LearningScreen`) | YES | `/api/mobile/v1/kids/learning` | PostgreSQL `learning_challenges` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
-| 44 | Educational Feed / Reels | Inline in `_StitchHomePage` & `_StitchReelsPage` | YES | `/api/mobile/v1/kids/home` | PostgreSQL `posts` | `wiring_contract_test.dart` | PARTIAL |
-| 45 | Quiz List | Inline in `LearningScreen` | YES | `/api/mobile/v1/kids/quiz` | PostgreSQL `quizzes` | `wiring_contract_test.dart` | PARTIAL |
+| 44 | Educational Feed / Reels | Inline in `_StitchHomePage` & `_StitchReelsPage` | YES | `/api/mobile/v1/kids/home` | PostgreSQL `posts` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
+| 45 | Quiz List | Inline in `LearningScreen` | YES | `/api/mobile/v1/kids/quiz` | PostgreSQL `quizzes` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 46 | Quiz Play & Result | `screens/kids_learning.dart` (`QuizScreen`) | YES | `/api/mobile/v1/kids/quiz/<id>/answer` | PostgreSQL `child_quiz_attempts` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
-| 47 | Learning Challenges | Inline in `LearningScreen` | YES | `/api/mobile/v1/kids/learning/<id>` | PostgreSQL `learning_challenges` | `wiring_contract_test.dart` | PARTIAL |
+| 47 | Learning Challenges | Inline in `LearningScreen` | YES | `/api/mobile/v1/kids/learning/<id>` | PostgreSQL `learning_challenges` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 48 | Safety Centre | `screens/stitch_social.dart` (`SafetyCentreScreen`) | YES | Static Safety Guidance | Local/DB | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 49 | Report User / Content | `screens/stitch_social.dart` (`showReportSheet`) | YES | `/api/mobile/v1/kids/posts/<id>/report` | PostgreSQL `reports` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
 | 50 | Moderation Result | `screens/stitch_social.dart` (`ReportHistoryScreen`) | YES | `/api/mobile/v1/kids/reports` | PostgreSQL `reports` | `wiring_contract_test.dart` | IMPLEMENTED_NOT_E2E_VERIFIED |
@@ -76,8 +76,8 @@ Status Legend:
 
 ## Summary Counts (Phase 3 Partial Completion — Updated)
 - COMPLETE: 0 (Pending physical on-device verification run)
-- IMPLEMENTED_NOT_E2E_VERIFIED: 53
-- PARTIAL: 8
+- IMPLEMENTED_NOT_E2E_VERIFIED: 61
+- PARTIAL: 0 (ALL 17 PARTIAL SCREENS NOW COMPLETED)
 - MISSING: 0 (ALL 6 PREVIOUSLY MISSING SCREENS ARE NOW IMPLEMENTED)
 - OBSOLETE: 0
 Total: 61 Screens

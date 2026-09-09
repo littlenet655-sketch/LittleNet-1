@@ -3,13 +3,13 @@ test_phase3_partial_completion.py
 Contract tests for Phase 3 partial-screen completion routes.
 
 Screens completed:
-  #21 Reel Comments         — GET /kids/posts/<id>/comments
-  #13/#19/#24 Preview       — POST /kids/posts/preview
-  #25 Reel Share            — GET /kids/posts/<id>/share
-  #32 New Message           — GET /kids/contacts
-  #34 Block User            — POST /kids/block/<id>
-  #34 Report User           — POST /kids/report/user
-  #57 Smart Controls GET    — GET /parent/time-limit/<id>
+  #21 Reel Comments         â€” GET /kids/posts/<id>/comments
+  #13/#19/#24 Preview       â€” POST /kids/posts/preview
+  #25 Reel Share            â€” GET /kids/posts/<id>/share
+  #32 New Message           â€” GET /kids/contacts
+  #34 Block User            â€” POST /kids/block/<id>
+  #34 Report User           â€” POST /kids/report/user
+  #57 Smart Controls GET    â€” GET /parent/time-limit/<id>
 """
 from pathlib import Path
 
@@ -111,7 +111,10 @@ def test_all_existing_phase2_routes_still_present():
         assert route in api, f"Existing route was lost: {route}"
 
 
-def test_screen_matrix_has_17_partial_baseline():
+def test_screen_matrix_all_partial_screens_completed():
+    """All 17 PARTIAL screens upgraded. Matrix should show PARTIAL: 0."""
     matrix = text("LITTLENET_SCREEN_MATRIX.md")
-    assert "PARTIAL: 17" in matrix
+    partial_rows = [line for line in matrix.splitlines() if "PARTIAL |" in line and "| PARTIAL |" in line]
+    assert len(partial_rows) == 0, f"Still have PARTIAL table rows: {partial_rows}"
+    assert "PARTIAL: 0" in matrix
 
