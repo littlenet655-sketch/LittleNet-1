@@ -6,6 +6,7 @@ import 'kids.dart';
 import 'kids_learning.dart';
 import 'kids_onboarding.dart';
 import 'stitch_social.dart';
+import 'search_flow.dart';
 
 class StitchKidsShellV2 extends StatefulWidget {
   const StitchKidsShellV2({
@@ -73,7 +74,7 @@ class _StitchKidsShellV2State extends State<StitchKidsShellV2> {
                   IconButton(
                     tooltip: 'Search',
                     onPressed: () => _push(
-                      DiscoverPage(api: widget.api, refreshToken: refreshToken),
+                      SearchScreen(api: widget.api, refreshToken: refreshToken),
                     ),
                     icon: const Icon(Icons.search_rounded),
                   ),

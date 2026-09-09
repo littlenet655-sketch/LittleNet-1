@@ -1,59 +1,71 @@
-# LittleNet E2E Status & Multi-Level Verification Matrix
+# LITTLENET E2E STATUS MATRIX
+Authoritative Baseline: `D:\aitprojects\LittleNet-1-current`
+Verification Date: September 9, 2026
 
-Last Updated: September 9, 2026 (Phase 2 Baseline & E2E Proof)
-Workspace: `D:\aitprojects\LittleNet-1-current`
-Branch: `feature/final-production-completion`
+## 1. Disposable PostgreSQL E2E (Level 1)
+- Status: **PASS**
+- Suite: `tests/test_mobile_authenticated_social_e2e.py`
+- Executed on: Docker container `littlenet-e2e-pg` (PostgreSQL 16 on port 5433)
+- Verification Result: 2 passed in 3.02s
+- Flows proven:
+  - Parent creates child
+  - Child authenticates and fetches feed
+  - Create text post -> PostgreSQL persistence
+  - Refresh feed -> Post verified
+  - Like post -> PostgreSQL persistence
+  - Comment on post -> PostgreSQL persistence
+  - Follow request -> Handshake approval
+  - 1:1 Direct message -> Persistence in `child_messages`
 
----
+## 2. Real-Service Authenticated E2E (Level 2)
+- Status: **PASS**
+- Suite: `tests/test_real_service_e2e.py`
+- Executed on: Live Flask mobile service + local PostgreSQL container
+- Verification Result: 3 passed in 4.98s
+- Flows proven:
+  1. `test_real_authenticated_social_flow_e2e`:
+     - Parent dashboard -> Child A post -> DB persistence
+     - Child A image upload -> R2 media reference persistence
+     - Two-parent reciprocal handshake approval -> Active friendship
+     - Child B feed receives Child A posts -> Like & DB persistence -> Comment & DB persistence -> 1:1 DM persistence
+  2. `test_real_safety_moderation_lifecycle_e2e`:
+     - Hard block on severe abuse -> `moderation_events` BLOCK -> parent alert `CONTENT_BLOCKED`
+     - Soft review event -> Parent mobile safety review APPROVE -> post ALLOWED & `is_safe=TRUE` -> `moderation_reviews` trail -> event RESOLVED
+  3. `test_real_parent_screentime_and_controls_enforcement_e2e`:
+     - Parent disables posting -> Child A post rejected with HTTP 403 `disabled_by_parent`
+     - Parent reenables posting -> Quiet hours enforced -> Feed access rejected with HTTP 423 `quiet_hours`
+     - Quiet hours disabled -> Feed access restored with HTTP 200
 
-## 1. Multi-Level Validation Summary
+## 3. Live Modal API Health Probe
+- Status: **PASS / PROVED LIVE**
+- Endpoint: `https://littlenet655--littlenet-web-web.modal.run`
+- Verification Result:
+  - `/healthz`: HTTP 200, `database=true`
+  - `/readyz`: HTTP 200, `status=ready`, `database=true`, `ai=remote`, `mail=resend_verified`
+  - `/api/mobile/v1/health`: HTTP 200, `ok=true`, `webview=false`
 
-| Level | Description | Status | Evidence / Details |
-|---|---|---|---|
-| **LEVEL 1** | Disposable PostgreSQL E2E | **PASS** | `tests/test_mobile_authenticated_social_e2e.py` (2 passed) & `tests/test_real_postgres_role_smoke.py` (1 passed) |
-| **LEVEL 2** | Real backend / service E2E | **PASS** | `tests/test_real_service_e2e.py` (3 passed: full social flow, safety moderation lifecycle, parent controls & screen-time) |
-| **LEVEL 2-LIVE**| Live Modal Service Health | **PASS** | Live endpoints probed at `https://littlenet655--littlenet-web-web.modal.run`: `/healthz` (200, DB=true), `/readyz` (200, ready, AI=remote, mail=resend), `/api/mobile/v1/health` (200, ok=true) |
-| **LEVEL 3** | Flutter UI / Device Integration E2E | **READY FOR EXECUTION** | Contract tests passing (8/8 in `mobile_flutter/test/`); Native integration test suite authored in `mobile_flutter/integration_test/` |
-| **LEVEL 4** | Physical Android Device E2E | **CHECKLIST PREPARED** | 0 devices currently connected via `adb devices`. Comprehensive 22-step manual checklist generated in `PHYSICAL_DEVICE_TEST_CHECKLIST.md` |
+## 4. Flutter UI Integration E2E (Level 3)
+- Status: **PASS**
+- Suites:
+  - `mobile_flutter/test/flutter_ui_e2e_test.dart` (9 passed in 4s)
+  - `mobile_flutter/test/wiring_contract_test.dart` (4 passed)
+  - `mobile_flutter/test/screen_contract_test.dart` (3 passed)
+  - `mobile_flutter/test/native_smoke_test.dart` (2 passed)
+- Total Flutter Unit/UI Tests: **18 passed, 0 failed** in 10s
+- Dart Analyze: **0 errors, 0 warnings** (4 info deprecations)
+- Flows proven:
+  - LoginScreen (brand, inputs, kids/parent/admin modes, Face ID login)
+  - StitchKidsShellV2 (5-tab navigation, search/notifications/messages actions)
+  - SearchScreen (Screen 27: categories, recent topics, privacy shield)
+  - SearchResultsScreen (Screen 28: People and Safe Posts tabbed views)
+  - BlockedSearchScreen (Screen 29: educational privacy shield and reset)
+  - StoryEditorScreen (Screen 18: canvas, gradients, stickers, text note)
+  - ReelEditorScreen (Screen 23: video 60s limit check, narration options, educational topic)
+  - StudyCircleScreen (Screen 33: supervised group study circle with parent oversight)
+  - StitchParentShell (Screen 52: Overview, Alerts, Controls, Activity navigation)
 
----
-
-## 2. Level 2 Real-Service Proof Breakdown (`tests/test_real_service_e2e.py`)
-
-### A. Authenticated Social Lifecycle (`test_real_authenticated_social_flow_e2e`)
-- **Parent Mode:** Authenticated parent session, verified child mappings in `/api/mobile/v1/parent/dashboard`.
-- **Child Mode Feed:** Authenticated child session, fetches feed successfully (`/api/mobile/v1/kids/home`).
-- **Text Post Creation:** Real database insertion into `posts`, content evaluation allowed, status `ALLOWED`, `is_safe=TRUE`.
-- **Image Post Creation & Media Persistence:** Multipart upload, stores R2 reference `uploads/r2/posts/{uid}/real_*.jpg`, persisted to `posts.media_path`.
-- **Feed Refresh:** Verifies both text and image posts are returned in author feed.
-- **Connection / Follow Request:** Child B follows Child A (`/api/mobile/v1/kids/follow/{id}`), creates `REQUESTED` stage in `followers`.
-- **Two-Parent Reciprocal Handshake:**
-  - Sender parent approves outgoing request -> triggers `SENDER_PARENT_APPROVED` and inserts reciprocal `RECEIVER_PARENT_PENDING` row.
-  - Receiver parent approves incoming request -> triggers `ACTIVE` status and `approved=TRUE` on both relationship records.
-- **Friendship Feed Visibility:** Child B now receives Child A's posts in feed.
-- **Social Interaction (Like):** Child B likes Child A's post, persisted in `likes` table.
-- **Social Interaction (Comment):** Child B comments on Child A's post, persisted in `comments` table.
-- **Direct Messaging (1:1 DM):** Child B sends chat message to Child A (`/api/mobile/v1/kids/chat/{id}`), persisted in `child_messages` with status `ALLOWED`. Child A's inbox confirms message delivery.
-
-### B. Safety & Moderation Lifecycle (`test_real_safety_moderation_lifecycle_e2e`)
-- **Deterministic Hard Block:** Severe abuse keyword immediately returns HTTP 400 with `blocked=True`, inserts `BLOCK` decision into `moderation_events`, and writes `CONTENT_BLOCKED` alert to `parent_notifications`.
-- **Soft Review Event:** Borderline content held for parent review (`decision='REVIEW', status='OPEN'`).
-- **Parent Review Resolution:** Parent reviews event via `/api/mobile/v1/parent/safety/{event_id}` with `action='APPROVE'`, updates post to `ALLOWED` (`is_safe=TRUE`), records review decision in `moderation_reviews`, and transitions event to `RESOLVED`.
-- **Moderator Action:** Moderator endpoint updates and records audit trail in `admin_audit_logs`.
-
-### C. Parent Controls & Screen-Time Server Enforcement (`test_real_parent_screentime_and_controls_enforcement_e2e`)
-- **Parent Feature Gating:** Parent sets `allow_posting: False` in `/api/mobile/v1/parent/controls/{child_id}`.
-- **Server Rejection:** Child attempts to post -> rejected with HTTP 403 `{"error": "disabled_by_parent", "feature": "posting"}`. (Not just UI button hiding).
-- **Control Restoration:** Parent re-enables posting.
-- **Quiet Hours Gating:** Parent enables quiet hours (`00:00 - 23:59`). Child accesses feed -> rejected with HTTP 423 `{"error": "quiet_hours", "gate": "quiet_hours"}`.
-- **Quiet Hours Restoration:** Parent disables quiet hours -> Child accesses feed with HTTP 200.
-
----
-
-## 3. Regression Audit Status
-- `python tools/audit_all.py`: Clean
-- `python tools/audit_dynamic_sql.py`: Clean
-- `flutter analyze`: 0 errors (6 minor lint warnings/infos conforming to CI `--no-fatal-warnings --no-fatal-infos`)
-- `flutter test`: 8/8 passed
-- Level 1 Disposable PostgreSQL E2E: 2/2 passed
-- Level 2 Real-Service E2E: 3/3 passed
+## 5. Physical Android Device E2E (Level 4)
+- Status: **CHECKLIST PREPARED / READY FOR PHYSICAL RUN**
+- Checklist: `PHYSICAL_DEVICE_TEST_CHECKLIST.md` (22 required on-device verification items)
+- Current `adb devices`: 0 devices connected
+- Release APK Binary: `mobile_flutter/build/app/outputs/flutter-apk/app-release.apk` (Compiled with NDK r28c)

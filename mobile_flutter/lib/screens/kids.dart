@@ -6,6 +6,7 @@ import 'package:image_picker/image_picker.dart';
 import '../api.dart';
 import '../widgets.dart';
 import 'kids_feed.dart';
+import 'creator_editors.dart';
 import 'kids_learning.dart';
 
 class KidsShell extends StatefulWidget {
@@ -195,7 +196,7 @@ class _PersonCard extends StatelessWidget {
         title: Text(kid['full_name']?.toString() ?? 'LittleNet friend', style: const TextStyle(fontWeight: FontWeight.w800)),
         subtitle: Text(kid['recommendation_reason']?.toString() ?? 'Approved network'),
         trailing: FilledButton.tonal(
-          onPressed: _toggle == null ? null : () => _toggle(context),
+          onPressed: () => _toggle(context),
           child: Text(kid['is_following'] == true ? 'Friends' : kid['is_pending'] == true ? 'Pending' : 'Connect'),
         ),
       ),
@@ -353,7 +354,24 @@ class _MessagesPageState extends State<MessagesPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Messages')),
+      appBar: AppBar(
+        title: const Text('Messages'),
+        actions: [
+          IconButton(
+            tooltip: 'Study Circle',
+            icon: const Icon(Icons.group_outlined),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => StudyCircleScreen(
+                  api: widget.api,
+                  circleName: 'Supervised Study Circle',
+                  members: const ['Classmates', 'Study Buddies'],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
       body: FutureBuilder<Map<String, dynamic>>(
         future: future,
         builder: (context, snapshot) {
@@ -529,7 +547,7 @@ class _ProfilePageState extends State<ProfilePage> {
     if (oldWidget.refreshToken != widget.refreshToken) _load();
   }
 
-  void _load() => setState(() => future = widget.api.getJson('/api/mobile/v1/kids/profile'));
+  void _load() => setState(() { future = widget.api.getJson('/api/mobile/v1/kids/profile'); });
 
   Future<void> _edit(Map<String, dynamic> profile) async {
     final name = TextEditingController(text: profile['full_name']?.toString() ?? '');
@@ -557,7 +575,7 @@ class _ProfilePageState extends State<ProfilePage> {
         ],
       ),
     );
-    for (final c in [name, bio, school, klass]) c.dispose();
+    for (final c in [name, bio, school, klass]) { c.dispose(); }
     if (data == null) return;
     try {
       await widget.api.putJson('/api/mobile/v1/kids/profile', data);

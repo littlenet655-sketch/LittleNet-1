@@ -3,6 +3,24 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('Kids shell exposes Search, Story Editor, Reel Editor, and Study Circle screens', () {
+    final shell = File('lib/screens/stitch_kids_shell_impl.dart').readAsStringSync();
+    expect(shell, contains('SearchScreen('));
+    expect(shell, contains("import 'search_flow.dart';"));
+    final kids = File('lib/screens/kids.dart').readAsStringSync();
+    expect(kids, contains("import 'creator_editors.dart';"));
+
+    final searchFlow = File('lib/screens/search_flow.dart').readAsStringSync();
+    expect(searchFlow, contains('class SearchScreen'));
+    expect(searchFlow, contains('class SearchResultsScreen'));
+    expect(searchFlow, contains('class BlockedSearchScreen'));
+
+    final editors = File('lib/screens/creator_editors.dart').readAsStringSync();
+    expect(editors, contains('class StoryEditorScreen'));
+    expect(editors, contains('class ReelEditorScreen'));
+    expect(editors, contains('class StudyCircleScreen'));
+  });
+
   test('runtime uses the fully wired Kids shell', () {
     final mainSource = File('lib/main.dart').readAsStringSync();
     expect(mainSource, contains('StitchKidsShellV2('));

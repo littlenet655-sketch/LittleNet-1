@@ -21,7 +21,7 @@ Preserved prior local folder: `D:\aitprojects\LittleNet-1` (branch `feature/subm
 | `audit_all.py` | **PASS** with `LITTLENET_ALLOW_GIT=1` | Fails without that env on a git checkout (`preflight` rejects `.git`) |
 | Flutter analyze (raw) | exit 1 | 1 warning + infos |
 | Flutter analyze (CI flags `--no-fatal-warnings --no-fatal-infos`) | **PASS** | Matches CI workflow |
-| Flutter test | **8 passed** | |
+| Flutter test | **18 passed** | 4 test suites: UI E2E, wiring, screen contract, smoke |
 | Flutter release APK | **PASS (local)** | Built after installing NDK r28c from `D:\aitprojects\android-ndk-r28c-windows.zip`, Build-Tools 36.0.0, Microsoft JDK 17; Kotlin incremental disabled for C:/D: pub-cache path issue |
 | Live `/healthz` | **200** `database=true` | URL still `https://littlenet655--littlenet-web-web.modal.run` |
 | Live `/readyz` | **200** `ready` | `ai=remote`, `mail=resend_verified` |
@@ -186,7 +186,7 @@ Prior audit (~34 / 21 / 6) is close: this pass finds **fewer fully separate scre
 ## Tests currently passing
 
 - Default suite: **346 passed / 6 skipped** (new E2E skipped without `RUN_REAL_POSTGRES_E2E`)
-- Flutter unit/contract tests: **8 passed**
+- Flutter unit/contract/UI E2E tests: **18 passed** across 4 test suites
 
 ## Completion estimate (honest, evidence-weighted)
 
