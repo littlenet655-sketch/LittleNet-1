@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
 
 import 'api.dart';
-import 'screens/admin.dart';
+import 'app_theme.dart';
 import 'screens/auth.dart';
-import 'screens/kids.dart';
-import 'screens/parent.dart';
+import 'screens/stitch_shells.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -65,7 +64,7 @@ class _LittleNetAppState extends State<LittleNetApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'LittleNet',
-      theme: _theme(),
+      theme: LittleNetTheme.light(),
       home: loading
           ? const _LaunchScreen()
           : user == null
@@ -77,57 +76,21 @@ class _LittleNetAppState extends State<LittleNetApp> {
   Widget _roleHome() {
     final role = user?['role']?.toString().toUpperCase();
     if (role == 'PARENT') {
-      return ParentShell(api: widget.api, user: user!, onLogout: _logout);
+      return StitchParentShell(
+        api: widget.api,
+        user: user!,
+        onLogout: _logout,
+      );
     }
     if (role == 'ADMIN') {
-      return AdminShell(api: widget.api, user: user!, onLogout: _logout);
+      return StitchAdminShell(
+        api: widget.api,
+        user: user!,
+        onLogout: _logout,
+      );
     }
-    return KidsShell(api: widget.api, user: user!, onLogout: _logout);
+    return StitchKidsShell(api: widget.api, user: user!, onLogout: _logout);
   }
-}
-
-ThemeData _theme() {
-  const seed = Color(0xFF2563EB);
-  final scheme = ColorScheme.fromSeed(
-    seedColor: seed,
-    brightness: Brightness.light,
-    surface: const Color(0xFFFFFBF7),
-  );
-  return ThemeData(
-    useMaterial3: true,
-    colorScheme: scheme,
-    scaffoldBackgroundColor: const Color(0xFFFFFBF7),
-    fontFamily: 'Roboto',
-    appBarTheme: const AppBarTheme(
-      centerTitle: false,
-      elevation: 0,
-      backgroundColor: Colors.transparent,
-      surfaceTintColor: Colors.transparent,
-    ),
-    cardTheme: CardThemeData(
-      elevation: 0,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(22),
-        side: const BorderSide(color: Color(0xFFE8EDF5)),
-      ),
-    ),
-    inputDecorationTheme: InputDecorationTheme(
-      filled: true,
-      fillColor: const Color(0xFFF7F9FC),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFFD9E0EA)),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: Color(0xFFD9E0EA)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(18),
-        borderSide: const BorderSide(color: seed, width: 1.6),
-      ),
-    ),
-  );
 }
 
 class _LaunchScreen extends StatelessWidget {
@@ -142,7 +105,10 @@ class _LaunchScreen extends StatelessWidget {
           children: [
             _BrandMark(size: 88),
             SizedBox(height: 18),
-            Text('LittleNet', style: TextStyle(fontSize: 30, fontWeight: FontWeight.w800)),
+            Text(
+              'LittleNet',
+              style: TextStyle(fontSize: 30, fontWeight: FontWeight.w900),
+            ),
             SizedBox(height: 18),
             CircularProgressIndicator(),
           ],
@@ -154,6 +120,7 @@ class _LaunchScreen extends StatelessWidget {
 
 class _BrandMark extends StatelessWidget {
   const _BrandMark({this.size = 72});
+
   final double size;
 
   @override
@@ -162,17 +129,21 @@ class _BrandMark extends StatelessWidget {
       width: size,
       height: size,
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0EA5E9), Color(0xFF2563EB)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
+        color: LittleNetTheme.ink,
         borderRadius: BorderRadius.circular(size * .28),
         boxShadow: const [
-          BoxShadow(color: Color(0x332563EB), blurRadius: 24, offset: Offset(0, 10)),
+          BoxShadow(
+            color: Color(0x220095F6),
+            blurRadius: 24,
+            offset: Offset(0, 10),
+          ),
         ],
       ),
-      child: Icon(Icons.shield_rounded, color: Colors.white, size: size * .56),
+      child: Icon(
+        Icons.shield_rounded,
+        color: LittleNetTheme.primary,
+        size: size * .58,
+      ),
     );
   }
 }
