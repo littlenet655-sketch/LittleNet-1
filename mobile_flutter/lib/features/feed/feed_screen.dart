@@ -176,7 +176,7 @@ class _FeedScreenState extends State<FeedScreen> {
               surfaceTintColor: Colors.white,
               elevation: 0,
               title: const Text(
-                'Discover & Learn',
+                'Discover & Learn 📚',
                 style: TextStyle(
                   fontSize: 17,
                   fontWeight: FontWeight.w700,
@@ -254,12 +254,7 @@ class _FeedScreenState extends State<FeedScreen> {
 
   Widget _buildFeedBody() {
     if (_isLoading) {
-      return ListView(
-        physics: const NeverScrollableScrollPhysics(),
-        children: [1, 2, 3]
-            .map((_) => const _FeedPostSkeleton())
-            .toList(),
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null && _items.isEmpty) {
@@ -341,53 +336,3 @@ class _FeedScreenState extends State<FeedScreen> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  Post skeleton for loading state
-// ─────────────────────────────────────────────────────────────────
-class _FeedPostSkeleton extends StatelessWidget {
-  const _FeedPostSkeleton();
-
-  Widget _box(double w, double h) => Container(
-        width: w,
-        height: h,
-        decoration: BoxDecoration(
-          color: const Color(0xFFEEEEEE),
-          borderRadius: BorderRadius.circular(4),
-        ),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const CircleAvatar(
-                  radius: 18, backgroundColor: Color(0xFFEEEEEE)),
-              const SizedBox(width: 10),
-              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                _box(130, 13),
-                const SizedBox(height: 5),
-                _box(90, 10),
-              ]),
-            ],
-          ),
-        ),
-        AspectRatio(aspectRatio: 1, child: Container(color: const Color(0xFFEEEEEE))),
-        Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 4),
-          child: _box(80, 12),
-        ),
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: _box(double.infinity, 12),
-        ),
-        const SizedBox(height: 16),
-        const Divider(height: 1, thickness: 0.4, color: Color(0xFFDBDBDB)),
-      ],
-    );
-  }
-}

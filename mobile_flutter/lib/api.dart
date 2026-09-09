@@ -66,6 +66,12 @@ class ApiClient {
   }) =>
       postJson(path, body ?? const {});
 
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Map<String, dynamic>? body,
+  }) =>
+      putJson(path, body ?? const {});
+
   Map<String, String> get authHeaders => {
         'Accept': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',

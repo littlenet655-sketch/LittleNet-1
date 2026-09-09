@@ -24,9 +24,29 @@ class AppTypography {
     color: AppColors.textPrimary,
   );
 
+  static const TextStyle displaySmall = TextStyle(
+    fontSize: 22,
+    fontWeight: FontWeight.bold,
+    letterSpacing: -0.3,
+    color: AppColors.textPrimary,
+  );
+
   static const TextStyle headlineMedium = TextStyle(
     fontSize: 20,
     fontWeight: FontWeight.w700,
+    color: AppColors.textPrimary,
+  );
+
+  static const TextStyle headingLarge = TextStyle(
+    fontSize: 22,
+    fontWeight: FontWeight.w700,
+    letterSpacing: -0.2,
+    color: AppColors.textPrimary,
+  );
+
+  static const TextStyle headingMedium = TextStyle(
+    fontSize: 18,
+    fontWeight: FontWeight.w600,
     color: AppColors.textPrimary,
   );
 
@@ -63,6 +83,13 @@ class AppTypography {
     height: 1.4,
   );
 
+  static const TextStyle bodySmall = TextStyle(
+    fontSize: 13,
+    fontWeight: FontWeight.normal,
+    color: AppColors.textSecondary,
+    height: 1.4,
+  );
+
   static const TextStyle labelLarge = TextStyle(
     fontSize: 15,
     fontWeight: FontWeight.w600,
@@ -71,6 +98,12 @@ class AppTypography {
 
   static const TextStyle caption = TextStyle(
     fontSize: 12,
+    fontWeight: FontWeight.w500,
+    color: AppColors.textMuted,
+  );
+
+  static const TextStyle captionSmall = TextStyle(
+    fontSize: 11,
     fontWeight: FontWeight.w500,
     color: AppColors.textMuted,
   );

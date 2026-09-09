@@ -84,6 +84,27 @@ class _ProfileScreenState extends State<ProfileScreen>
       value: SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent),
       child: Scaffold(
         backgroundColor: Colors.white,
+        // Always-visible app bar so tests and nav can find the title
+        appBar: _isLoading || _error != null
+            ? AppBar(
+                backgroundColor: Colors.white,
+                surfaceTintColor: Colors.white,
+                elevation: 0,
+                title: const Text(
+                  'My Profile 👤',
+                  style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF262626),
+                  ),
+                ),
+                bottom: const PreferredSize(
+                  preferredSize: Size.fromHeight(0.5),
+                  child: Divider(
+                      height: 0.5, thickness: 0.5, color: Color(0xFFDBDBDB)),
+                ),
+              )
+            : null,
         body: _isLoading
             ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
             : _error != null
@@ -98,6 +119,7 @@ class _ProfileScreenState extends State<ProfileScreen>
       ),
     );
   }
+
 
   Widget _buildProfile() {
     final p = _profile ?? {};

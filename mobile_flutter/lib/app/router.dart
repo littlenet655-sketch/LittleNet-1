@@ -6,12 +6,18 @@ import '../features/auth/parent_liveness_screen.dart';
 import '../features/auth/parent_signup_screen.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/create_post/create_post_screen.dart';
+import '../features/discovery/discovery_screen.dart';
 import '../features/kids/kids_main_shell.dart';
+import '../features/learning/learning_screen.dart';
 import '../features/parent/child_enrollment_screen.dart';
+import '../features/parent/parent_controls_screen.dart';
+import '../features/parent/parent_dashboard_screen.dart';
+import '../features/parent/parent_follow_requests_screen.dart';
+import '../features/parent/parent_safety_review_screen.dart';
 import '../features/profile/profile_screen.dart';
+import '../features/quiz/quiz_screen.dart';
 import '../features/settings/settings_screen.dart';
 import '../screens/admin.dart' as old_admin;
-import '../screens/parent.dart' as old_parent;
 
 class AppRouter {
   const AppRouter({required this.authState});
@@ -19,7 +25,9 @@ class AppRouter {
   final AuthState authState;
 
   Route<dynamic> onGenerateRoute(RouteSettings settings) {
-    final args = settings.arguments as Map<String, dynamic>? ?? {};
+    final rawArgs = settings.arguments;
+    final Map<String, dynamic> args =
+        rawArgs is Map<String, dynamic> ? rawArgs : {};
 
     switch (settings.name) {
       case '/':
@@ -60,6 +68,7 @@ class AppRouter {
         );
 
       case '/parent/children/add':
+      case '/parent/add-child':
         return MaterialPageRoute(
           builder: (_) => ChildEnrollmentScreen(authState: authState),
           settings: settings,
@@ -104,17 +113,60 @@ class AppRouter {
           settings: settings,
         );
 
-      // Temporary fallback to old screens while remaining V2 modules are under construction
+      // Module 16: Learning & Quiz
+      case '/kids/learning':
+        return MaterialPageRoute(
+          builder: (_) => LearningScreen(authState: authState),
+          settings: settings,
+        );
+
+      case '/kids/quiz':
+        return MaterialPageRoute(
+          builder: (_) => QuizScreen(authState: authState),
+          settings: settings,
+        );
+
+      // Module 17: Discovery & Connections
+      case '/kids/discover':
+        return MaterialPageRoute(
+          builder: (_) => DiscoveryScreen(authState: authState),
+          settings: settings,
+        );
+
+      // Module 18: Parent Dashboard
       case '/parent/dashboard':
         return MaterialPageRoute(
-          builder: (_) => old_parent.ParentShell(
-            api: authState.apiClient,
-            user: authState.currentUser?.toJson() ?? const {},
-            onLogout: () => authState.logout(),
+          builder: (_) => ParentDashboardScreen(authState: authState),
+          settings: settings,
+        );
+
+      // Module 19: Parent Controls
+      case '/parent/controls':
+        final childId = rawArgs is int
+            ? rawArgs
+            : int.tryParse(args['child_id']?.toString() ?? '') ?? 0;
+        return MaterialPageRoute(
+          builder: (_) => ParentControlsScreen(
+            authState: authState,
+            childId: childId,
           ),
           settings: settings,
         );
 
+      // Module 20: Parent Safety Review & Follow Requests
+      case '/parent/safety-reviews':
+        return MaterialPageRoute(
+          builder: (_) => ParentSafetyReviewScreen(authState: authState),
+          settings: settings,
+        );
+
+      case '/parent/follow-requests':
+        return MaterialPageRoute(
+          builder: (_) => ParentFollowRequestsScreen(authState: authState),
+          settings: settings,
+        );
+
+      // Fallback to old screens while remaining V2 modules (Admin/Moderator) are pending
       case '/moderator/queue':
         return MaterialPageRoute(
           builder: (_) => old_admin.AdminShell(

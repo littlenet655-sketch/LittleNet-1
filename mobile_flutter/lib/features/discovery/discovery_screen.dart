@@ -159,9 +159,9 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                     Row(
                       children: [
                         const Text(
-                          'Search',
+                          'Discover Friends 🔍',
                           style: TextStyle(
-                            fontSize: 24,
+                            fontSize: 22,
                             fontWeight: FontWeight.w800,
                             color: Color(0xFF262626),
                           ),
@@ -190,7 +190,7 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
                         textAlignVertical: TextAlignVertical.center,
                         decoration: InputDecoration(
                           hintText:
-                              'Search students, topics, #science…',
+                              'Search by username or topic (#science, #art)...',
                           hintStyle: const TextStyle(
                               fontSize: 14, color: Color(0xFF8E8E8E)),
                           prefixIcon: const Icon(Icons.search_rounded,
@@ -298,9 +298,8 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return ListView(
-        physics: const NeverScrollableScrollPhysics(),
-        children: List.generate(6, (_) => const _SearchSkeleton()),
+      return const Center(
+        child: CircularProgressIndicator(strokeWidth: 2.5),
       );
     }
 
@@ -419,46 +418,6 @@ class _DiscoveryScreenState extends State<DiscoveryScreen> {
             const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
       ),
       child: const Text('Connect'),
-    );
-  }
-}
-
-// ─────────────────────────────────────────────────────────
-//  Row skeleton for loading state
-// ─────────────────────────────────────────────────────────
-class _SearchSkeleton extends StatelessWidget {
-  const _SearchSkeleton();
-
-  Widget _box(double w, double h) => Container(
-        width: w,
-        height: h,
-        decoration: BoxDecoration(
-          color: const Color(0xFFEEEEEE),
-          borderRadius: BorderRadius.circular(4),
-        ),
-      );
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          const CircleAvatar(radius: 24, backgroundColor: Color(0xFFEEEEEE)),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                _box(130, 13),
-                const SizedBox(height: 5),
-                _box(90, 10),
-              ],
-            ),
-          ),
-          _box(70, 30),
-        ],
-      ),
     );
   }
 }

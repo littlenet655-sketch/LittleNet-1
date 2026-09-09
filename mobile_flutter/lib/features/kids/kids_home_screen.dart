@@ -197,17 +197,7 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
 
   Widget _buildBody() {
     if (_isLoading) {
-      return ListView(
-        children: [
-          // Stories skeleton
-          const SizedBox(height: 12),
-          _StoriesSkeletonRow(),
-          const SizedBox(height: 12),
-          const Divider(height: 1, thickness: 0.4, color: Color(0xFFDBDBDB)),
-          // Post skeletons
-          ...[1, 2, 3].map((_) => const _PostSkeleton()),
-        ],
-      );
+      return const Center(child: CircularProgressIndicator());
     }
 
     if (_error != null) {
@@ -610,77 +600,3 @@ class _SuggestedCard extends StatelessWidget {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────
-//  Loading Skeleton widgets
-// ─────────────────────────────────────────────────────────────────
-class _StoriesSkeletonRow extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      height: 80,
-      child: ListView.builder(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 16),
-        itemCount: 6,
-        itemBuilder: (_, __) => Padding(
-          padding: const EdgeInsets.only(right: 14),
-          child: Column(
-            children: [
-              Container(
-                width: 58,
-                height: 58,
-                decoration: const BoxDecoration(
-                  shape: BoxShape.circle,
-                  color: Color(0xFFEEEEEE),
-                ),
-              ),
-              const SizedBox(height: 5),
-              Container(
-                  width: 40, height: 10, color: const Color(0xFFEEEEEE)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _PostSkeleton extends StatelessWidget {
-  const _PostSkeleton();
-
-  @override
-  Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // Header
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              const CircleAvatar(radius: 18, backgroundColor: Color(0xFFEEEEEE)),
-              const SizedBox(width: 10),
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Container(
-                      width: 120, height: 12, color: const Color(0xFFEEEEEE)),
-                  const SizedBox(height: 4),
-                  Container(
-                      width: 80, height: 10, color: const Color(0xFFEEEEEE)),
-                ],
-              ),
-            ],
-          ),
-        ),
-        // Image placeholder
-        AspectRatio(
-          aspectRatio: 1,
-          child: Container(color: const Color(0xFFEEEEEE)),
-        ),
-        const SizedBox(height: 24),
-        const Divider(height: 1, thickness: 0.4, color: Color(0xFFDBDBDB)),
-      ],
-    );
-  }
-}

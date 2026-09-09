@@ -188,43 +188,66 @@ class _LnBottomBar extends StatelessWidget {
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 52,
+          height: 54,
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceAround,
             children: [
               _NavItem(
+                label: 'Home',
                 icon: Icons.home_outlined,
                 selectedIcon: Icons.home_rounded,
                 selected: currentIndex == 0,
                 onTap: () => onTap(0),
               ),
               _NavItem(
+                label: 'Feed',
                 icon: Icons.dynamic_feed_outlined,
                 selectedIcon: Icons.dynamic_feed_rounded,
                 selected: currentIndex == 1,
                 onTap: () => onTap(1),
               ),
-              // Create button – raised circle
+              // Create button – raised pill with label
               GestureDetector(
                 onTap: () => onTap(2),
-                child: Container(
-                  width: 44,
-                  height: 38,
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(10),
+                behavior: HitTestBehavior.opaque,
+                child: SizedBox(
+                  width: 52,
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 24,
+                        decoration: BoxDecoration(
+                          color: AppColors.primary,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.add_rounded,
+                            color: Colors.white, size: 18),
+                      ),
+                      const SizedBox(height: 2),
+                      const Text(
+                        'Create',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF8E8E8E),
+                        ),
+                      ),
+                    ],
                   ),
-                  child: const Icon(Icons.add_rounded,
-                      color: Colors.white, size: 26),
                 ),
               ),
               _NavItem(
+                label: 'Reels',
                 icon: Icons.play_circle_outline_rounded,
                 selectedIcon: Icons.play_circle_filled_rounded,
                 selected: currentIndex == 3,
                 onTap: () => onTap(3),
               ),
               _NavItem(
+                label: 'Profile',
                 icon: Icons.person_outline_rounded,
                 selectedIcon: Icons.person_rounded,
                 selected: currentIndex == 4,
@@ -240,12 +263,14 @@ class _LnBottomBar extends StatelessWidget {
 
 class _NavItem extends StatelessWidget {
   const _NavItem({
+    required this.label,
     required this.icon,
     required this.selectedIcon,
     required this.selected,
     required this.onTap,
   });
 
+  final String label;
   final IconData icon;
   final IconData selectedIcon;
   final bool selected;
@@ -253,18 +278,31 @@ class _NavItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final color = selected ? const Color(0xFF262626) : const Color(0xFF8E8E8E);
     return GestureDetector(
       onTap: onTap,
       behavior: HitTestBehavior.opaque,
       child: SizedBox(
-        width: 48,
-        height: 52,
-        child: Center(
-          child: Icon(
-            selected ? selectedIcon : icon,
-            size: 26,
-            color: selected ? const Color(0xFF262626) : const Color(0xFF8E8E8E),
-          ),
+        width: 52,
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              selected ? selectedIcon : icon,
+              size: 22,
+              color: color,
+            ),
+            const SizedBox(height: 2),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+                color: color,
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -251,9 +251,9 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   @override
   Widget build(BuildContext context) {
     final kindLabel = switch (_kind) {
-      PostKind.reel => 'New Reel',
-      PostKind.story => 'New Story',
-      PostKind.post => 'New Post',
+      PostKind.reel => 'Create Reel 🎬',
+      PostKind.story => 'Add Story 📖',
+      PostKind.post => 'New Post ✨',
     };
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
@@ -328,6 +328,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
               // ── Caption ──────────────────────────────
               _FormCard(
+                label: 'Caption / Story',
                 child: TextField(
                   controller: _captionController,
                   maxLines: 4,
@@ -505,8 +506,8 @@ class _KindSelector extends StatelessWidget {
       child: Row(
         children: [
           _tab('Post', PostKind.post),
-          _tab('Reel 🎬', PostKind.reel),
-          _tab('Story 📖', PostKind.story),
+          _tab('Reel', PostKind.reel),
+          _tab('Story', PostKind.story),
         ],
       ),
     );

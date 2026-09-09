@@ -114,7 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           surfaceTintColor: const Color(0xFFF7F7F7),
           elevation: 0,
           title: const Text(
-            'Settings',
+            'Settings & Safety ⚙️',
             style: TextStyle(
                 fontSize: 17,
                 fontWeight: FontWeight.w700,
