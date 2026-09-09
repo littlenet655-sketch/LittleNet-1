@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 import '../../api.dart';
 import '../../core/auth/auth_state.dart';
-import '../../core/theme/colors.dart';
-import '../../core/theme/spacing.dart';
-import '../../core/theme/typography.dart';
-import '../../core/widgets/app_button.dart';
+import '../../core/widgets/ln_components.dart';
 
 class ReelsScreen extends StatefulWidget {
   const ReelsScreen({super.key, required this.authState});
@@ -223,181 +221,278 @@ class _ReelsScreenState extends State<ReelsScreen> {
     }
 
     if (_error != null) {
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(title: const Text('Reels')),
-        body: Center(
-          child: Padding(
-            padding: const EdgeInsets.all(AppSpacing.xl),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(
-                  _gate == 'disabled_by_parent'
-                      ? Icons.lock_outline_rounded
-                      : Icons.hourglass_bottom_rounded,
-                  size: 64,
-                  color: AppColors.primary,
-                ),
-                const SizedBox(height: AppSpacing.md),
-                Text(_error!,
-                    style: AppTypography.titleMedium,
-                    textAlign: TextAlign.center),
-                const SizedBox(height: AppSpacing.lg),
-                if (_gate == null)
-                  AppButton(
-                      text: 'Retry', onPressed: _loadInitialReels, width: 140),
-              ],
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent),
+        child: Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            title: const Text('Reels',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF262626))),
+            bottom: const PreferredSize(
+              preferredSize: Size.fromHeight(0.5),
+              child: Divider(
+                  height: 0.5, thickness: 0.5, color: Color(0xFFDBDBDB)),
             ),
+          ),
+          body: LnEmptyState(
+            emoji: _gate == 'disabled_by_parent' ? '🔒' : '⏳',
+            title: _gate == 'disabled_by_parent'
+                ? 'Reels turned off'
+                : 'Screen time reached',
+            subtitle: _error,
+            action: _gate == null ? _loadInitialReels : null,
+            actionLabel: 'Retry',
           ),
         ),
       );
     }
 
     if (_reels.isEmpty) {
-      return Scaffold(
-        backgroundColor: AppColors.background,
-        appBar: AppBar(title: const Text('Reels')),
-        body: const Center(
-          child: Text('No reels available right now. Check back soon! 🎬'),
+      return AnnotatedRegion<SystemUiOverlayStyle>(
+        value: SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent),
+        child: Scaffold(
+          backgroundColor: Colors.white,
+          appBar: AppBar(
+            backgroundColor: Colors.white,
+            elevation: 0,
+            title: const Text('Reels',
+                style: TextStyle(
+                    fontSize: 17,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF262626))),
+          ),
+          body: LnEmptyState(
+            emoji: '🎬',
+            title: 'No reels right now',
+            subtitle: 'Check back soon for safe educational videos!',
+            action: _loadInitialReels,
+            actionLabel: 'Refresh',
+          ),
         ),
       );
     }
 
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: PageView.builder(
-        controller: _pageController,
-        scrollDirection: Axis.vertical,
-        itemCount: _reels.length,
-        onPageChanged: _onPageChanged,
-        itemBuilder: (context, index) {
-          final reel = _reels[index];
-          final controller = _controllers[index];
-          final isInitialized = controller?.value.isInitialized ?? false;
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.light.copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        backgroundColor: Colors.black,
+        body: PageView.builder(
+          controller: _pageController,
+          scrollDirection: Axis.vertical,
+          itemCount: _reels.length,
+          onPageChanged: _onPageChanged,
+          itemBuilder: (context, index) {
+            final reel = _reels[index];
+            final controller = _controllers[index];
+            final isInitialized = controller?.value.isInitialized ?? false;
+            final authorName = reel['full_name']?.toString() ??
+                reel['author_name']?.toString() ?? 'LittleNet';
+            final avatarUrl = reel['avatar_url']?.toString();
+            final caption = reel['caption']?.toString() ??
+                reel['title']?.toString() ?? '';
+            final category = reel['category']?.toString() ??
+                reel['content_category']?.toString() ?? 'Learning';
+            final isCurated = reel['source_type'] == 'CURATED';
+            final likeCount = reel['likes'] as int? ?? reel['like_count'] as int? ?? 0;
 
-          return Stack(
-            fit: StackFit.expand,
-            children: [
-              // 1. Video Player or Poster Fallback
-              if (isInitialized)
-                Center(
-                  child: AspectRatio(
-                    aspectRatio: controller!.value.aspectRatio,
-                    child: VideoPlayer(controller),
-                  ),
-                )
-              else if (reel['poster_url'] != null)
-                Image.network(
-                  reel['poster_url'].toString(),
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => const Center(
-                    child: Icon(Icons.movie_creation_outlined,
-                        size: 64, color: Colors.white38),
-                  ),
-                )
-              else
-                const Center(
-                  child: CircularProgressIndicator(color: Colors.white54),
-                ),
-
-              // 2. Overlay Details (Caption, Category, Verified badge)
-              Positioned(
-                bottom: 32,
-                left: 16,
-                right: 72,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.primary,
-                            borderRadius: BorderRadius.circular(AppRadius.sm),
-                          ),
-                          child: Text(
-                            reel['category'] ??
-                                reel['content_category'] ??
-                                'Learning',
-                            style: AppTypography.caption.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        if (reel['source_type'] == 'CURATED')
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: AppColors.kidsMint,
-                              borderRadius: BorderRadius.circular(AppRadius.sm),
-                            ),
-                            child: const Text('Safe Reel',
-                                style: AppTypography.caption),
-                          ),
-                      ],
+            return Stack(
+              fit: StackFit.expand,
+              children: [
+                // ── Video / Poster ──────────────────────
+                if (isInitialized)
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: controller!.value.aspectRatio,
+                      child: VideoPlayer(controller),
                     ),
-                    const SizedBox(height: 8),
-                    Text(
-                      reel['caption']?.toString() ??
-                          reel['title']?.toString() ??
-                          '',
-                      style: AppTypography.bodyLarge.copyWith(
-                          color: Colors.white, fontWeight: FontWeight.w600),
-                      maxLines: 3,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                ),
-              ),
-
-              // 3. Right Action Column (Like / Mute Indicator)
-              Positioned(
-                bottom: 40,
-                right: 16,
-                child: Column(
-                  children: [
-                    IconButton(
-                      icon: Icon(
-                        reel['viewer_liked'] == true
-                            ? Icons.favorite_rounded
-                            : Icons.favorite_border_rounded,
-                        color: reel['viewer_liked'] == true
-                            ? AppColors.error
-                            : Colors.white,
-                        size: 32,
+                  )
+                else if (reel['poster_url'] != null)
+                  Image.network(
+                    reel['poster_url'].toString(),
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const ColoredBox(
+                      color: Color(0xFF1A1A2E),
+                      child: Center(
+                        child: Icon(Icons.movie_creation_outlined,
+                            size: 64, color: Colors.white24),
                       ),
-                      onPressed: () {
-                        setState(() {
-                          reel['viewer_liked'] =
-                              !(reel['viewer_liked'] == true);
-                        });
-                      },
                     ),
-                    const Text('Helpful',
-                        style: TextStyle(color: Colors.white, fontSize: 11)),
-                    const SizedBox(height: 16),
-                    IconButton(
-                      icon: const Icon(Icons.volume_off_rounded,
-                          color: Colors.white70, size: 28),
-                      onPressed: () {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(
-                              content: Text(
-                                  'Audio is retired for child-safe calm browsing.')),
-                        );
-                      },
+                  )
+                else
+                  const ColoredBox(
+                    color: Color(0xFF1A1A2E),
+                    child: Center(
+                        child: CircularProgressIndicator(color: Colors.white38)),
+                  ),
+
+                // ── Full bottom gradient scrim ────────────
+                const Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        stops: [0.4, 1.0],
+                        colors: [Colors.transparent, Color(0xCC000000)],
+                      ),
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
-          );
-        },
+
+                // ── Bottom-left: author + caption ─────────
+                Positioned(
+                  bottom: 32,
+                  left: 16,
+                  right: 72,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Author row
+                      Row(
+                        children: [
+                          LnAvatar(
+                              url: avatarUrl, name: authorName, radius: 14),
+                          const SizedBox(width: 8),
+                          Text(
+                            authorName,
+                            style: const TextStyle(
+                                color: Colors.white,
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700),
+                          ),
+                          if (isCurated) ...[
+                            const SizedBox(width: 6),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF00B894),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: const Text('Safe Pick',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600)),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      // Category pill
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          category,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      // Caption
+                      if (caption.isNotEmpty)
+                        Text(
+                          caption,
+                          style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              height: 1.4),
+                          maxLines: 3,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                    ],
+                  ),
+                ),
+
+                // ── Right action column ───────────────────
+                Positioned(
+                  bottom: 40,
+                  right: 10,
+                  child: Column(
+                    children: [
+                      // Like
+                      Column(
+                        children: [
+                          IconButton(
+                            icon: Icon(
+                              reel['viewer_liked'] == true
+                                  ? Icons.favorite_rounded
+                                  : Icons.favorite_border_rounded,
+                              color: reel['viewer_liked'] == true
+                                  ? const Color(0xFFED4956)
+                                  : Colors.white,
+                              size: 30,
+                            ),
+                            onPressed: () {
+                              setState(() {
+                                reel['viewer_liked'] =
+                                    !(reel['viewer_liked'] == true);
+                              });
+                            },
+                          ),
+                          if (likeCount > 0)
+                            Text(
+                              likeCount > 999
+                                  ? '${(likeCount / 1000).toStringAsFixed(1)}k'
+                                  : '$likeCount',
+                              style: const TextStyle(
+                                  color: Colors.white, fontSize: 11),
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      // Share
+                      const Column(
+                        children: [
+                          Icon(Icons.send_rounded,
+                              color: Colors.white, size: 26),
+                          SizedBox(height: 3),
+                          Text('Share',
+                              style:
+                                  TextStyle(color: Colors.white, fontSize: 11)),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // ── Top-right: index indicator ────────────
+                Positioned(
+                  top: MediaQuery.of(context).padding.top + 12,
+                  right: 16,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: Colors.black38,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      '${index + 1} / ${_reels.length}',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w500),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
   }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
 import '../create_post/create_post_screen.dart';
@@ -7,6 +8,12 @@ import '../kids/kids_home_screen.dart';
 import '../profile/profile_screen.dart';
 import '../reels/reels_screen.dart';
 
+/// LittleNet V2 – main navigation shell.
+///
+/// Layout mirrors a social feed app (Instagram-ish):
+///   HOME | SEARCH | [CREATE] | REELS | PROFILE
+///
+/// The CREATE tab is a modal action sheet, not a full tab page.
 class KidsMainShell extends StatefulWidget {
   const KidsMainShell({super.key, required this.authState});
 
@@ -16,7 +23,8 @@ class KidsMainShell extends StatefulWidget {
   State<KidsMainShell> createState() => _KidsMainShellState();
 }
 
-class _KidsMainShellState extends State<KidsMainShell> {
+class _KidsMainShellState extends State<KidsMainShell>
+    with SingleTickerProviderStateMixin {
   int _currentIndex = 0;
 
   late final List<Widget> _pages;
@@ -27,7 +35,8 @@ class _KidsMainShellState extends State<KidsMainShell> {
     _pages = [
       KidsHomeScreen(authState: widget.authState),
       FeedScreen(authState: widget.authState),
-      CreatePostScreen(authState: widget.authState),
+      // index 2 is the create modal – placeholder never shown
+      const SizedBox.shrink(),
       ReelsScreen(authState: widget.authState),
       ProfileScreen(authState: widget.authState),
     ];
@@ -35,61 +44,82 @@ class _KidsMainShellState extends State<KidsMainShell> {
 
   void _onTabTapped(int index) {
     if (index == 2) {
-      // Create post sheet / dialog
-      _showCreateDialog();
+      _showCreateSheet();
       return;
     }
+    // light haptic on tab switch
+    HapticFeedback.selectionClick();
     setState(() => _currentIndex = index);
   }
 
-  void _showCreateDialog() {
+  void _showCreateSheet() {
+    HapticFeedback.mediumImpact();
     showModalBottomSheet(
       context: context,
+      backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
       builder: (ctx) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.all(24.0),
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 12),
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Share Something Positive ✨',
-                style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              const Text(
-                'All posts are checked by LittleNet AI safety models before being shared with classmates.',
-                textAlign: TextAlign.center,
-                style: TextStyle(color: Colors.black54, fontSize: 13),
-              ),
-              const SizedBox(height: 24),
-              ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Color(0xFFE8F5E9),
-                  child: Icon(Icons.photo_library_rounded,
-                      color: AppColors.kidsMint),
+              // Handle bar
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 20),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFDBDBDB),
+                    borderRadius: BorderRadius.circular(2),
+                  ),
                 ),
-                title: const Text('Photo or Art'),
-                subtitle:
-                    const Text('Share drawings, crafts, or learning moments'),
+              ),
+              const Text(
+                'Share something positive',
+                style: TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF262626),
+                ),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'All posts are reviewed by LittleNet AI before sharing.',
+                style: TextStyle(fontSize: 13, color: Color(0xFF8E8E8E)),
+              ),
+              const SizedBox(height: 20),
+
+              // Photo / Art option
+              _CreateOption(
+                icon: Icons.photo_library_outlined,
+                iconColor: AppColors.kidsMint,
+                iconBg: const Color(0xFFE8F5E9),
+                title: 'Photo or Art',
+                subtitle: 'Share drawings, crafts, or moments',
                 onTap: () {
                   Navigator.pop(ctx);
-                  setState(() => _currentIndex = 2);
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          CreatePostScreen(authState: widget.authState),
+                    ),
+                  );
                 },
               ),
-              ListTile(
-                leading: const CircleAvatar(
-                  backgroundColor: Color(0xFFFFF3E0),
-                  child:
-                      Icon(Icons.videocam_rounded, color: AppColors.kidsGold),
-                ),
-                title: const Text('Educational Short Video / Reel'),
-                subtitle:
-                    const Text('Explain a science trick or recite a poem'),
+              const SizedBox(height: 12),
+
+              // Short Video / Reel option
+              _CreateOption(
+                icon: Icons.videocam_outlined,
+                iconColor: AppColors.kidsAccent,
+                iconBg: const Color(0xFFFFF0EE),
+                title: 'Educational Reel',
+                subtitle: 'Explain a concept, recite a poem, show a trick',
                 onTap: () {
                   Navigator.pop(ctx);
                   Navigator.of(context).push(
@@ -102,6 +132,7 @@ class _KidsMainShellState extends State<KidsMainShell> {
                   );
                 },
               ),
+              const SizedBox(height: 8),
             ],
           ),
         ),
@@ -111,44 +142,194 @@ class _KidsMainShellState extends State<KidsMainShell> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      body: IndexedStack(
-        index: _currentIndex,
-        children: _pages,
+    // Keep status bar icons dark on light background
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+        systemNavigationBarColor: Colors.white,
+        systemNavigationBarIconBrightness: Brightness.dark,
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _currentIndex,
-        onDestinationSelected: _onTabTapped,
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.home_outlined),
-            selectedIcon: Icon(Icons.home_rounded, color: AppColors.primary),
-            label: 'Home',
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: IndexedStack(
+          index: _currentIndex > 2 ? _currentIndex - 1 : _currentIndex,
+          children: [
+            _pages[0], // home
+            _pages[1], // feed / search
+            _pages[3], // reels
+            _pages[4], // profile
+          ],
+        ),
+        bottomNavigationBar: _LnBottomBar(
+          currentIndex: _currentIndex,
+          onTap: _onTabTapped,
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  _LnBottomBar
+// ─────────────────────────────────────────────────────────────────
+class _LnBottomBar extends StatelessWidget {
+  const _LnBottomBar({required this.currentIndex, required this.onTap});
+
+  final int currentIndex;
+  final ValueChanged<int> onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        border: Border(top: BorderSide(color: Color(0xFFDBDBDB), width: 0.5)),
+      ),
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 52,
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.spaceAround,
+            children: [
+              _NavItem(
+                icon: Icons.home_outlined,
+                selectedIcon: Icons.home_rounded,
+                selected: currentIndex == 0,
+                onTap: () => onTap(0),
+              ),
+              _NavItem(
+                icon: Icons.dynamic_feed_outlined,
+                selectedIcon: Icons.dynamic_feed_rounded,
+                selected: currentIndex == 1,
+                onTap: () => onTap(1),
+              ),
+              // Create button – raised circle
+              GestureDetector(
+                onTap: () => onTap(2),
+                child: Container(
+                  width: 44,
+                  height: 38,
+                  decoration: BoxDecoration(
+                    color: AppColors.primary,
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Icon(Icons.add_rounded,
+                      color: Colors.white, size: 26),
+                ),
+              ),
+              _NavItem(
+                icon: Icons.play_circle_outline_rounded,
+                selectedIcon: Icons.play_circle_filled_rounded,
+                selected: currentIndex == 3,
+                onTap: () => onTap(3),
+              ),
+              _NavItem(
+                icon: Icons.person_outline_rounded,
+                selectedIcon: Icons.person_rounded,
+                selected: currentIndex == 4,
+                onTap: () => onTap(4),
+              ),
+            ],
           ),
-          NavigationDestination(
-            icon: Icon(Icons.dynamic_feed_outlined),
-            selectedIcon:
-                Icon(Icons.dynamic_feed_rounded, color: AppColors.primary),
-            label: 'Feed',
+        ),
+      ),
+    );
+  }
+}
+
+class _NavItem extends StatelessWidget {
+  const _NavItem({
+    required this.icon,
+    required this.selectedIcon,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final IconData selectedIcon;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: SizedBox(
+        width: 48,
+        height: 52,
+        child: Center(
+          child: Icon(
+            selected ? selectedIcon : icon,
+            size: 26,
+            color: selected ? const Color(0xFF262626) : const Color(0xFF8E8E8E),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.add_circle_outline, size: 28),
-            selectedIcon: Icon(Icons.add_circle_rounded,
-                size: 28, color: AppColors.kidsAccent),
-            label: 'Create',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.play_circle_outline),
-            selectedIcon:
-                Icon(Icons.play_circle_fill, color: AppColors.primary),
-            label: 'Reels',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person, color: AppColors.primary),
-            label: 'Profile',
-          ),
-        ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  _CreateOption  (helper widget for the bottom sheet)
+// ─────────────────────────────────────────────────────────────────
+class _CreateOption extends StatelessWidget {
+  const _CreateOption({
+    required this.icon,
+    required this.iconColor,
+    required this.iconBg,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final Color iconBg;
+  final String title;
+  final String subtitle;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(12),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Container(
+              width: 46,
+              height: 46,
+              decoration: BoxDecoration(
+                color: iconBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: iconColor, size: 24),
+            ),
+            const SizedBox(width: 16),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title,
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          color: Color(0xFF262626))),
+                  const SizedBox(height: 2),
+                  Text(subtitle,
+                      style: const TextStyle(
+                          fontSize: 13, color: Color(0xFF8E8E8E))),
+                ],
+              ),
+            ),
+            const Icon(Icons.chevron_right_rounded,
+                color: Color(0xFFBBBBBB), size: 22),
+          ],
+        ),
       ),
     );
   }

@@ -1,12 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../api.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
-import '../../core/theme/spacing.dart';
-import '../../core/theme/typography.dart';
-import '../../core/widgets/gradient_scaffold.dart';
+import '../../core/widgets/ln_components.dart';
 import 'edit_profile_screen.dart';
 
+/// LittleNet V2 – Profile screen.
+///
+/// Visual language:
+///  - White background, no gradient scaffold
+///  - Avatar + stat row (Instagram layout)
+///  - Name, school, bio below avatar row
+///  - Edit button (outlined, full-width)
+///  - Interest / skill chips in muted style
+///  - 3-column square media grid (Instagram style)
+///  - Tab bar: My Posts | Reels (future)
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key, required this.authState});
 
@@ -16,7 +25,8 @@ class ProfileScreen extends StatefulWidget {
   State<ProfileScreen> createState() => _ProfileScreenState();
 }
 
-class _ProfileScreenState extends State<ProfileScreen> {
+class _ProfileScreenState extends State<ProfileScreen>
+    with SingleTickerProviderStateMixin {
   Map<String, dynamic>? _profile;
   Map<String, dynamic>? _counts;
   List<Map<String, dynamic>> _posts = [];
@@ -24,10 +34,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
   bool _isLoading = true;
   String? _error;
 
+  late final TabController _tabCtrl;
+
   @override
   void initState() {
     super.initState();
+    _tabCtrl = TabController(length: 2, vsync: this);
     _loadProfile();
+  }
+
+  @override
+  void dispose() {
+    _tabCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _loadProfile() async {
@@ -61,44 +80,26 @@ class _ProfileScreenState extends State<ProfileScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
-      appBar: AppBar(
-        title: const Text('My Profile 👤'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: 'Settings',
-            onPressed: () {
-              Navigator.of(context).pushNamed('/kids/settings');
-            },
-          ),
-        ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(statusBarColor: Colors.transparent),
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        body: _isLoading
+            ? const Center(child: CircularProgressIndicator(color: AppColors.primary))
+            : _error != null
+                ? LnEmptyState(
+                    emoji: '😕',
+                    title: 'Could not load profile',
+                    subtitle: _error,
+                    action: _loadProfile,
+                    actionLabel: 'Retry',
+                  )
+                : _buildProfile(),
       ),
-      body: _buildBody(),
     );
   }
 
-  Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(_error!, style: AppTypography.bodyLarge),
-            const SizedBox(height: AppSpacing.md),
-            ElevatedButton(
-              onPressed: _loadProfile,
-              child: const Text('Retry'),
-            ),
-          ],
-        ),
-      );
-    }
-
+  Widget _buildProfile() {
     final p = _profile ?? {};
     final name = p['full_name'] as String? ?? 'LittleNet Student';
     final bio = p['bio'] as String? ?? 'Excited to learn and create! 🌟';
@@ -106,303 +107,337 @@ class _ProfileScreenState extends State<ProfileScreen> {
     final school = p['school_name'] as String?;
     final grade = p['current_class'] as String?;
 
-    final postsCount = _counts?['posts'] ?? _posts.length;
-    final followersCount = _counts?['followers'] ?? 0;
-    final followingCount = _counts?['following'] ?? 0;
+    final postsCount = (_counts?['posts'] ?? _posts.length).toString();
+    final followersCount = (_counts?['followers'] ?? 0).toString();
+    final followingCount = (_counts?['following'] ?? 0).toString();
 
-    final skills =
-        (p['skills'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-            [];
     final interests =
-        (p['interests'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-            [];
-    final ambitions =
-        (p['ambitions'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
-            [];
+        (p['interests'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
+    final skills =
+        (p['skills'] as List<dynamic>?)?.map((e) => e.toString()).toList() ?? [];
 
     return RefreshIndicator(
       onRefresh: _loadProfile,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(AppSpacing.md),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Top Profile Card
-            Row(
-              children: [
-                CircleAvatar(
-                  radius: 38,
-                  backgroundColor: AppColors.kidsAccent.withValues(alpha: 0.2),
-                  backgroundImage:
-                      avatarUrl != null ? NetworkImage(avatarUrl) : null,
-                  child: avatarUrl == null
-                      ? Text(
-                          name.isNotEmpty ? name[0].toUpperCase() : '?',
-                          style: const TextStyle(
-                            fontSize: 32,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.kidsAccent,
-                          ),
-                        )
-                      : null,
-                ),
-                const SizedBox(width: AppSpacing.lg),
-                Expanded(
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+      color: AppColors.primary,
+      child: NestedScrollView(
+        headerSliverBuilder: (ctx, _) => [
+          // ── App Bar ──────────────────────────────────
+          SliverAppBar(
+            pinned: true,
+            backgroundColor: Colors.white,
+            surfaceTintColor: Colors.white,
+            elevation: 0,
+            title: Text(
+              name,
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF262626),
+              ),
+            ),
+            actions: [
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined,
+                    color: Color(0xFF262626), size: 24),
+                onPressed: () {},
+              ),
+              IconButton(
+                icon: const Icon(Icons.menu_rounded,
+                    color: Color(0xFF262626), size: 24),
+                onPressed: () =>
+                    Navigator.of(context).pushNamed('/kids/settings'),
+              ),
+            ],
+            bottom: const PreferredSize(
+              preferredSize: Size.fromHeight(0.5),
+              child: Divider(
+                  height: 0.5, thickness: 0.5, color: Color(0xFFDBDBDB)),
+            ),
+          ),
+
+          // ── Profile header ────────────────────────────
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 0),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Avatar + Stats row
+                  Row(
                     children: [
-                      _statColumn('Posts', postsCount.toString()),
-                      _statColumn('Friends', followersCount.toString()),
-                      _statColumn('Following', followingCount.toString()),
+                      // Avatar
+                      LnAvatar(
+                        url: avatarUrl,
+                        name: name,
+                        radius: 42,
+                        borderColor: const Color(0xFFDBDBDB),
+                        borderWidth: 1,
+                      ),
+                      const SizedBox(width: 24),
+                      // Stats
+                      Expanded(
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceAround,
+                          children: [
+                            LnStatColumn(value: postsCount, label: 'Posts'),
+                            LnStatColumn(value: followersCount, label: 'Friends'),
+                            LnStatColumn(value: followingCount, label: 'Following'),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
-                ),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.md),
 
-            // Name & School Info
-            Text(name, style: AppTypography.headlineMedium),
-            if (school != null && school.isNotEmpty) ...[
-              const SizedBox(height: 2),
-              Row(
-                children: [
-                  const Icon(Icons.school_outlined,
-                      size: 14, color: AppColors.kidsAccent),
-                  const SizedBox(width: 4),
-                  Text(
-                    grade != null && grade.isNotEmpty
-                        ? '$school · $grade'
-                        : school,
-                    style: AppTypography.caption
-                        .copyWith(color: AppColors.textMutedDark),
-                  ),
-                ],
-              ),
-            ],
-            if (_controls != null &&
-                _controls!['educational_only_feed'] == true) ...[
-              const SizedBox(height: 2),
-              Row(
-                children: [
-                  const Icon(Icons.school, size: 14, color: AppColors.kidsMint),
-                  const SizedBox(width: 4),
-                  Text('Educational Feed Focus',
-                      style: AppTypography.caption
-                          .copyWith(color: AppColors.kidsMint)),
-                ],
-              ),
-            ],
+                  const SizedBox(height: 14),
 
-            const SizedBox(height: AppSpacing.sm),
-            Text(bio, style: AppTypography.bodyMedium),
+                  // Name + school
+                  Text(name,
+                      style: const TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF262626))),
 
-            const SizedBox(height: AppSpacing.md),
-
-            // Edit Profile Button
-            SizedBox(
-              width: double.infinity,
-              child: OutlinedButton.icon(
-                onPressed: () async {
-                  final updated = await Navigator.of(context).push<bool>(
-                    MaterialPageRoute(
-                      builder: (_) => EditProfileScreen(
-                        authState: widget.authState,
-                        currentProfile: p,
-                      ),
-                    ),
-                  );
-                  if (updated == true) {
-                    _loadProfile();
-                  }
-                },
-                icon: const Icon(Icons.edit_outlined, size: 18),
-                label: const Text('Edit Profile'),
-                style: OutlinedButton.styleFrom(
-                  foregroundColor: Colors.white,
-                  side: BorderSide(color: Colors.white.withValues(alpha: 0.2)),
-                ),
-              ),
-            ),
-
-            const SizedBox(height: AppSpacing.lg),
-
-            // Skills & Interests & Ambitions Chips
-            if (skills.isNotEmpty ||
-                interests.isNotEmpty ||
-                ambitions.isNotEmpty) ...[
-              if (interests.isNotEmpty) ...[
-                const Text('Interests', style: AppTypography.titleSmall),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: interests
-                      .map((i) => _tagChip(i, AppColors.kidsAccent))
-                      .toList(),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-              ],
-              if (skills.isNotEmpty) ...[
-                const Text('Skills', style: AppTypography.titleSmall),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: skills
-                      .map((s) => _tagChip(s, Colors.cyanAccent))
-                      .toList(),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-              ],
-              if (ambitions.isNotEmpty) ...[
-                const Text('Ambitions', style: AppTypography.titleSmall),
-                const SizedBox(height: 6),
-                Wrap(
-                  spacing: 6,
-                  runSpacing: 6,
-                  children: ambitions
-                      .map((a) => _tagChip(a, Colors.orangeAccent))
-                      .toList(),
-                ),
-                const SizedBox(height: AppSpacing.sm),
-              ],
-              const Divider(height: 32),
-            ],
-
-            // Posts Grid Section
-            Row(
-              children: [
-                const Icon(Icons.grid_on_rounded,
-                    size: 18, color: AppColors.kidsAccent),
-                const SizedBox(width: AppSpacing.xs),
-                const Text('My Creations', style: AppTypography.titleMedium),
-                const Spacer(),
-                Text('${_posts.length} posts',
-                    style: AppTypography.caption
-                        .copyWith(color: AppColors.textMutedDark)),
-              ],
-            ),
-            const SizedBox(height: AppSpacing.sm),
-
-            if (_posts.isEmpty) ...[
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(AppSpacing.xl),
-                decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.03),
-                  borderRadius: BorderRadius.circular(AppRadius.md),
-                ),
-                child: Column(
-                  children: [
-                    const Icon(Icons.auto_awesome,
-                        size: 36, color: Colors.white24),
-                    const SizedBox(height: AppSpacing.sm),
-                    const Text('No posts yet', style: AppTypography.titleSmall),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Share your first art, coding, or learning creation!',
-                      style: AppTypography.caption
-                          .copyWith(color: AppColors.textMutedDark),
-                    ),
-                  ],
-                ),
-              ),
-            ] else ...[
-              GridView.builder(
-                shrinkWrap: true,
-                physics: const NeverScrollableScrollPhysics(),
-                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 3,
-                  crossAxisSpacing: 4,
-                  mainAxisSpacing: 4,
-                ),
-                itemCount: _posts.length,
-                itemBuilder: (context, index) {
-                  final item = _posts[index];
-                  final mediaUrl = item['media_url'] as String?;
-                  final isReel = item['is_reel'] == true;
-
-                  return Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white.withValues(alpha: 0.05),
-                      borderRadius: BorderRadius.circular(AppRadius.sm),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: Stack(
-                      fit: StackFit.expand,
+                  if (school != null && school.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Row(
                       children: [
-                        if (mediaUrl != null && mediaUrl.isNotEmpty)
-                          Image.network(
-                            mediaUrl,
-                            fit: BoxFit.cover,
-                            errorBuilder: (_, __, ___) => const Center(
-                              child: Icon(Icons.image_not_supported_outlined,
-                                  size: 24, color: Colors.white24),
-                            ),
-                          )
-                        else
-                          Center(
-                            child: Padding(
-                              padding: const EdgeInsets.all(4.0),
-                              child: Text(
-                                item['caption']?.toString() ?? '',
-                                maxLines: 3,
-                                overflow: TextOverflow.ellipsis,
-                                style: const TextStyle(fontSize: 10),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ),
-                        if (isReel)
-                          const Positioned(
-                            top: 4,
-                            right: 4,
-                            child: Icon(Icons.movie_creation_outlined,
-                                size: 14, color: Colors.white),
-                          ),
+                        const Icon(Icons.school_outlined,
+                            size: 13, color: Color(0xFF8E8E8E)),
+                        const SizedBox(width: 4),
+                        Text(
+                          grade != null && grade.isNotEmpty
+                              ? '$school · $grade'
+                              : school,
+                          style: const TextStyle(
+                              fontSize: 13, color: Color(0xFF8E8E8E)),
+                        ),
                       ],
                     ),
-                  );
-                },
+                  ],
+
+                  if (_controls?['educational_only_feed'] == true) ...[
+                    const SizedBox(height: 3),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE8F5E9),
+                        borderRadius: BorderRadius.circular(20),
+                      ),
+                      child: const Text(
+                        '📚 Educational Feed Focus',
+                        style: TextStyle(
+                            fontSize: 11,
+                            color: Color(0xFF2E7D32),
+                            fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+
+                  const SizedBox(height: 8),
+                  Text(bio,
+                      style: const TextStyle(
+                          fontSize: 14, color: Color(0xFF262626))),
+
+                  const SizedBox(height: 14),
+
+                  // Edit Profile button
+                  SizedBox(
+                    width: double.infinity,
+                    height: 34,
+                    child: OutlinedButton(
+                      onPressed: () async {
+                        final updated = await Navigator.of(context)
+                            .push<bool>(MaterialPageRoute(
+                          builder: (_) => EditProfileScreen(
+                            authState: widget.authState,
+                            currentProfile: p,
+                          ),
+                        ));
+                        if (updated == true) _loadProfile();
+                      },
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF262626),
+                        side: const BorderSide(color: Color(0xFFDBDBDB)),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8)),
+                        textStyle: const TextStyle(
+                            fontSize: 14, fontWeight: FontWeight.w600),
+                      ),
+                      child: const Text('Edit profile'),
+                    ),
+                  ),
+
+                  const SizedBox(height: 14),
+
+                  // Interest chips
+                  if (interests.isNotEmpty || skills.isNotEmpty) ...[
+                    Wrap(
+                      spacing: 6,
+                      runSpacing: 6,
+                      children: [
+                        ...interests.map((t) => _chip(t, AppColors.primary)),
+                        ...skills.map((t) => _chip(t, AppColors.kidsMint)),
+                      ],
+                    ),
+                    const SizedBox(height: 14),
+                  ],
+                ],
               ),
-            ],
+            ),
+          ),
+
+          // ── Tab Bar ──────────────────────────────────
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _TabBarDelegate(
+              TabBar(
+                controller: _tabCtrl,
+                indicatorColor: const Color(0xFF262626),
+                indicatorWeight: 1.5,
+                indicatorSize: TabBarIndicatorSize.tab,
+                labelColor: const Color(0xFF262626),
+                unselectedLabelColor: const Color(0xFF8E8E8E),
+                tabs: const [
+                  Tab(icon: Icon(Icons.grid_on_rounded, size: 20)),
+                  Tab(icon: Icon(Icons.play_circle_outline_rounded, size: 20)),
+                ],
+              ),
+            ),
+          ),
+        ],
+
+        body: TabBarView(
+          controller: _tabCtrl,
+          children: [
+            // Posts grid
+            _postsGrid(),
+            // Reels placeholder
+            LnEmptyState(
+              emoji: '🎬',
+              title: 'No reels yet',
+              subtitle: 'Share your first educational reel!',
+            ),
           ],
         ),
       ),
     );
   }
 
-  Widget _statColumn(String label, String value) {
-    return Column(
-      children: [
-        Text(value,
-            style:
-                AppTypography.titleLarge.copyWith(fontWeight: FontWeight.bold)),
-        const SizedBox(height: 2),
-        Text(label,
-            style:
-                AppTypography.caption.copyWith(color: AppColors.textMutedDark)),
-      ],
+  Widget _postsGrid() {
+    if (_posts.isEmpty) {
+      return LnEmptyState(
+        emoji: '✨',
+        title: 'No posts yet',
+        subtitle: 'Share your first art, code, or learning moment!',
+      );
+    }
+
+    return GridView.builder(
+      padding: const EdgeInsets.all(1),
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: 3,
+        crossAxisSpacing: 2,
+        mainAxisSpacing: 2,
+      ),
+      itemCount: _posts.length,
+      itemBuilder: (ctx, i) {
+        final item = _posts[i];
+        final mediaUrl = item['media_url'] as String?;
+        final isReel = item['is_reel'] == true;
+
+        return Container(
+          color: const Color(0xFFF0F0F0),
+          clipBehavior: Clip.antiAlias,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (mediaUrl != null && mediaUrl.isNotEmpty)
+                Image.network(
+                  mediaUrl,
+                  fit: BoxFit.cover,
+                  errorBuilder: (_, __, ___) => const Center(
+                    child: Icon(Icons.image_not_supported_outlined,
+                        size: 24, color: Color(0xFFBBBBBB)),
+                  ),
+                )
+              else
+                Center(
+                  child: Padding(
+                    padding: const EdgeInsets.all(4),
+                    child: Text(
+                      item['caption']?.toString() ?? '',
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                          fontSize: 9, color: Color(0xFF8E8E8E)),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                ),
+              if (isReel)
+                const Positioned(
+                  top: 6,
+                  right: 6,
+                  child: Icon(Icons.play_circle_fill,
+                      size: 16, color: Colors.white),
+                ),
+            ],
+          ),
+        );
+      },
     );
   }
 
-  Widget _tagChip(String text, Color accent) {
+  Widget _chip(String text, Color color) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
-        color: accent.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(AppRadius.xl),
-        border: Border.all(color: accent.withValues(alpha: 0.4)),
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
       ),
       child: Text(
         text,
-        style: AppTypography.caption.copyWith(
-          color: accent,
-          fontWeight: FontWeight.w600,
-        ),
+        style: TextStyle(
+            fontSize: 12,
+            fontWeight: FontWeight.w500,
+            color: color.withValues(alpha: 0.9)),
       ),
     );
   }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Pinned tab bar delegate
+// ─────────────────────────────────────────────────────────────────
+class _TabBarDelegate extends SliverPersistentHeaderDelegate {
+  const _TabBarDelegate(this.tabBar);
+
+  final TabBar tabBar;
+
+  @override
+  double get minExtent => tabBar.preferredSize.height + 1;
+
+  @override
+  double get maxExtent => tabBar.preferredSize.height + 1;
+
+  @override
+  Widget build(
+      BuildContext context, double shrinkOffset, bool overlapsContent) {
+    return Container(
+      color: Colors.white,
+      child: Column(
+        children: [
+          const Divider(height: 1, thickness: 0.5, color: Color(0xFFDBDBDB)),
+          tabBar,
+        ],
+      ),
+    );
+  }
+
+  @override
+  bool shouldRebuild(_TabBarDelegate oldDelegate) =>
+      oldDelegate.tabBar != tabBar;
 }

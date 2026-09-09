@@ -1,11 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../api.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
-import '../../core/theme/spacing.dart';
-import '../../core/theme/typography.dart';
-import '../../core/widgets/app_button.dart';
+import '../../core/widgets/ln_components.dart';
+import '../discovery/discovery_screen.dart';
 
+/// LittleNet V2 – Home screen.
+///
+/// Visual language:
+///  - Pure white background
+///  - Top bar: LittleNet logotype left, message icon right
+///  - Stories row immediately below top bar (no section header)
+///  - Screen-time chip in app bar (restrained, small)
+///  - Learning challenge card – minimal, not "dashboard-y"
+///  - Suggested classmates horizontal scroll
+///  - Recent community posts as clean feed tiles
 class KidsHomeScreen extends StatefulWidget {
   const KidsHomeScreen({super.key, required this.authState});
 
@@ -56,23 +66,21 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
     } on ApiException catch (e) {
       setState(() {
         if (e.statusCode == 423) {
-          // Screen time or quiet hours
           _gate = e.payload?['gate']?.toString() ?? 'screen_time';
           _error = _gate == 'quiet_hours'
-              ? 'LittleNet is resting for quiet hours. Time for bed! 🌙'
-              : 'Screen time limit reached for today. See you tomorrow! ⏳';
+              ? 'LittleNet is resting for quiet hours 🌙'
+              : 'Screen time limit reached for today ⏳';
         } else if (e.statusCode == 428) {
-          // Onboarding quiz or face enrollment required
           _gate = e.payload?['gate']?.toString() ?? 'quiz';
           _error = _gate == 'face'
               ? 'Facial security setup needed before entering Kids Mode.'
-              : 'Complete your quick welcome quiz to unlock your feed!';
+              : 'Complete your welcome quiz to unlock your feed!';
         } else {
-          _error = 'Unable to load your home right now. Please try again.';
+          _error = 'Unable to load home right now.';
         }
       });
     } catch (_) {
-      setState(() => _error = 'Network connection lost. Please check Wi-Fi.');
+      setState(() => _error = 'Network connection lost.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -80,388 +88,598 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(AppSpacing.xs),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.star_rounded,
-                  color: AppColors.kidsGold, size: 24),
-            ),
-            const SizedBox(width: AppSpacing.sm),
-            Text(
-              'Hello, ${_profile?['full_name'] ?? widget.authState.currentUser?.fullName ?? 'Friend'}! 🌟',
-              style: AppTypography.titleMedium,
-            ),
-          ],
+    return AnnotatedRegion<SystemUiOverlayStyle>(
+      value: SystemUiOverlayStyle.dark.copyWith(
+        statusBarColor: Colors.transparent,
+      ),
+      child: Scaffold(
+        backgroundColor: Colors.white,
+        appBar: _buildAppBar(),
+        body: RefreshIndicator(
+          onRefresh: _fetchHomeData,
+          color: AppColors.primary,
+          child: _buildBody(),
         ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.chat_bubble_outline_rounded,
-                color: AppColors.textPrimary),
-            tooltip: 'Messages',
-            onPressed: () {
-              Navigator.of(context).pushNamed('/kids/messages');
-            },
-          ),
-          // Screen time pill indicator
-          Container(
-            margin: const EdgeInsets.only(right: AppSpacing.md),
-            padding: const EdgeInsets.symmetric(
-                horizontal: AppSpacing.sm, vertical: 4),
-            decoration: BoxDecoration(
-              color: AppColors.surface,
-              borderRadius: BorderRadius.circular(AppRadius.full),
-              border: Border.all(color: AppColors.cardBorder),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
+      ),
+    );
+  }
+
+  AppBar _buildAppBar() {
+    final displayName = _profile?['full_name'] as String? ??
+        widget.authState.currentUser?.fullName ??
+        'Friend';
+
+    return AppBar(
+      backgroundColor: Colors.white,
+      elevation: 0,
+      systemOverlayStyle: SystemUiOverlayStyle.dark,
+      titleSpacing: 16,
+      title: Row(
+        children: [
+          // LittleNet wordmark / brand
+          RichText(
+            text: const TextSpan(
               children: [
-                const Icon(Icons.timer_outlined,
-                    size: 16, color: AppColors.primary),
-                const SizedBox(width: 4),
-                Text('$_minutesToday min',
-                    style: AppTypography.caption
-                        .copyWith(color: AppColors.textPrimary)),
+                TextSpan(
+                  text: 'Little',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF262626),
+                    letterSpacing: -0.5,
+                  ),
+                ),
+                TextSpan(
+                  text: 'Net',
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w800,
+                    color: AppColors.primary,
+                    letterSpacing: -0.5,
+                  ),
+                ),
               ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          // Greeting chip – subtle, not large
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF5F5F5),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Text(
+              'Hi, ${displayName.split(' ').first}! 👋',
+              style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w500,
+                  color: Color(0xFF8E8E8E)),
             ),
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _fetchHomeData,
-        child: _buildBody(),
+      actions: [
+        // Screen-time indicator
+        if (_minutesToday > 0)
+          Container(
+            margin: const EdgeInsets.symmetric(vertical: 14),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+            decoration: BoxDecoration(
+              color: const Color(0xFFF0F0F0),
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.timer_outlined, size: 13, color: Color(0xFF8E8E8E)),
+                const SizedBox(width: 3),
+                Text('${_minutesToday}m',
+                    style: const TextStyle(
+                        fontSize: 11,
+                        color: Color(0xFF8E8E8E),
+                        fontWeight: FontWeight.w500)),
+              ],
+            ),
+          ),
+        // Messages
+        IconButton(
+          icon: const Icon(Icons.send_rounded, color: Color(0xFF262626), size: 24),
+          tooltip: 'Messages',
+          onPressed: () => Navigator.of(context).pushNamed('/kids/messages'),
+        ),
+      ],
+      bottom: const PreferredSize(
+        preferredSize: Size.fromHeight(0.5),
+        child: Divider(height: 0.5, thickness: 0.5, color: Color(0xFFDBDBDB)),
       ),
     );
   }
 
   Widget _buildBody() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
-    }
-
-    if (_error != null) {
-      return Center(
-        child: Padding(
-          padding: const EdgeInsets.all(AppSpacing.xl),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                _gate == 'quiet_hours'
-                    ? Icons.bedtime_rounded
-                    : (_gate == 'screen_time'
-                        ? Icons.hourglass_bottom_rounded
-                        : Icons.info_outline),
-                size: 64,
-                color: _gate != null ? AppColors.primary : AppColors.error,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Text(
-                _error!,
-                style: AppTypography.titleMedium,
-                textAlign: TextAlign.center,
-              ),
-              const SizedBox(height: AppSpacing.lg),
-              if (_gate == null)
-                AppButton(
-                  text: 'Try Again',
-                  onPressed: _fetchHomeData,
-                  width: 160,
-                ),
-            ],
-          ),
-        ),
+      return ListView(
+        children: [
+          // Stories skeleton
+          const SizedBox(height: 12),
+          _StoriesSkeletonRow(),
+          const SizedBox(height: 12),
+          const Divider(height: 1, thickness: 0.4, color: Color(0xFFDBDBDB)),
+          // Post skeletons
+          ...[1, 2, 3].map((_) => const _PostSkeleton()),
+        ],
       );
     }
 
-    return ListView(
-      padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
-      children: [
-        // 1. Stories Carousel
-        if (_stories.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: Text('Classmate Moments', style: AppTypography.titleMedium),
+    if (_error != null) {
+      return LnEmptyState(
+        emoji: _gate == 'quiet_hours'
+            ? '🌙'
+            : _gate == 'screen_time'
+                ? '⏳'
+                : '⚠️',
+        title: _error!,
+        subtitle: _gate == null ? 'Pull down to try again.' : null,
+        action: _gate == null ? _fetchHomeData : null,
+        actionLabel: 'Try Again',
+      );
+    }
+
+    return CustomScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      slivers: [
+        // ── Stories Row ──────────────────────────────
+        SliverToBoxAdapter(
+          child: _StoriesRow(
+            stories: _stories,
+            onSearch: () => Navigator.of(context).push(MaterialPageRoute(
+                builder: (_) => DiscoveryScreen(authState: widget.authState))),
           ),
-          const SizedBox(height: AppSpacing.sm),
-          SizedBox(
-            height: 96,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              itemCount: _stories.length,
-              itemBuilder: (ctx, i) {
-                final s = _stories[i] as Map<String, dynamic>;
-                return Padding(
-                  padding: const EdgeInsets.only(right: AppSpacing.md),
-                  child: Column(
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(3),
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [AppColors.kidsAccent, AppColors.kidsGold],
-                          ),
-                          shape: BoxShape.circle,
-                        ),
-                        child: CircleAvatar(
-                          radius: 28,
-                          backgroundColor: Colors.white,
-                          backgroundImage: s['avatar_url'] != null
-                              ? NetworkImage(s['avatar_url'].toString())
-                              : null,
-                          child: s['avatar_url'] == null
-                              ? const Icon(Icons.person,
-                                  color: AppColors.primary)
-                              : null,
-                        ),
+        ),
+        const SliverToBoxAdapter(
+          child: Divider(height: 1, thickness: 0.4, color: Color(0xFFDBDBDB)),
+        ),
+
+        // ── Learning Challenge ────────────────────────
+        SliverToBoxAdapter(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => Navigator.of(context).pushNamed('/kids/quiz'),
+              child: Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.05),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                      color: AppColors.primary.withValues(alpha: 0.15)),
+                ),
+                child: Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary.withValues(alpha: 0.12),
+                        shape: BoxShape.circle,
                       ),
-                      const SizedBox(height: 4),
-                      Text(
-                        s['full_name']?.toString() ?? 'Student',
-                        style: AppTypography.caption,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                      child: const Text('🚀', style: TextStyle(fontSize: 22)),
+                    ),
+                    const SizedBox(width: 14),
+                    const Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text("Today's Challenge",
+                              style: TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF262626))),
+                          SizedBox(height: 2),
+                          Text('Answer 3 questions · Earn safe-points',
+                              style: TextStyle(
+                                  fontSize: 12, color: Color(0xFF8E8E8E))),
+                        ],
                       ),
-                    ],
-                  ),
-                );
-              },
+                    ),
+                    const Icon(Icons.chevron_right_rounded,
+                        color: AppColors.primary, size: 20),
+                  ],
+                ),
+              ),
             ),
           ),
-          const SizedBox(height: AppSpacing.lg),
-        ],
+        ),
 
-        // 2. Learning Challenge Card
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          child: Card(
-            color: AppColors.primary.withValues(alpha: 0.08),
+        // ── Safe Reels Row ────────────────────────────
+        if (_reels.isNotEmpty) ...[
+          const SliverToBoxAdapter(child: SizedBox(height: 18)),
+          SliverToBoxAdapter(
             child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.md),
+              padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Container(
-                    padding: const EdgeInsets.all(AppSpacing.sm),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.15),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.lightbulb_rounded,
-                        color: AppColors.primary, size: 32),
-                  ),
-                  const SizedBox(width: AppSpacing.md),
-                  const Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Today\'s Science Quiz 🚀',
-                            style: AppTypography.titleMedium),
-                        SizedBox(height: 2),
-                        Text(
-                          'Answer 3 fun questions to earn safe-learning points!',
-                          style: AppTypography.bodyMedium,
-                        ),
-                      ],
-                    ),
+                  const Text('Safe Short Videos',
+                      style: TextStyle(
+                          fontSize: 15,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF262626))),
+                  GestureDetector(
+                    onTap: () {},
+                    child: const Text('See all',
+                        style: TextStyle(
+                            fontSize: 13, color: AppColors.primary,
+                            fontWeight: FontWeight.w500)),
                   ),
                 ],
               ),
             ),
           ),
-        ),
-        const SizedBox(height: AppSpacing.lg),
-
-        // 3. Recommended Reels Row
-        if (_reels.isNotEmpty) ...[
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text('Safe Short Videos',
-                    style: AppTypography.titleMedium),
-                Text('See all (${_reels.length})',
-                    style: AppTypography.caption
-                        .copyWith(color: AppColors.primary)),
-              ],
-            ),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          SizedBox(
-            height: 180,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              itemCount: _reels.length,
-              itemBuilder: (ctx, i) {
-                final r = _reels[i] as Map<String, dynamic>;
-                return Container(
-                  width: 110,
-                  margin: const EdgeInsets.only(right: AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: Colors.black87,
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                    image: r['poster_url'] != null
-                        ? DecorationImage(
-                            image: NetworkImage(r['poster_url'].toString()),
-                            fit: BoxFit.cover)
-                        : null,
-                  ),
-                  child: Stack(
-                    children: [
-                      const Center(
-                        child: Icon(Icons.play_circle_fill,
-                            color: Colors.white, size: 36),
-                      ),
-                      Positioned(
-                        bottom: 8,
-                        left: 8,
-                        right: 8,
-                        child: Text(
-                          r['caption']?.toString() ?? 'Learning Reel',
-                          style: AppTypography.caption
-                              .copyWith(color: Colors.white),
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-        ],
-
-        // 4. Safe Friends Suggestions
-        if (_suggested.isNotEmpty) ...[
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
-            child:
-                Text('Suggested Classmates', style: AppTypography.titleMedium),
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          SizedBox(
-            height: 130,
-            child: ListView.builder(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
-              itemCount: _suggested.length,
-              itemBuilder: (ctx, i) {
-                final c = _suggested[i] as Map<String, dynamic>;
-                return Container(
-                  width: 120,
-                  margin: const EdgeInsets.only(right: AppSpacing.sm),
-                  padding: const EdgeInsets.all(AppSpacing.sm),
-                  decoration: BoxDecoration(
-                    color: AppColors.surface,
-                    borderRadius: BorderRadius.circular(AppRadius.md),
-                    border: Border.all(color: AppColors.cardBorder),
-                  ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundImage: c['avatar_url'] != null
-                            ? NetworkImage(c['avatar_url'].toString())
-                            : null,
-                        child: c['avatar_url'] == null
-                            ? const Icon(Icons.person)
-                            : null,
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        c['full_name']?.toString() ?? 'Classmate',
-                        style: AppTypography.caption
-                            .copyWith(fontWeight: FontWeight.w600),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-          const SizedBox(height: AppSpacing.lg),
-        ],
-
-        // 5. Recent Safe Posts
-        const Padding(
-          padding: EdgeInsets.symmetric(horizontal: AppSpacing.md),
-          child: Text('Community Updates', style: AppTypography.titleMedium),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        if (_posts.isEmpty)
-          const Padding(
-            padding: EdgeInsets.all(AppSpacing.xl),
-            child: Center(
-              child: Text(
-                'No community posts yet today. Check the Feed tab for curated learning stories! 🌱',
-                textAlign: TextAlign.center,
-                style: AppTypography.bodyMedium,
+          const SliverToBoxAdapter(child: SizedBox(height: 10)),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 172,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _reels.length,
+                itemBuilder: (ctx, i) => _ReelThumbnail(reel: _reels[i]),
               ),
+            ),
+          ),
+        ],
+
+        // ── Suggested Classmates ──────────────────────
+        if (_suggested.isNotEmpty) ...[
+          const SliverToBoxAdapter(child: SizedBox(height: 18)),
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.symmetric(horizontal: 16),
+              child: Text('Classmates you might know',
+                  style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF262626))),
+            ),
+          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 10)),
+          SliverToBoxAdapter(
+            child: SizedBox(
+              height: 120,
+              child: ListView.builder(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                itemCount: _suggested.length,
+                itemBuilder: (ctx, i) =>
+                    _SuggestedCard(classmate: _suggested[i]),
+              ),
+            ),
+          ),
+        ],
+
+        // ── Divider before posts ──────────────────────
+        const SliverToBoxAdapter(
+          child: Padding(
+            padding: EdgeInsets.symmetric(vertical: 14),
+            child: Divider(height: 1, thickness: 0.4, color: Color(0xFFDBDBDB)),
+          ),
+        ),
+
+        // ── Community posts ───────────────────────────
+        if (_posts.isEmpty)
+          SliverFillRemaining(
+            hasScrollBody: false,
+            child: LnEmptyState(
+              emoji: '🌱',
+              title: 'No posts yet today',
+              subtitle: 'Check the Feed tab for curated learning stories!',
             ),
           )
         else
-          ..._posts.map((p) {
-            final item = p as Map<String, dynamic>;
-            return Card(
-              margin: const EdgeInsets.symmetric(
-                  horizontal: AppSpacing.md, vertical: AppSpacing.xs),
-              child: Padding(
-                padding: const EdgeInsets.all(AppSpacing.md),
+          SliverList(
+            delegate: SliverChildBuilderDelegate(
+              (ctx, i) {
+                final item = _posts[i] as Map<String, dynamic>;
+                return LnPostCard(
+                  item: item,
+                  onComment: () {},
+                  onShare: () {},
+                );
+              },
+              childCount: _posts.length,
+            ),
+          ),
+
+        const SliverToBoxAdapter(child: SizedBox(height: 24)),
+      ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Stories row (horizontal scroll with gradient rings)
+// ─────────────────────────────────────────────────────────────────
+class _StoriesRow extends StatelessWidget {
+  const _StoriesRow({required this.stories, this.onSearch});
+
+  final List<dynamic> stories;
+  final VoidCallback? onSearch;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 100,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        itemCount: (stories.isEmpty ? 0 : stories.length) + 1,
+        itemBuilder: (ctx, i) {
+          // First item – "Your Story" / search bubble
+          if (i == 0) {
+            return Padding(
+              padding: const EdgeInsets.only(right: 14),
+              child: GestureDetector(
+                onTap: onSearch,
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Stack(
                       children: [
-                        CircleAvatar(
-                          radius: 18,
-                          backgroundImage: item['avatar_url'] != null
-                              ? NetworkImage(item['avatar_url'].toString())
-                              : null,
-                          child: item['avatar_url'] == null
-                              ? const Icon(Icons.person, size: 18)
-                              : null,
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(item['full_name']?.toString() ?? 'Classmate',
-                                  style: AppTypography.labelLarge),
-                              Text(
-                                  item['content_category']?.toString() ??
-                                      'Learning',
-                                  style: AppTypography.caption),
-                            ],
+                        Container(
+                          width: 58,
+                          height: 58,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: const Color(0xFFF5F5F5),
+                            border: Border.all(
+                                color: const Color(0xFFDBDBDB), width: 1),
                           ),
+                          child: const Icon(Icons.search_rounded,
+                              color: Color(0xFF8E8E8E), size: 26),
                         ),
                       ],
                     ),
-                    if (item['caption'] != null &&
-                        item['caption'].toString().isNotEmpty) ...[
-                      const SizedBox(height: AppSpacing.sm),
-                      Text(item['caption'].toString(),
-                          style: AppTypography.bodyLarge),
-                    ],
+                    const SizedBox(height: 5),
+                    const Text('Discover',
+                        style: TextStyle(
+                            fontSize: 11, color: Color(0xFF8E8E8E))),
                   ],
                 ),
               ),
             );
-          }),
+          }
+
+          final s = stories[i - 1] as Map<String, dynamic>;
+          final name = s['full_name']?.toString() ?? 'Student';
+          final avatarUrl = s['avatar_url']?.toString();
+          final seen = s['seen'] == true;
+
+          return Padding(
+            padding: const EdgeInsets.only(right: 14),
+            child: Column(
+              children: [
+                LnStoryRing(
+                  seen: seen,
+                  size: 56,
+                  child: LnAvatar(
+                    url: avatarUrl,
+                    name: name,
+                    radius: 26,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                SizedBox(
+                  width: 60,
+                  child: Text(
+                    name.split(' ').first,
+                    style: const TextStyle(
+                        fontSize: 11, color: Color(0xFF262626)),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Reel thumbnail tile
+// ─────────────────────────────────────────────────────────────────
+class _ReelThumbnail extends StatelessWidget {
+  const _ReelThumbnail({required this.reel});
+
+  final dynamic reel;
+
+  @override
+  Widget build(BuildContext context) {
+    final r = reel as Map<String, dynamic>;
+    final posterUrl = r['poster_url']?.toString();
+    final caption = r['caption']?.toString() ?? 'Learning Reel';
+
+    return Container(
+      width: 108,
+      margin: const EdgeInsets.only(right: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1A1A2E),
+        borderRadius: BorderRadius.circular(10),
+        image: posterUrl != null
+            ? DecorationImage(
+                image: NetworkImage(posterUrl), fit: BoxFit.cover)
+            : null,
+      ),
+      child: Stack(
+        children: [
+          // Dark scrim at bottom
+          Positioned.fill(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(10),
+                gradient: const LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  stops: [0.5, 1.0],
+                  colors: [Colors.transparent, Color(0xCC000000)],
+                ),
+              ),
+            ),
+          ),
+          // Play icon
+          const Center(
+            child: Icon(Icons.play_circle_fill,
+                color: Colors.white, size: 32),
+          ),
+          // Caption
+          Positioned(
+            bottom: 8,
+            left: 8,
+            right: 8,
+            child: Text(
+              caption,
+              style: const TextStyle(
+                  fontSize: 10,
+                  color: Colors.white,
+                  fontWeight: FontWeight.w500),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Suggested classmate card
+// ─────────────────────────────────────────────────────────────────
+class _SuggestedCard extends StatelessWidget {
+  const _SuggestedCard({required this.classmate});
+
+  final dynamic classmate;
+
+  @override
+  Widget build(BuildContext context) {
+    final c = classmate as Map<String, dynamic>;
+    final name = c['full_name']?.toString() ?? 'Classmate';
+    final avatarUrl = c['avatar_url']?.toString();
+
+    return Container(
+      width: 108,
+      margin: const EdgeInsets.only(right: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFEBEBEB)),
+      ),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          LnAvatar(url: avatarUrl, name: name, radius: 22),
+          const SizedBox(height: 6),
+          Text(
+            name.split(' ').first,
+            style: const TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF262626)),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(20),
+            ),
+            child: const Text('Follow',
+                style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────
+//  Loading Skeleton widgets
+// ─────────────────────────────────────────────────────────────────
+class _StoriesSkeletonRow extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 80,
+      child: ListView.builder(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 16),
+        itemCount: 6,
+        itemBuilder: (_, __) => Padding(
+          padding: const EdgeInsets.only(right: 14),
+          child: Column(
+            children: [
+              Container(
+                width: 58,
+                height: 58,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Color(0xFFEEEEEE),
+                ),
+              ),
+              const SizedBox(height: 5),
+              Container(
+                  width: 40, height: 10, color: const Color(0xFFEEEEEE)),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PostSkeleton extends StatelessWidget {
+  const _PostSkeleton();
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Header
+        Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              const CircleAvatar(radius: 18, backgroundColor: Color(0xFFEEEEEE)),
+              const SizedBox(width: 10),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                      width: 120, height: 12, color: const Color(0xFFEEEEEE)),
+                  const SizedBox(height: 4),
+                  Container(
+                      width: 80, height: 10, color: const Color(0xFFEEEEEE)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        // Image placeholder
+        AspectRatio(
+          aspectRatio: 1,
+          child: Container(color: const Color(0xFFEEEEEE)),
+        ),
+        const SizedBox(height: 24),
+        const Divider(height: 1, thickness: 0.4, color: Color(0xFFDBDBDB)),
       ],
     );
   }
