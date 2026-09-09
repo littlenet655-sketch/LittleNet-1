@@ -4,20 +4,30 @@ import '../features/auth/email_otp_screen.dart';
 import '../features/auth/login_screen.dart';
 import '../features/auth/parent_liveness_screen.dart';
 import '../features/auth/parent_signup_screen.dart';
+import '../features/chat/chat_conversation_screen.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/create_post/create_post_screen.dart';
 import '../features/discovery/discovery_screen.dart';
+import '../features/explore/explore_screen.dart';
+import '../features/feed/feed_screen.dart';
 import '../features/kids/kids_main_shell.dart';
 import '../features/learning/learning_screen.dart';
+import '../features/moderator/incident_detail_screen.dart';
+import '../features/moderator/moderator_audit_screen.dart';
+import '../features/moderator/moderator_main_shell.dart';
+import '../features/moderator/user_admin_screen.dart';
 import '../features/parent/child_enrollment_screen.dart';
 import '../features/parent/parent_controls_screen.dart';
 import '../features/parent/parent_dashboard_screen.dart';
 import '../features/parent/parent_follow_requests_screen.dart';
 import '../features/parent/parent_safety_review_screen.dart';
+import '../features/profile/edit_profile_screen.dart';
+import '../features/profile/followers_following_screen.dart';
 import '../features/profile/profile_screen.dart';
+import '../features/profile/requests_screen.dart';
 import '../features/quiz/quiz_screen.dart';
+import '../features/reels/reels_screen.dart';
 import '../features/settings/settings_screen.dart';
-import '../screens/admin.dart' as old_admin;
 
 class AppRouter {
   const AppRouter({required this.authState});
@@ -74,11 +84,29 @@ class AppRouter {
           settings: settings,
         );
 
-      // Kids V2 Main Shell (Home, Feed, Create Post, Reels, Profile)
+      // Kids V2 Main Shell (Home, Explore, Create, Reels, Profile)
       case '/kids/home':
       case '/kids/main':
         return MaterialPageRoute(
           builder: (_) => KidsMainShell(authState: authState),
+          settings: settings,
+        );
+
+      case '/kids/explore':
+        return MaterialPageRoute(
+          builder: (_) => ExploreScreen(authState: authState),
+          settings: settings,
+        );
+
+      case '/kids/feed':
+        return MaterialPageRoute(
+          builder: (_) => FeedScreen(authState: authState),
+          settings: settings,
+        );
+
+      case '/kids/reels':
+        return MaterialPageRoute(
+          builder: (_) => ReelsScreen(authState: authState),
           settings: settings,
         );
 
@@ -101,9 +129,55 @@ class AppRouter {
           settings: settings,
         );
 
+      case '/kids/chat':
+        final peerId = args['peer_id'] is int
+            ? args['peer_id'] as int
+            : int.tryParse(args['peer_id']?.toString() ?? '') ?? 0;
+        final peerName = args['peer_name']?.toString() ?? 'Friend';
+        final peerAvatarUrl = args['peer_avatar_url']?.toString();
+        return MaterialPageRoute(
+          builder: (_) => ChatConversationScreen(
+            authState: authState,
+            peerId: peerId,
+            peerName: peerName,
+            peerAvatarUrl: peerAvatarUrl,
+          ),
+          settings: settings,
+        );
+
       case '/kids/profile':
         return MaterialPageRoute(
           builder: (_) => ProfileScreen(authState: authState),
+          settings: settings,
+        );
+
+      case '/kids/edit-profile':
+        final currentProfile =
+            args['current_profile'] as Map<String, dynamic>? ?? const {};
+        return MaterialPageRoute(
+          builder: (_) => EditProfileScreen(
+            authState: authState,
+            currentProfile: currentProfile,
+          ),
+          settings: settings,
+        );
+
+      case '/kids/connections':
+      case '/kids/followers':
+      case '/kids/following':
+        return MaterialPageRoute(
+          builder: (_) => FollowersFollowingScreen(
+            authState: authState,
+            initialTab: args['tab_index'] is int
+                ? args['tab_index'] as int
+                : (settings.name == '/kids/following' ? 1 : 0),
+          ),
+          settings: settings,
+        );
+
+      case '/kids/requests':
+        return MaterialPageRoute(
+          builder: (_) => RequestsScreen(authState: authState),
           settings: settings,
         );
 
@@ -113,7 +187,7 @@ class AppRouter {
           settings: settings,
         );
 
-      // Module 16: Learning & Quiz
+      // Learning & Education
       case '/kids/learning':
         return MaterialPageRoute(
           builder: (_) => LearningScreen(authState: authState),
@@ -126,21 +200,19 @@ class AppRouter {
           settings: settings,
         );
 
-      // Module 17: Discovery & Connections
       case '/kids/discover':
         return MaterialPageRoute(
           builder: (_) => DiscoveryScreen(authState: authState),
           settings: settings,
         );
 
-      // Module 18: Parent Dashboard
+      // Parent Guardian Suite
       case '/parent/dashboard':
         return MaterialPageRoute(
           builder: (_) => ParentDashboardScreen(authState: authState),
           settings: settings,
         );
 
-      // Module 19: Parent Controls
       case '/parent/controls':
         final childId = rawArgs is int
             ? rawArgs
@@ -153,7 +225,6 @@ class AppRouter {
           settings: settings,
         );
 
-      // Module 20: Parent Safety Review & Follow Requests
       case '/parent/safety-reviews':
         return MaterialPageRoute(
           builder: (_) => ParentSafetyReviewScreen(authState: authState),
@@ -166,14 +237,40 @@ class AppRouter {
           settings: settings,
         );
 
-      // Fallback to old screens while remaining V2 modules (Admin/Moderator) are pending
+      // Moderator & Admin V2 Suite
+      case '/moderator/main':
+      case '/moderator/dashboard':
       case '/moderator/queue':
         return MaterialPageRoute(
-          builder: (_) => old_admin.AdminShell(
-            api: authState.apiClient,
-            user: authState.currentUser?.toJson() ?? const {},
+          builder: (_) => ModeratorMainShell(
+            authState: authState,
             onLogout: () => authState.logout(),
           ),
+          settings: settings,
+        );
+
+      case '/moderator/incident':
+        final eventId = args['event_id'] is int
+            ? args['event_id'] as int
+            : int.tryParse(args['event_id']?.toString() ?? '') ?? 0;
+        return MaterialPageRoute(
+          builder: (_) => IncidentDetailScreen(
+            authState: authState,
+            eventId: eventId,
+            initialEvent: args['event'] as Map<String, dynamic>?,
+          ),
+          settings: settings,
+        );
+
+      case '/moderator/users':
+        return MaterialPageRoute(
+          builder: (_) => UserAdminScreen(authState: authState),
+          settings: settings,
+        );
+
+      case '/moderator/audit':
+        return MaterialPageRoute(
+          builder: (_) => ModeratorAuditScreen(authState: authState),
           settings: settings,
         );
 

@@ -3,7 +3,7 @@ import 'package:flutter/services.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
 import '../create_post/create_post_screen.dart';
-import '../feed/feed_screen.dart';
+import '../explore/explore_screen.dart';
 import '../kids/kids_home_screen.dart';
 import '../profile/profile_screen.dart';
 import '../reels/reels_screen.dart';
@@ -11,7 +11,7 @@ import '../reels/reels_screen.dart';
 /// LittleNet V2 – main navigation shell.
 ///
 /// Layout mirrors a social feed app (Instagram-ish):
-///   HOME | SEARCH | [CREATE] | REELS | PROFILE
+///   HOME | EXPLORE | [CREATE] | REELS | PROFILE
 ///
 /// The CREATE tab is a modal action sheet, not a full tab page.
 class KidsMainShell extends StatefulWidget {
@@ -34,7 +34,7 @@ class _KidsMainShellState extends State<KidsMainShell>
     super.initState();
     _pages = [
       KidsHomeScreen(authState: widget.authState),
-      FeedScreen(authState: widget.authState),
+      ExploreScreen(authState: widget.authState),
       // index 2 is the create modal – placeholder never shown
       const SizedBox.shrink(),
       ReelsScreen(authState: widget.authState),
@@ -200,9 +200,9 @@ class _LnBottomBar extends StatelessWidget {
                 onTap: () => onTap(0),
               ),
               _NavItem(
-                label: 'Feed',
-                icon: Icons.dynamic_feed_outlined,
-                selectedIcon: Icons.dynamic_feed_rounded,
+                label: 'Explore',
+                icon: Icons.search_rounded,
+                selectedIcon: Icons.search_rounded,
                 selected: currentIndex == 1,
                 onTap: () => onTap(1),
               ),

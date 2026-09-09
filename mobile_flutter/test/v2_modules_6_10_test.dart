@@ -40,7 +40,7 @@ void main() {
     );
 
     expect(find.text('Home'), findsOneWidget);
-    expect(find.text('Feed'), findsOneWidget);
+    expect(find.text('Explore'), findsOneWidget);
     expect(find.text('Create'), findsOneWidget);
     expect(find.text('Reels'), findsOneWidget);
     expect(find.text('Profile'), findsOneWidget);

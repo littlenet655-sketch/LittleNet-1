@@ -473,24 +473,34 @@ class LnEmptyState extends StatelessWidget {
 //  LnStatColumn – used in Profile header (posts / friends / following)
 // ─────────────────────────────────────────────────────────────────
 class LnStatColumn extends StatelessWidget {
-  const LnStatColumn({super.key, required this.value, required this.label});
+  const LnStatColumn({
+    super.key,
+    required this.value,
+    required this.label,
+    this.onTap,
+  });
 
   final String value;
   final String label;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Text(value,
-            style: const TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF262626))),
-        const SizedBox(height: 2),
-        Text(label,
-            style: const TextStyle(fontSize: 13, color: Color(0xFF8E8E8E))),
-      ],
+    return GestureDetector(
+      onTap: onTap,
+      behavior: HitTestBehavior.opaque,
+      child: Column(
+        children: [
+          Text(value,
+              style: const TextStyle(
+                  fontSize: 17,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF262626))),
+          const SizedBox(height: 2),
+          Text(label,
+              style: const TextStyle(fontSize: 13, color: Color(0xFF8E8E8E))),
+        ],
+      ),
     );
   }
 }

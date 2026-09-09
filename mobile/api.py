@@ -817,6 +817,97 @@ def register_mobile_api(bp):
         parent_notify(uid, "FOLLOW_REQUEST", "A new connection request needs approval", "/parent/follow-requests/")
         return jsonify(ok=True, status="pending")
 
+    @bp.route("/api/mobile/v1/kids/connections")
+    @_require_mobile("CHILD")
+    def mobile_kids_connections():
+        gate = _child_gate("discover")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        followers_rows = fetch_all(
+            """SELECT DISTINCT u.user_id, u.full_name, u.username, cp.school_name, cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id = f.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.following_child_id = %s AND f.approved = TRUE AND f.approval_stage = 'ACTIVE'""",
+            (uid,),
+        )
+        following_rows = fetch_all(
+            """SELECT DISTINCT u.user_id, u.full_name, u.username, cp.school_name, cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id = f.following_child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.child_id = %s AND f.approved = TRUE AND f.approval_stage = 'ACTIVE'""",
+            (uid,),
+        )
+        suggested_raw = discoverable_children(uid, None, 15)
+
+        def _fmt(list_rows, is_fol=True):
+            out = []
+            for r in list_rows:
+                d = dict(r)
+                d["avatar_url"] = _asset_url(d.pop("profile_picture", None))
+                d["is_following"] = is_fol
+                d["is_pending"] = False
+                out.append(_clean(d))
+            return out
+
+        out_sug = []
+        for s in suggested_raw:
+            d = dict(s)
+            d["avatar_url"] = _asset_url(d.pop("profile_picture", None))
+            d["is_following"] = is_following(uid, d["user_id"])
+            d["is_pending"] = is_follow_pending(uid, d["user_id"])
+            out_sug.append(_clean(d))
+
+        return jsonify(
+            ok=True,
+            followers=_fmt(followers_rows, False),
+            following=_fmt(following_rows, True),
+            suggested=out_sug,
+        )
+
+    @bp.route("/api/mobile/v1/kids/connections/requests")
+    @_require_mobile("CHILD")
+    def mobile_kids_requests():
+        gate = _child_gate("discover")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        incoming = fetch_all(
+            """SELECT f.id, f.child_id as requester_id, u.full_name as requester_name, u.username as requester_username,
+                      cp.profile_picture, cp.school_name, f.created_at, f.approval_stage
+               FROM followers f
+               JOIN users u ON u.user_id = f.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.following_child_id = %s AND f.approved = FALSE""",
+            (uid,),
+        )
+        outgoing = fetch_all(
+            """SELECT f.id, f.following_child_id as target_id, u.full_name as target_name, u.username as target_username,
+                      cp.profile_picture, cp.school_name, f.created_at, f.approval_stage
+               FROM followers f
+               JOIN users u ON u.user_id = f.following_child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.child_id = %s AND f.approved = FALSE""",
+            (uid,),
+        )
+
+        def _fmt_req(rows, is_inc=True):
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["avatar_url"] = _asset_url(d.pop("profile_picture", None))
+                d["is_incoming"] = is_inc
+                out.append(_clean(d))
+            return out
+
+        return jsonify(
+            ok=True,
+            incoming=_fmt_req(incoming, True),
+            outgoing=_fmt_req(outgoing, False),
+        )
+
     @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/like", methods=["POST"])
     @csrf.exempt
     @_require_mobile("CHILD")

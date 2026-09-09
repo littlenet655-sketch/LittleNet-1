@@ -95,6 +95,33 @@ def register_mobile_admin_api(bp):
         )
         return jsonify(ok=True, users=_clean(rows))
 
+    @bp.route('/api/mobile/v1/admin/users/<int:target_user_id>/status', methods=['POST'])
+    @csrf.exempt
+    @limiter.limit('30 per minute')
+    @_require_mobile('ADMIN')
+    def mobile_admin_user_status(target_user_id):
+        data = request.get_json(silent=True) or {}
+        new_status = str(data.get('status') or '').upper()
+        if new_status not in {'ACTIVE', 'SUSPENDED'}:
+            return jsonify(error='invalid_status'), 400
+        if int(target_user_id) == int(g.mobile_user['user_id']):
+            return jsonify(error='cannot_modify_self'), 400
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("UPDATE users SET account_status=%s WHERE user_id=%s", (new_status, target_user_id))
+            cur.execute(
+                "INSERT INTO activity_logs(child_id, activity_type, activity_data) VALUES(%s, 'ADMIN_USER_STATUS_CHANGE', %s::jsonb)",
+                (target_user_id, __import__('json').dumps({'admin_id': g.mobile_user['user_id'], 'new_status': new_status}))
+            )
+            conn.commit()
+            return jsonify(ok=True, user_id=target_user_id, status=new_status)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     @bp.route('/api/mobile/v1/admin/audit')
     @_require_mobile('ADMIN')
     def mobile_admin_audit():
@@ -102,3 +129,4 @@ def register_mobile_admin_api(bp):
             """SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 100"""
         )
         return jsonify(ok=True, events=_clean(rows))
+

@@ -181,6 +181,14 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
               ],
             ),
           ),
+        // Notifications
+        IconButton(
+          icon: const Icon(Icons.favorite_border_rounded,
+              color: Color(0xFF262626), size: 24),
+          tooltip: 'Notifications',
+          onPressed: () =>
+              Navigator.of(context).pushNamed('/kids/notifications'),
+        ),
         // Messages
         IconButton(
           icon: const Icon(Icons.send_rounded, color: Color(0xFF262626), size: 24),

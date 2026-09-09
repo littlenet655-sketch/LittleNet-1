@@ -5,6 +5,7 @@ import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
 import '../../core/widgets/ln_components.dart';
 import 'edit_profile_screen.dart';
+import 'followers_following_screen.dart';
 
 /// LittleNet V2 – Profile screen.
 ///
@@ -202,8 +203,30 @@ class _ProfileScreenState extends State<ProfileScreen>
                           mainAxisAlignment: MainAxisAlignment.spaceAround,
                           children: [
                             LnStatColumn(value: postsCount, label: 'Posts'),
-                            LnStatColumn(value: followersCount, label: 'Friends'),
-                            LnStatColumn(value: followingCount, label: 'Following'),
+                            LnStatColumn(
+                              value: followersCount,
+                              label: 'Friends',
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => FollowersFollowingScreen(
+                                    authState: widget.authState,
+                                    initialTab: 0,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            LnStatColumn(
+                              value: followingCount,
+                              label: 'Following',
+                              onTap: () => Navigator.of(context).push(
+                                MaterialPageRoute(
+                                  builder: (_) => FollowersFollowingScreen(
+                                    authState: widget.authState,
+                                    initialTab: 1,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ],
                         ),
                       ),
