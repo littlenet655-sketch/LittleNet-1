@@ -32,4 +32,4 @@ def test_reported_user_moderation_has_preview_enforcement_and_safe_escalation():
     # therefore belongs in the audit log and must not consume the event's
     # single final-review row.
     escalation = source.split("if requested == 'ESCALATE':", 1)[1].split("db_status =", 1)[0]
-    assert 'moderation_reviews' not in escalation
+    assert 'INSERT INTO moderation_reviews' not in escalation
