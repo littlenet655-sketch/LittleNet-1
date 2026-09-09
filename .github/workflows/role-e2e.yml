@@ -61,4 +61,4 @@ jobs:
           dbmate --no-dump-schema --migrations-dir db/migrations up
           dbmate --no-dump-schema --migrations-dir db/migrations status
       - name: Run authenticated Kid Parent Admin smoke
-        run: python -m pytest tests/test_real_postgres_role_smoke.py -q -rs
+        run: python -m pytest tests/test_real_postgres_role_smoke.py tests/test_mobile_authenticated_social_e2e.py -q -rs
