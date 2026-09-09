@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'api.dart';
 import 'app_theme.dart';
 import 'screens/auth.dart';
+import 'screens/stitch_kids_shell.dart';
 import 'screens/stitch_shells.dart';
 
 Future<void> main() async {
@@ -89,7 +90,11 @@ class _LittleNetAppState extends State<LittleNetApp> {
         onLogout: _logout,
       );
     }
-    return StitchKidsShell(api: widget.api, user: user!, onLogout: _logout);
+    return StitchKidsShellV2(
+      api: widget.api,
+      user: user!,
+      onLogout: _logout,
+    );
   }
 }
 
