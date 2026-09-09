@@ -23,13 +23,17 @@ def test_canonical_flutter_social_routes_are_registered():
     assert 'POST' in routes['/api/mobile/v1/kids/profiles/<int:target_id>/actions']
 
 
-def test_reported_user_moderation_has_preview_enforcement_and_safe_escalation():
+def test_reported_user_moderation_has_preview_enforcement_and_migrated_escalation():
     source = Path('mobile/admin_api.py').read_text(encoding='utf-8')
+    migration = Path('db/migrations/20260908093000_native_admin_escalation.sql').read_text(encoding='utf-8')
+
     assert "ctype == 'USER'" in source
     assert "account_status='SUSPENDED'" in source
-    assert "'MODERATION_ESCALATED'" in source
-    # The schema permits only APPROVE/BLOCK in moderation_reviews. ESCALATE
-    # therefore belongs in the audit log and must not consume the event's
-    # single final-review row.
+
     escalation = source.split("if requested == 'ESCALATE':", 1)[1].split("db_status =", 1)[0]
-    assert 'INSERT INTO moderation_reviews' not in escalation
+    assert 'INSERT INTO moderation_reviews' in escalation
+    assert "status='OPEN'" not in escalation  # escalation leaves the locked event unchanged/open
+    assert "status='OPEN'" in source  # event lock requires an open review
+
+    assert 'DROP CONSTRAINT IF EXISTS moderation_reviews_event_id_key' in migration
+    assert "CHECK (action IN ('APPROVE','BLOCK','ESCALATE'))" in migration
