@@ -3,10 +3,11 @@ from __future__ import annotations
 from flask import g, jsonify, request
 
 from child.service import can_discover_child, counts, is_follow_pending, is_following
+from childMessage.service import conversation
 from database.connection import execute, fetch_all, fetch_one
 from extensions import csrf, limiter
 from mobile.api import _child_gate, _clean, _post_json, _profile_json, _require_mobile
-from services.social import can_interact, parent_notify, post_visible_to, visible_profile_posts
+from services.social import can_interact, notify, parent_notify, post_visible_to, visible_profile_posts
 
 
 def _gate():
@@ -45,8 +46,7 @@ def _comment_rows(viewer_id: int, post_id: int):
         cid = int(row['child_id'])
         if cid != viewer_id and not _can_view_profile(viewer_id, cid):
             continue
-        item = _profile_json(row)
-        out.append(item)
+        out.append(_profile_json(row))
     return out
 
 
@@ -75,8 +75,7 @@ def _validate_report_target(viewer_id: int, target_type: str, target_id: int):
         )
         if not row or viewer_id not in {int(row['sender_child_id']), int(row['receiver_child_id'])}:
             return None
-        owner = int(row['sender_child_id'])
-        return {'owner_id': owner, 'content_type': 'MESSAGE', 'content_id': target_id}
+        return {'owner_id': int(row['sender_child_id']), 'content_type': 'MESSAGE', 'content_id': target_id}
     return None
 
 
@@ -98,11 +97,59 @@ def register_mobile_stitch_api(bp):
             (post['child_id'],),
         ) or {}
         post.update(creator)
-        return jsonify(
-            ok=True,
-            post=_post_json(post, uid),
-            comments=_clean(_comment_rows(uid, post_id)),
+        return jsonify(ok=True, post=_post_json(post, uid), comments=_clean(_comment_rows(uid, post_id)))
+
+    @bp.route('/api/mobile/v1/kids/friends')
+    @_require_mobile('CHILD')
+    def mobile_kids_friends():
+        blocked = _gate()
+        if blocked:
+            return blocked
+        uid = int(g.mobile_user['user_id'])
+        rows = fetch_all(
+            """SELECT u.user_id,u.full_name,u.username,cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id=CASE WHEN f.child_id=%s THEN f.following_child_id ELSE f.child_id END
+               LEFT JOIN child_profiles cp ON cp.child_id=u.user_id
+               WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'
+                 AND (f.child_id=%s OR f.following_child_id=%s)
+               ORDER BY u.full_name,u.user_id""",
+            (uid, uid, uid),
         )
+        return jsonify(ok=True, friends=[_profile_json(row) for row in rows])
+
+    @bp.route('/api/mobile/v1/kids/chat/<int:peer_id>/share', methods=['POST'])
+    @csrf.exempt
+    @limiter.limit('30 per minute')
+    @_require_mobile('CHILD')
+    def mobile_kids_share_post(peer_id):
+        blocked = _child_gate('messaging')
+        if blocked:
+            return blocked
+        uid = int(g.mobile_user['user_id'])
+        if not can_interact(uid, peer_id):
+            return jsonify(error='approved_connection_required'), 403
+        data = request.get_json(silent=True) or {}
+        try:
+            post_id = int(data.get('post_id'))
+        except (TypeError, ValueError):
+            return jsonify(error='invalid_post'), 400
+        if not post_visible_to(uid, post_id) or not post_visible_to(peer_id, post_id):
+            return jsonify(error='post_not_shareable'), 404
+        cid = conversation(uid, peer_id)
+        if not cid:
+            return jsonify(error='approved_connection_required'), 403
+        row = execute(
+            """INSERT INTO child_messages(
+                   conversation_id,sender_child_id,receiver_child_id,message_type,message_text,
+                   shared_post_id,moderation_status,delivered_at
+               ) VALUES(%s,%s,%s,'SHARED_POST','Shared a LittleNet post',%s,'ALLOWED',NOW())
+               RETURNING child_message_id""",
+            (cid, uid, peer_id, post_id),
+            returning=True,
+        )
+        notify(peer_id, 'MESSAGE', f"{g.mobile_user.get('full_name') or 'A friend'} shared a post with you", f'/chat/{uid}/', uid)
+        return jsonify(ok=True, message_id=int(row['child_message_id']))
 
     @bp.route('/api/mobile/v1/kids/saved')
     @_require_mobile('CHILD')
