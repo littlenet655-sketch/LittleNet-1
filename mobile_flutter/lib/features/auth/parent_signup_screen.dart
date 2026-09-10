@@ -77,10 +77,18 @@ class _ParentSignupScreenState extends State<ParentSignupScreen> {
       setState(() {
         _error = _formatError(e.message);
       });
-    } catch (_) {
-      setState(() {
+    } catch (e) {
+      final msg = e.toString().toLowerCase();
+      if (msg.contains('socket') ||
+          msg.contains('network') ||
+          msg.contains('connection') ||
+          msg.contains('failed host lookup') ||
+          msg.contains('handshake') ||
+          msg.contains('timeout')) {
         _error = 'Unable to connect to LittleNet. Please check your network.';
-      });
+      } else {
+        _error = _formatError(e.toString());
+      }
     } finally {
       if (mounted) {
         setState(() {
