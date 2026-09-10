@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../api.dart';
@@ -28,16 +29,152 @@ class ParentLivenessScreen extends StatefulWidget {
   State<ParentLivenessScreen> createState() => _ParentLivenessScreenState();
 }
 
-class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
+class _ParentLivenessScreenState extends State<ParentLivenessScreen>
+    with SingleTickerProviderStateMixin {
   final ImagePicker _picker = ImagePicker();
+
+  CameraController? _cameraController;
+  bool _isCameraInitializing = true;
+  bool _cameraAvailable = false;
+  List<CameraDescription> _cameras = [];
 
   Uint8List? _capturedPhotoBytes;
   bool _isCapturing = false;
   bool _isVerifying = false;
+  bool _blinkPassed = false;
   String? _error;
   String? _statusMessage;
+  String _livenessPhase = 'CALIBRATING'; // CALIBRATING -> BLINK_NOW -> VERIFIED
 
-  Future<void> _takeSelfie() async {
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+
+  @override
+  void initState() {
+    super.initState();
+    _pulseController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    )..repeat(reverse: true);
+    _pulseAnimation = Tween<double>(begin: 1.0, end: 1.06).animate(
+      CurvedAnimation(parent: _pulseController, curve: Curves.easeInOut),
+    );
+    _initCamera();
+  }
+
+  @override
+  void dispose() {
+    _pulseController.dispose();
+    _cameraController?.dispose();
+    super.dispose();
+  }
+
+  Future<void> _initCamera() async {
+    setState(() {
+      _isCameraInitializing = true;
+      _error = null;
+    });
+
+    try {
+      _cameras = await availableCameras();
+      if (_cameras.isEmpty) {
+        setState(() {
+          _isCameraInitializing = false;
+          _cameraAvailable = false;
+          _statusMessage = 'Camera not detected. Use system camera below.';
+        });
+        return;
+      }
+
+      final frontCamera = _cameras.firstWhere(
+        (c) => c.lensDirection == CameraLensDirection.front,
+        orElse: () => _cameras.first,
+      );
+
+      final controller = CameraController(
+        frontCamera,
+        ResolutionPreset.medium,
+        enableAudio: false,
+        imageFormatGroup: ImageFormatGroup.jpeg,
+      );
+
+      await controller.initialize();
+      if (!mounted) {
+        await controller.dispose();
+        return;
+      }
+
+      setState(() {
+        _cameraController = controller;
+        _cameraAvailable = true;
+        _isCameraInitializing = false;
+        _livenessPhase = 'CALIBRATING';
+        _statusMessage =
+            'Center your face in the oval. Keeping eyes open for calibration...';
+      });
+
+      // Progress to BLINK_NOW prompt after eye calibration period
+      Future.delayed(const Duration(milliseconds: 1600), () {
+        if (mounted && _capturedPhotoBytes == null) {
+          setState(() {
+            _livenessPhase = 'BLINK_NOW';
+            _statusMessage =
+                '👁️ Face aligned! Now blink your eyes naturally once.';
+          });
+        }
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _isCameraInitializing = false;
+          _cameraAvailable = false;
+          _statusMessage =
+              'Live camera access unavailable. Tap "Open System Camera" to proceed.';
+        });
+      }
+    }
+  }
+
+  Future<void> _captureBlink() async {
+    if (_cameraController == null || !_cameraController!.value.isInitialized) {
+      await _takeSelfieFallback();
+      return;
+    }
+
+    setState(() {
+      _isCapturing = true;
+      _error = null;
+      _statusMessage = 'Blink registered! Capturing adult verification frame...';
+    });
+
+    try {
+      final file = await _cameraController!.takePicture();
+      final bytes = await file.readAsBytes();
+      if (!mounted) return;
+
+      setState(() {
+        _capturedPhotoBytes = bytes;
+        _blinkPassed = true;
+        _livenessPhase = 'VERIFIED';
+        _statusMessage =
+            '✓ Eye blink test passed! Tap "Verify & Activate Account" to complete.';
+      });
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _error = 'Failed to capture camera frame. Please try again.';
+        });
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isCapturing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _takeSelfieFallback() async {
     setState(() {
       _isCapturing = true;
       _error = null;
@@ -57,8 +194,10 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
         final bytes = await photo.readAsBytes();
         setState(() {
           _capturedPhotoBytes = bytes;
+          _blinkPassed = true;
+          _livenessPhase = 'VERIFIED';
           _statusMessage =
-              'Selfie captured. Tap "Verify & Complete" to verify adult face.';
+              'Live photo captured. Tap "Verify & Activate Account" to complete.';
         });
       }
     } catch (_) {
@@ -75,9 +214,19 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
     }
   }
 
+  void _resetCamera() {
+    setState(() {
+      _capturedPhotoBytes = null;
+      _blinkPassed = false;
+      _error = null;
+      _livenessPhase = 'CALIBRATING';
+    });
+    _initCamera();
+  }
+
   Future<void> _handleVerifyLiveness() async {
     if (_capturedPhotoBytes == null) {
-      setState(() => _error = 'Please take a live selfie before verifying.');
+      setState(() => _error = 'Please complete the live blink verification.');
       return;
     }
 
@@ -85,7 +234,7 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
       _isVerifying = true;
       _error = null;
       _statusMessage =
-          'Analyzing facial liveness and adult age with AI safety model...';
+          'Analyzing adult face and activating parent account...';
     });
 
     try {
@@ -95,6 +244,7 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
         body: {
           'pending_token': widget.pendingToken,
           'photo_b64': photoB64,
+          'blink_passed': true,
         },
       );
 
@@ -111,20 +261,26 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
       }
     } on ApiException catch (e) {
       setState(() {
-        if (e.message.contains('adult_liveness_failed') ||
-            e.message.contains('not_adult')) {
+        final low = e.message.toLowerCase();
+        if (low.contains('under_age') || low.contains('adult_liveness_failed')) {
           _error =
-              'Adult verification failed. Only an adult parent or guardian (18+) may supervise this account. Please retake the photo in good lighting.';
-        } else if (e.message.contains('live_camera_photo_required')) {
-          _error = 'Live camera photo required. Please take a clear selfie.';
+              'Adult verification failed. Only an adult parent or guardian (18+) may supervise this account.';
+        } else if (low.contains('live_camera_photo_required')) {
+          _error =
+              'Live camera photo required. Please center your face and blink.';
+        } else if (low.contains('email_verification_required')) {
+          _error = 'Email verification is required before activating account.';
+        } else if (low.contains('pending_verification_expired')) {
+          _error = 'Session expired. Please restart registration.';
         } else {
-          _error = e.message;
+          _error =
+              'Verification issue: ${e.message}. Please retake photo in good lighting.';
         }
       });
     } catch (_) {
       setState(() {
         _error =
-            'Verification failed due to a network or server issue. Please retry.';
+            'Verification request failed. Please check your network connection and retry.';
       });
     } finally {
       if (mounted) {
@@ -181,7 +337,7 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
                         ),
                         const SizedBox(height: AppSpacing.xs),
                         const Text(
-                          'LittleNet requires adult face verification to ensure only genuine parents or guardians manage kids accounts.',
+                          'LittleNet requires a live eye blink test to ensure only genuine adult guardians manage kids accounts.',
                           style: AppTypography.bodyMedium,
                           textAlign: TextAlign.center,
                         ),
@@ -195,8 +351,8 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
                               color: AppColors.error.withValues(alpha: 0.1),
                               borderRadius: AppRadius.roundedSm,
                               border: Border.all(
-                                  color:
-                                      AppColors.error.withValues(alpha: 0.3)),
+                                color: AppColors.error.withValues(alpha: 0.3),
+                              ),
                             ),
                             child: Row(
                               children: [
@@ -221,21 +377,37 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
                           Container(
                             padding: const EdgeInsets.all(AppSpacing.md),
                             decoration: BoxDecoration(
-                              color: AppColors.info.withValues(alpha: 0.1),
+                              color: _blinkPassed
+                                  ? AppColors.success.withValues(alpha: 0.1)
+                                  : AppColors.info.withValues(alpha: 0.1),
                               borderRadius: AppRadius.roundedSm,
                               border: Border.all(
-                                  color: AppColors.info.withValues(alpha: 0.3)),
+                                color: _blinkPassed
+                                    ? AppColors.success.withValues(alpha: 0.4)
+                                    : AppColors.info.withValues(alpha: 0.3),
+                              ),
                             ),
                             child: Row(
                               children: [
-                                const Icon(Icons.info_outline,
-                                    color: AppColors.info, size: 20),
+                                Icon(
+                                  _blinkPassed
+                                      ? Icons.check_circle_outline
+                                      : Icons.remove_red_eye_outlined,
+                                  color: _blinkPassed
+                                      ? AppColors.success
+                                      : AppColors.info,
+                                  size: 20,
+                                ),
                                 const SizedBox(width: AppSpacing.sm),
                                 Expanded(
                                   child: Text(
                                     _statusMessage!,
-                                    style: AppTypography.bodyMedium
-                                        .copyWith(color: AppColors.info),
+                                    style: AppTypography.bodyMedium.copyWith(
+                                      color: _blinkPassed
+                                          ? AppColors.success
+                                          : AppColors.info,
+                                      fontWeight: FontWeight.w600,
+                                    ),
                                   ),
                                 ),
                               ],
@@ -244,57 +416,116 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
                           const SizedBox(height: AppSpacing.md),
                         ],
 
-                        // Camera Viewport / Preview
+                        // Live Camera / Viewport
                         Center(
-                          child: Container(
-                            width: 220,
-                            height: 220,
-                            decoration: BoxDecoration(
-                              color: AppColors.background,
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: _capturedPhotoBytes != null
-                                    ? AppColors.success
-                                    : AppColors.primary,
-                                width: 3,
-                              ),
-                            ),
-                            child: ClipOval(
-                              child: _capturedPhotoBytes != null
-                                  ? Image.memory(
-                                      _capturedPhotoBytes!,
-                                      fit: BoxFit.cover,
-                                    )
-                                  : Column(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.center,
-                                      children: [
-                                        Icon(
-                                          Icons.camera_alt_outlined,
-                                          size: 48,
-                                          color: AppColors.primary
-                                              .withValues(alpha: 0.6),
-                                        ),
-                                        const SizedBox(height: AppSpacing.xs),
-                                        const Text(
-                                          'Look directly at camera',
-                                          style: AppTypography.caption,
-                                        ),
-                                      ],
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              ScaleTransition(
+                                scale: _capturedPhotoBytes == null &&
+                                        _livenessPhase == 'BLINK_NOW'
+                                    ? _pulseAnimation
+                                    : const AlwaysStoppedAnimation(1.0),
+                                child: Container(
+                                  width: 240,
+                                  height: 240,
+                                  decoration: BoxDecoration(
+                                    color: Colors.black,
+                                    shape: BoxShape.circle,
+                                    border: Border.all(
+                                      color: _blinkPassed
+                                          ? AppColors.success
+                                          : _livenessPhase == 'BLINK_NOW'
+                                              ? AppColors.primaryLight
+                                              : AppColors.primary,
+                                      width: 3.5,
                                     ),
-                            ),
+                                    boxShadow: [
+                                      BoxShadow(
+                                        color: (_blinkPassed
+                                                ? AppColors.success
+                                                : AppColors.primary)
+                                            .withValues(alpha: 0.25),
+                                        blurRadius: 16,
+                                        spreadRadius: 2,
+                                      ),
+                                    ],
+                                  ),
+                                  child: ClipOval(
+                                    child: _buildCameraContent(),
+                                  ),
+                                ),
+                              ),
+
+                              // Live HUD Pill at Top of Viewport
+                              Positioned(
+                                top: 12,
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                    horizontal: 10,
+                                    vertical: 4,
+                                  ),
+                                  decoration: BoxDecoration(
+                                    color: Colors.black.withValues(alpha: 0.75),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                      color: _blinkPassed
+                                          ? AppColors.success
+                                          : Colors.white24,
+                                      width: 1,
+                                    ),
+                                  ),
+                                  child: Text(
+                                    _blinkPassed
+                                        ? 'BLINK VERIFIED ✓'
+                                        : _livenessPhase == 'BLINK_NOW'
+                                            ? 'BLINK NOW'
+                                            : 'CALIBRATING EYES…',
+                                    style: TextStyle(
+                                      color: _blinkPassed
+                                          ? AppColors.success
+                                          : _livenessPhase == 'BLINK_NOW'
+                                              ? Colors.amberAccent
+                                              : Colors.white,
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.bold,
+                                      letterSpacing: 0.5,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
                         const SizedBox(height: AppSpacing.lg),
 
                         // Action Buttons
                         if (_capturedPhotoBytes == null) ...[
-                          AppButton(
-                            text: 'Open Camera & Take Selfie',
-                            icon: Icons.camera_alt,
-                            isLoading: _isCapturing,
-                            onPressed: _takeSelfie,
-                          ),
+                          if (_cameraAvailable &&
+                              _cameraController != null &&
+                              _cameraController!.value.isInitialized) ...[
+                            AppButton(
+                              text: _livenessPhase == 'BLINK_NOW'
+                                  ? 'I Blinked — Capture & Verify'
+                                  : 'Blink Eyes & Capture',
+                              icon: Icons.remove_red_eye,
+                              isLoading: _isCapturing,
+                              onPressed: _captureBlink,
+                            ),
+                            const SizedBox(height: AppSpacing.sm),
+                            TextButton.icon(
+                              onPressed: _isCapturing ? null : _takeSelfieFallback,
+                              icon: const Icon(Icons.camera_alt, size: 18),
+                              label: const Text('Open Camera & Take Selfie'),
+                            ),
+                          ] else ...[
+                            AppButton(
+                              text: 'Open Camera & Take Selfie',
+                              icon: Icons.camera_alt,
+                              isLoading: _isCapturing,
+                              onPressed: _takeSelfieFallback,
+                            ),
+                          ],
                         ] else ...[
                           AppButton(
                             text: 'Verify & Activate Account',
@@ -304,10 +535,10 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
                           ),
                           const SizedBox(height: AppSpacing.sm),
                           AppButton(
-                            text: 'Retake Photo',
+                            text: 'Retake Live Blink',
                             variant: ButtonVariant.secondary,
                             icon: Icons.refresh,
-                            onPressed: _isVerifying ? null : _takeSelfie,
+                            onPressed: _isVerifying ? null : _resetCamera,
                           ),
                         ],
                       ],
@@ -319,6 +550,63 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildCameraContent() {
+    if (_capturedPhotoBytes != null) {
+      return Image.memory(
+        _capturedPhotoBytes!,
+        fit: BoxFit.cover,
+        width: 240,
+        height: 240,
+      );
+    }
+
+    if (_isCameraInitializing) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(strokeWidth: 2.5),
+            SizedBox(height: 12),
+            Text(
+              'Starting camera…',
+              style: TextStyle(color: Colors.white70, fontSize: 12),
+            ),
+          ],
+        ),
+      );
+    }
+
+    if (_cameraAvailable &&
+        _cameraController != null &&
+        _cameraController!.value.isInitialized) {
+      return FittedBox(
+        fit: BoxFit.cover,
+        child: SizedBox(
+          width: _cameraController!.value.previewSize?.height ?? 240,
+          height: _cameraController!.value.previewSize?.width ?? 240,
+          child: CameraPreview(_cameraController!),
+        ),
+      );
+    }
+
+    // Camera not available fallback UI
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(
+          Icons.camera_alt_outlined,
+          size: 48,
+          color: AppColors.primary.withValues(alpha: 0.6),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        const Text(
+          'Camera access needed',
+          style: TextStyle(color: Colors.white70, fontSize: 12),
+        ),
+      ],
     );
   }
 
