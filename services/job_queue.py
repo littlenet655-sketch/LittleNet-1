@@ -64,9 +64,10 @@ class LocalJobQueue(JobQueue):
 class QStashJobQueue(JobQueue):
     """Production provider: dispatches job to Modal worker via Upstash QStash."""
 
-    def __init__(self, token: str, endpoint_url: str):
+    def __init__(self, token: str, endpoint_url: str, base_url: str | None = None):
         self.token = token
         self.endpoint_url = endpoint_url
+        self.base_url = (base_url or os.getenv("QSTASH_URL") or "https://qstash.upstash.io").rstrip("/")
 
     def enqueue(self, job_type: str, payload: dict[str, Any], deduplication_id: str | None = None) -> str:
         import requests
@@ -84,14 +85,21 @@ class QStashJobQueue(JobQueue):
             headers["Upstash-Forward-X-LittleNet-AI-Key"] = ai_secret
 
         # Target endpoint (Modal webhook or LittleNet worker)
-        qstash_url = f"https://qstash.upstash.io/v2/publish/{self.endpoint_url}"
+        qstash_url = f"{self.base_url}/v2/publish/{self.endpoint_url}"
         data = {
             "job_type": job_type,
             "payload": payload,
         }
-        resp = requests.post(qstash_url, headers=headers, data=json.dumps(data), timeout=10)
-        resp.raise_for_status()
-        return resp.json().get("messageId", deduplication_id or "qstash_dispatched")
+        try:
+            resp = requests.post(qstash_url, headers=headers, data=json.dumps(data), timeout=10)
+            resp.raise_for_status()
+            return resp.json().get("messageId", deduplication_id or "qstash_dispatched")
+        except Exception as exc:
+            err_msg = str(exc).replace(self.token, "[REDACTED]")
+            if ai_secret:
+                err_msg = err_msg.replace(ai_secret, "[REDACTED]")
+            logger.error("Failed to publish job to QStash at %s: %s", qstash_url, err_msg)
+            raise RuntimeError(f"QStash publish failed: {err_msg}") from None
 
 
 def validate_job_queue_config(is_production: bool | None = None) -> str:
@@ -152,7 +160,8 @@ def get_job_queue() -> JobQueue:
     if provider == "qstash":
         token = os.environ["QSTASH_TOKEN"].strip()
         endpoint = os.environ["QSTASH_MODAL_ENDPOINT"].strip()
-        return QStashJobQueue(token, endpoint)
+        base_url = (os.getenv("QSTASH_URL") or "").strip() or None
+        return QStashJobQueue(token, endpoint, base_url=base_url)
 
     return LocalJobQueue(run_sync=os.getenv("LITTLENET_SYNC_JOBS") == "1")
 

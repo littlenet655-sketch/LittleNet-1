@@ -286,3 +286,60 @@ def test_job_queue_prod_succeeds_when_fully_configured():
         assert provider == "qstash"
         q = get_job_queue()
         assert isinstance(q, QStashJobQueue)
+
+
+def test_qstash_job_queue_uses_configured_regional_url():
+    queue = QStashJobQueue("tok_secret_123", "https://modal.endpoint/job", base_url="https://qstash-eu-central-1.upstash.io")
+    with patch("requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"messageId": "msg_region_1"}
+        mock_post.return_value = mock_resp
+
+        msg_id = queue.enqueue("media_proc", {"item": 1}, deduplication_id="dedup_1")
+        assert msg_id == "msg_region_1"
+        assert mock_post.call_args[0][0] == "https://qstash-eu-central-1.upstash.io/v2/publish/https://modal.endpoint/job"
+
+
+def test_qstash_job_queue_uses_default_when_url_absent():
+    with patch.dict(os.environ, {}, clear=True):
+        queue = QStashJobQueue("tok_secret_456", "https://modal.endpoint/job")
+        with patch("requests.post") as mock_post:
+            mock_resp = MagicMock()
+            mock_resp.json.return_value = {"messageId": "msg_default_1"}
+            mock_post.return_value = mock_resp
+
+            msg_id = queue.enqueue("media_proc", {"item": 2})
+            assert msg_id == "msg_default_1"
+            assert mock_post.call_args[0][0] == "https://qstash.upstash.io/v2/publish/https://modal.endpoint/job"
+
+
+def test_qstash_job_queue_token_and_secret_redacted_on_failure():
+    secret_token = "super_sensitive_token_xyz999"
+    secret_ai = "super_sensitive_ai_secret_abc111"
+    queue = QStashJobQueue(secret_token, "https://modal.endpoint/job")
+    with patch.dict(os.environ, {"AI_SHARED_SECRET": secret_ai}), \
+         patch("requests.post") as mock_post:
+        mock_post.side_effect = Exception(f"Connection failed for {secret_token} and {secret_ai}")
+
+        with pytest.raises(RuntimeError) as exc_info:
+            queue.enqueue("media_proc", {"item": 3})
+
+        err_str = str(exc_info.value)
+        assert secret_token not in err_str
+        assert secret_ai not in err_str
+        assert "[REDACTED]" in err_str
+
+
+def test_qstash_job_queue_forwards_ai_shared_secret():
+    queue = QStashJobQueue("tok_abc", "https://modal.endpoint/job")
+    with patch.dict(os.environ, {"AI_SHARED_SECRET": "test_ai_secret_777"}), \
+         patch("requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"messageId": "msg_fwd_1"}
+        mock_post.return_value = mock_resp
+
+        queue.enqueue("media_proc", {"test": True})
+        headers = mock_post.call_args[1]["headers"]
+        assert headers.get("Upstash-Forward-X-LittleNet-AI-Key") == "test_ai_secret_777"
+        assert headers.get("Authorization") == "Bearer tok_abc"
+
