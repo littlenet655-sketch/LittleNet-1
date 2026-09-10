@@ -11,7 +11,7 @@ export XDG_CACHE_HOME="${XDG_CACHE_HOME:-/data/cache}"
 # idempotent; all post-adoption changes are tracked by dbmate.
 python tools/init_db.py
 if command -v dbmate >/dev/null 2>&1; then
-  dbmate --strict --no-dump-schema --migrations-dir "${DBMATE_MIGRATIONS_DIR:-db/migrations}" up
+  dbmate --no-dump-schema --migrations-dir "${DBMATE_MIGRATIONS_DIR:-db/migrations}" up
 fi
 
 exec gunicorn app:app --bind "0.0.0.0:${PORT:-8080}" --workers 1 --threads 4 --timeout 240 --graceful-timeout 45 --access-logfile - --error-logfile -
