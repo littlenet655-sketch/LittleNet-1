@@ -39,6 +39,7 @@ void main() {
 
     expect(find.text('Create Parent Account'), findsOneWidget);
     expect(find.text('Full Name'), findsOneWidget);
+    expect(find.text('Username'), findsOneWidget);
     expect(find.text('Email Address'), findsOneWidget);
     expect(find.text('Password'), findsOneWidget);
     expect(find.text('Confirm Password'), findsOneWidget);

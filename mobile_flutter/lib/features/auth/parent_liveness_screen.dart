@@ -3,6 +3,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../api.dart';
+import '../../brand_logo.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/models/user.dart';
 import '../../core/theme/colors.dart';
@@ -148,6 +149,12 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Brand Header
+                const Center(
+                  child: LittleNetAppLogo(size: 48, elevation: 2),
+                ),
+                const SizedBox(height: AppSpacing.md),
+
                 // Step Indicator
                 Row(
                   children: [

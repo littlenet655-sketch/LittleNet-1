@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../api.dart';
+import '../../brand_logo.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/spacing.dart';
@@ -184,6 +185,12 @@ class _EmailOtpScreenState extends State<EmailOtpScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Brand Header
+                const Center(
+                  child: LittleNetAppLogo(size: 48, elevation: 2),
+                ),
+                const SizedBox(height: AppSpacing.md),
+
                 // Step Indicator
                 Row(
                   children: [

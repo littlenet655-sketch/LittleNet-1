@@ -19,6 +19,8 @@ class AppTextField extends StatefulWidget {
     this.enabled = true,
     this.autofillHints,
     this.maxLines = 1,
+    this.autocorrect = true,
+    this.enableSuggestions = true,
   });
 
   final TextEditingController controller;
@@ -35,6 +37,8 @@ class AppTextField extends StatefulWidget {
   final bool enabled;
   final Iterable<String>? autofillHints;
   final int? maxLines;
+  final bool autocorrect;
+  final bool enableSuggestions;
 
   @override
   State<AppTextField> createState() => _AppTextFieldState();
@@ -79,6 +83,8 @@ class _AppTextFieldState extends State<AppTextField> {
       enabled: widget.enabled,
       autofillHints: widget.autofillHints,
       validator: widget.validator,
+      autocorrect: widget.autocorrect,
+      enableSuggestions: widget.enableSuggestions,
       onChanged: widget.onChanged,
       onFieldSubmitted: widget.onSubmitted,
       decoration: InputDecoration(

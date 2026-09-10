@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../api.dart';
+import '../../brand_logo.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/spacing.dart';
@@ -20,6 +21,7 @@ class ParentSignupScreen extends StatefulWidget {
 class _ParentSignupScreenState extends State<ParentSignupScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
+  final _usernameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
@@ -30,6 +32,7 @@ class _ParentSignupScreenState extends State<ParentSignupScreen> {
   @override
   void dispose() {
     _nameController.dispose();
+    _usernameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -47,10 +50,13 @@ class _ParentSignupScreenState extends State<ParentSignupScreen> {
       final res = await widget.authState.apiClient.post(
         '/api/mobile/v1/auth/parent/register',
         body: {
+          'username': _usernameController.text.trim(),
           'full_name': _nameController.text.trim(),
           'email': _emailController.text.trim(),
           'password': _passwordController.text,
           'confirm_password': _confirmPasswordController.text,
+          'dob': '1990-01-01',
+          'guardian_declaration': '1',
         },
       );
 
@@ -85,13 +91,26 @@ class _ParentSignupScreenState extends State<ParentSignupScreen> {
   }
 
   String _formatError(String code) {
-    if (code.contains('already registered') || code.contains('email_exists')) {
+    final low = code.toLowerCase();
+    if (low.contains('already exists') ||
+        low.contains('already taken') ||
+        (low.contains('username') && low.contains('exists'))) {
+      return 'This username is already taken. Try another one.';
+    }
+    if (low.contains('already registered') ||
+        low.contains('email_exists') ||
+        low.contains('already used')) {
       return 'This email address is already registered. Please sign in.';
     }
-    if (code.contains('password_too_short')) {
+    if (low.contains('safe characters')) {
+      return 'Username must be 3–30 letters, numbers, underscores, or dots.';
+    }
+    if (low.contains('password_too_short') ||
+        low.contains('at least 8 characters')) {
       return 'Password must be at least 8 characters long.';
     }
-    if (code.contains('passwords_do_not_match')) {
+    if (low.contains('passwords_do_not_match') ||
+        low.contains('do not match')) {
       return 'Passwords do not match.';
     }
     return code;
@@ -111,6 +130,12 @@ class _ParentSignupScreenState extends State<ParentSignupScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Brand Header
+                const Center(
+                  child: LittleNetAppLogo(size: 48, elevation: 2),
+                ),
+                const SizedBox(height: AppSpacing.md),
+
                 // Step Indicator
                 Row(
                   children: [
@@ -168,6 +193,30 @@ class _ParentSignupScreenState extends State<ParentSignupScreen> {
                             validator: (val) {
                               if (val == null || val.trim().length < 2) {
                                 return 'Please enter your full name';
+                              }
+                              return null;
+                            },
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          AppTextField(
+                            controller: _usernameController,
+                            label: 'Username',
+                            hint: 'Choose a unique username',
+                            prefixIcon: Icons.alternate_email,
+                            keyboardType: TextInputType.text,
+                            autocorrect: false,
+                            enableSuggestions: false,
+                            textInputAction: TextInputAction.next,
+                            validator: (val) {
+                              final trimmed = val?.trim() ?? '';
+                              if (trimmed.isEmpty) {
+                                return 'Username is required.';
+                              }
+                              if (trimmed.length < 3 || trimmed.length > 30) {
+                                return 'Username must be 3–30 characters.';
+                              }
+                              if (!RegExp(r'^[A-Za-z0-9_.]+$').hasMatch(trimmed)) {
+                                return 'Only letters, numbers, underscores, and dots are allowed.';
                               }
                               return null;
                             },

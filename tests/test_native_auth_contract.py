@@ -69,3 +69,19 @@ def test_demo_database_reset_is_explicit_and_preserves_learning_bank():
     assert "littlenet-web-secrets" in modal
     assert "reset_all_accounts" in modal
     assert "dry_run: bool = True" in modal
+
+
+def test_v2_parent_signup_and_branding_contract():
+    signup = _text("mobile_flutter/lib/features/auth/parent_signup_screen.dart")
+    login = _text("mobile_flutter/lib/features/auth/login_screen.dart")
+
+    # Parent registration must include username in state and post body
+    assert "_usernameController" in signup
+    assert "'username': _usernameController.text.trim()" in signup
+    assert "Icons.alternate_email" in signup
+    assert "Choose a unique username" in signup
+
+    # Login screen must use LittleNetAppLogo and no generic shield icon
+    assert "LittleNetAppLogo" in login
+    assert "Icons.shield_outlined" not in login
+

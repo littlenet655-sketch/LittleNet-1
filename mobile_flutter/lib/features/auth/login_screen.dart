@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../api.dart';
+import '../../brand_logo.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/models/user.dart';
 import '../../core/theme/colors.dart';
@@ -221,18 +222,10 @@ class _LoginScreenState extends State<LoginScreen>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 // Brand Header
-                Center(
-                  child: Container(
-                    padding: const EdgeInsets.all(AppSpacing.md),
-                    decoration: BoxDecoration(
-                      color: AppColors.primary.withValues(alpha: 0.1),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.shield_outlined,
-                      size: 48,
-                      color: AppColors.primary,
-                    ),
+                const Center(
+                  child: LittleNetAppLogo(
+                    size: 88,
+                    elevation: 6,
                   ),
                 ),
                 const SizedBox(height: AppSpacing.md),
@@ -320,22 +313,26 @@ class _LoginScreenState extends State<LoginScreen>
                           // Input Fields
                           AppTextField(
                             controller: _identifierController,
-                            label: _currentMode == 'parent'
-                                ? 'Parent Email'
-                                : 'Username',
-                            hint: _currentMode == 'parent'
-                                ? 'parent@example.com'
-                                : 'Enter your username',
-                            prefixIcon: _currentMode == 'parent'
-                                ? Icons.email_outlined
-                                : Icons.person_outline,
-                            keyboardType: _currentMode == 'parent'
-                                ? TextInputType.emailAddress
-                                : TextInputType.text,
+                            label: _currentMode == 'kids'
+                                ? 'Username'
+                                : 'Username or Email',
+                            hint: _currentMode == 'kids'
+                                ? 'Enter your username'
+                                : 'Enter your username or email',
+                            prefixIcon: _currentMode == 'kids'
+                                ? Icons.person_outline
+                                : Icons.alternate_email,
+                            keyboardType: _currentMode == 'kids'
+                                ? TextInputType.text
+                                : TextInputType.emailAddress,
+                            autocorrect: false,
+                            enableSuggestions: false,
                             textInputAction: TextInputAction.next,
                             validator: (val) {
                               if (val == null || val.trim().isEmpty) {
-                                return 'Please enter your username or email';
+                                return _currentMode == 'kids'
+                                    ? 'Please enter your username'
+                                    : 'Please enter your username or email';
                               }
                               return null;
                             },
@@ -384,8 +381,9 @@ class _LoginScreenState extends State<LoginScreen>
 
                 // Parent Registration CTA
                 if (_currentMode == 'parent') ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                  Wrap(
+                    alignment: WrapAlignment.center,
+                    crossAxisAlignment: WrapCrossAlignment.center,
                     children: [
                       const Text("Don't have an account?",
                           style: AppTypography.bodyMedium),
