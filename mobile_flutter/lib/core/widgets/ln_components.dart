@@ -181,8 +181,21 @@ class _LnPostCardState extends State<LnPostCard>
     final caption = widget.item['caption']?.toString() ?? '';
     final mediaUrl = widget.item['media_url']?.toString();
     final category = widget.item['content_category']?.toString() ?? 'Learning';
+    final locationName = widget.item['location_name']?.toString();
     final commentCount = widget.item['comments'] as int? ??
         widget.item['comment_count'] as int? ?? 0;
+    final createdAtStr = widget.item['created_at']?.toString();
+    final timeAgo = _formatRelativeTime(createdAtStr);
+    final rawTags = widget.item['tags'];
+    final List<String> tags = rawTags is List
+        ? rawTags.map((e) => e.toString()).toList()
+        : [];
+
+    final subtitleParts = [
+      if (locationName != null && locationName.trim().isNotEmpty) '📍 ${locationName.trim()}',
+      category,
+      if (timeAgo.isNotEmpty) timeAgo,
+    ];
 
     return Container(
       color: Colors.white,
@@ -203,7 +216,7 @@ class _LnPostCardState extends State<LnPostCard>
                       Text(authorName,
                           style: AppTypography.labelLarge
                               .copyWith(fontSize: 13, color: const Color(0xFF262626))),
-                      Text(category,
+                      Text(subtitleParts.join(' · '),
                           style: const TextStyle(
                               fontSize: 11, color: Color(0xFF8E8E8E))),
                     ],
@@ -294,7 +307,7 @@ class _LnPostCardState extends State<LnPostCard>
             ),
           ),
 
-          // ── Like count + caption ─────────────────────
+          // ── Like count + caption + hashtags ───────────
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 14),
             child: Column(
@@ -334,6 +347,24 @@ class _LnPostCardState extends State<LnPostCard>
                   ),
                   const SizedBox(height: 4),
                 ],
+                if (tags.isNotEmpty) ...[
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 4,
+                    children: tags.map((t) {
+                      final tagStr = t.startsWith('#') ? t : '#$t';
+                      return Text(
+                        tagStr,
+                        style: const TextStyle(
+                          color: Color(0xFF3897F0),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      );
+                    }).toList(),
+                  ),
+                  const SizedBox(height: 4),
+                ],
                 if (commentCount > 0)
                   Text(
                     'View all $commentCount comments',
@@ -350,6 +381,27 @@ class _LnPostCardState extends State<LnPostCard>
         ],
       ),
     );
+  }
+}
+
+String _formatRelativeTime(String? dateStr) {
+  if (dateStr == null || dateStr.isEmpty) return '';
+  try {
+    final dt = DateTime.parse(dateStr).toLocal();
+    final now = DateTime.now();
+    final diff = now.difference(dt);
+    if (diff.inSeconds < 45) return 'Just now';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}m';
+    if (diff.inHours < 24) return '${diff.inHours}h';
+    if (diff.inDays == 1) return 'Yesterday';
+    if (diff.inDays < 7) return '${diff.inDays}d';
+    const months = [
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+    ];
+    return '${months[dt.month - 1]} ${dt.day}';
+  } catch (_) {
+    return '';
   }
 }
 

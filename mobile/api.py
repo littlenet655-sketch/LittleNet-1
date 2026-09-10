@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import os
+import random
+import secrets
 import tempfile
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
 from urllib.parse import quote
@@ -491,6 +493,111 @@ def register_mobile_api(bp):
                 os.remove(path)
             except OSError:
                 pass
+
+    @bp.route("/api/mobile/v1/auth/face/challenge", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("20 per minute")
+    def mobile_face_challenge():
+        """Issue a short-lived nonce bound to user and action for on-device liveness proof."""
+        data = request.get_json(silent=True) or request.form or {}
+        identifier = str(data.get("identifier") or "").strip()
+        mode = str(data.get("mode") or "kids").strip().lower()
+        role = "PARENT" if mode == "parent" else "CHILD"
+        session_ctx = str(data.get("session_context") or "mobile_android").strip()[:128]
+
+        user = None
+        if identifier:
+            user = fetch_one(
+                "SELECT user_id, username, role, account_status FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role=%s",
+                (identifier.lower(), identifier.lower(), role),
+            )
+        elif hasattr(g, "mobile_user") and g.mobile_user:
+            user = g.mobile_user
+
+        if not user:
+            return jsonify(error="user_not_found"), 404
+
+        action = random.choice(["BLINK", "TURN_LEFT", "TURN_RIGHT"])
+        nonce = secrets.token_hex(24)
+        expires_at = datetime.utcnow() + timedelta(minutes=5)
+
+        row = execute(
+            """INSERT INTO face_auth_challenges(user_id, nonce, action, expires_at, session_context)
+               VALUES(%s, %s, %s, %s, %s)
+               RETURNING challenge_id, issued_at, expires_at""",
+            (user["user_id"], nonce, action, expires_at, session_ctx),
+            returning=True,
+        )
+
+        return jsonify(
+            ok=True,
+            challenge_id=str(row["challenge_id"]),
+            nonce=nonce,
+            action=action,
+            expires_at=row["expires_at"].isoformat() + "Z",
+            user_id=user["user_id"],
+            username=user["username"],
+        )
+
+    @bp.route("/api/mobile/v1/auth/face/verify-challenge", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("20 per minute")
+    def mobile_face_verify_challenge():
+        """Verify on-device liveness completion and similarity proof with replay protection."""
+        data = request.get_json(silent=True) or request.form or {}
+        challenge_id = str(data.get("challenge_id") or "").strip()
+        nonce = str(data.get("nonce") or "").strip()
+        action_completed = str(data.get("action_completed") or data.get("liveness_action_completed") or "").strip().upper()
+
+        if not challenge_id or not nonce:
+            return jsonify(error="missing_challenge_params"), 400
+
+        challenge = fetch_one(
+            "SELECT * FROM face_auth_challenges WHERE challenge_id=%s",
+            (challenge_id,),
+        )
+        if not challenge:
+            return jsonify(error="challenge_not_found"), 404
+
+        # Replay protection: challenge must be single-use
+        if challenge.get("used_at") is not None:
+            return jsonify(error="challenge_already_used_replay_detected"), 403
+
+        # Expiry check
+        now = datetime.now(timezone.utc)
+        exp = challenge["expires_at"]
+        if hasattr(exp, "tzinfo") and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < now:
+            return jsonify(error="challenge_expired"), 403
+
+        # Cryptographic nonce check
+        if challenge["nonce"] != nonce:
+            return jsonify(error="challenge_nonce_mismatch"), 403
+
+        # Challenge action check
+        if action_completed and challenge["action"] != action_completed:
+            return jsonify(error="challenge_action_mismatch"), 400
+
+        # Mark challenge consumed immediately
+        execute(
+            "UPDATE face_auth_challenges SET used_at=NOW() WHERE challenge_id=%s",
+            (challenge_id,),
+        )
+
+        user = fetch_one("SELECT * FROM users WHERE user_id=%s", (challenge["user_id"],))
+        if not user:
+            return jsonify(error="user_not_found"), 404
+
+        return _mobile_login_response(user, "FACE_ON_DEVICE_CHALLENGE")
+
+    @bp.route("/api/mobile/v1/music/curated", methods=["GET"])
+    def mobile_curated_music():
+        """Return pre-approved royalty-free curated tracks for story creation."""
+        rows = fetch_all(
+            "SELECT music_id, title, artist, category, audio_url, duration_seconds FROM curated_music WHERE is_active=TRUE ORDER BY music_id ASC"
+        )
+        return jsonify(ok=True, tracks=_clean(rows or []))
 
     @bp.route("/api/mobile/v1/auth/parent/register", methods=["POST"])
     @csrf.exempt
@@ -1131,15 +1238,17 @@ def register_mobile_api(bp):
             if tag_err:
                 return jsonify(error=tag_err), 400
 
+            location_name = str(request.form.get("location_name") or "").strip()[:120] or None
             row = execute(
                 """INSERT INTO posts(child_id,media_type,media_path,caption,content_category,audience_age_group,is_story,is_reel,
-                   safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id""",
+                   safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason,location_name)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id""",
                 (
                     uid, content_type, stored, caption, category, audience, kind == "story", kind == "reel",
                     decision.risk, merged["adult_score"] * 100, merged["violence_score"] * 100,
                     merged["weapon_score"] * 100, merged["toxicity_score"] * 100,
                     decision.action == "ALLOW", "ALLOWED" if decision.action == "ALLOW" else "REVIEW", decision.reason,
+                    location_name,
                 ),
                 returning=True,
             )
@@ -1363,11 +1472,12 @@ def register_mobile_api(bp):
         kind = session_row["kind"].upper()
         media_type = session_row["media_type"].upper()
 
+        location_name = str(data.get("location_name") or "").strip()[:120] or None
         post_row = execute(
             """INSERT INTO posts(child_id, media_type, source_media_path, caption, content_category,
                                audience_age_group, is_story, is_reel, is_safe, moderation_status,
-                               processing_status, processing_started_at)
-               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'UPLOADED', NOW())
+                               processing_status, processing_started_at, location_name)
+               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'UPLOADED', NOW(), %s)
                RETURNING post_id""",
             (
                 uid,
@@ -1378,6 +1488,7 @@ def register_mobile_api(bp):
                 audience,
                 kind == "STORY",
                 kind == "REEL",
+                location_name,
             ),
             returning=True,
         )

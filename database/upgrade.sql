@@ -212,3 +212,39 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
   consumed_at TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_upload_sessions_child ON upload_sessions(child_id, status, created_at DESC);
+
+-- Master Final Release: Post Location, Replay Protection & Curated Music
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS location_name VARCHAR(120);
+
+CREATE TABLE IF NOT EXISTS face_auth_challenges (
+  challenge_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  nonce VARCHAR(64) NOT NULL UNIQUE,
+  action VARCHAR(32) NOT NULL DEFAULT 'BLINK',
+  issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  session_context VARCHAR(128)
+);
+CREATE INDEX IF NOT EXISTS idx_face_auth_challenges_user ON face_auth_challenges(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_face_auth_challenges_nonce ON face_auth_challenges(nonce);
+
+CREATE TABLE IF NOT EXISTS curated_music (
+  music_id SERIAL PRIMARY KEY,
+  title VARCHAR(120) NOT NULL,
+  artist VARCHAR(120) NOT NULL,
+  category VARCHAR(60) NOT NULL DEFAULT 'Happy',
+  audio_url TEXT NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 30,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO curated_music (title, artist, category, audio_url, duration_seconds)
+VALUES
+  ('Sunshine Whistle', 'LittleNet Studio', 'Happy', 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=sunshine-113069.mp3', 30),
+  ('Playful Ukulele', 'FunKids Media', 'Acoustic', 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=ukulele-trip-version-60s-9893.mp3', 30),
+  ('Lofi Study Beats', 'SafeChill', 'Learning', 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=lofi-study-112191.mp3', 45),
+  ('Silly Cartoon Bounce', 'ComedyKids', 'Comedy', 'https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f77c30.mp3?filename=funny-kids-123495.mp3', 25),
+  ('Space Adventure', 'AstroSound', 'Sci-Fi', 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_12b0c7443c.mp3?filename=space-adventure-6681.mp3', 35)
+ON CONFLICT DO NOTHING;

@@ -72,6 +72,21 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
     (label: 'Ages 14–18', value: '14-18'),
   ];
 
+  String? _selectedLocation; // null = Location OFF (Default)
+  static const List<String> _safeLocations = [
+    'Bengaluru',
+    'Cubbon Park',
+    'Science Center',
+    'Art Studio',
+    'School Campus',
+    'City Museum',
+    'Sports Ground',
+  ];
+
+  Map<String, dynamic>? _selectedMusic;
+  List<Map<String, dynamic>> _curatedTracks = [];
+  bool _loadingMusic = false;
+
   @override
   void initState() {
     super.initState();
@@ -232,6 +247,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       category: _selectedCategory,
       audience: _audience,
       tags: List.unmodifiable(_tags),
+      locationName: _selectedLocation,
       authState: widget.authState,
     ));
 
@@ -246,6 +262,97 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
         _statusMessage = 'Upload started! Moderation running in background.';
       });
     }
+  }
+
+  Future<void> _openMusicPicker() async {
+    HapticFeedback.selectionClick();
+    if (_curatedTracks.isEmpty && !_loadingMusic) {
+      setState(() => _loadingMusic = true);
+      try {
+        final res = await widget.authState.apiClient.get('/api/mobile/v1/music/curated');
+        final list = (res['tracks'] as List?)?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
+        if (mounted) {
+          setState(() {
+            _curatedTracks = list;
+            _loadingMusic = false;
+          });
+        }
+      } catch (e) {
+        if (mounted) setState(() => _loadingMusic = false);
+      }
+    }
+
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text(
+                    '🎵 Pre-Approved Story Music',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  if (_selectedMusic != null)
+                    TextButton(
+                      onPressed: () {
+                        setState(() => _selectedMusic = null);
+                        Navigator.pop(ctx);
+                      },
+                      child: const Text('Remove', style: TextStyle(color: Colors.red)),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              if (_loadingMusic)
+                const Center(child: Padding(padding: EdgeInsets.all(24), child: CircularProgressIndicator()))
+              else if (_curatedTracks.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Center(child: Text('No tracks available right now.')),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _curatedTracks.length,
+                    separatorBuilder: (_, __) => const Divider(height: 1),
+                    itemBuilder: (c, i) {
+                      final track = _curatedTracks[i];
+                      final isSelected = _selectedMusic?['music_id'] == track['music_id'];
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isSelected ? AppColors.primary : const Color(0xFFF0F0F0),
+                          child: Icon(Icons.music_note, color: isSelected ? Colors.white : AppColors.primary, size: 20),
+                        ),
+                        title: Text(track['title']?.toString() ?? 'Track', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14)),
+                        subtitle: Text('${track['artist']} · ${track['category']} · ${track['duration_seconds']}s', style: const TextStyle(fontSize: 12)),
+                        trailing: isSelected ? const Icon(Icons.check_circle, color: AppColors.primary) : null,
+                        onTap: () {
+                          HapticFeedback.selectionClick();
+                          setState(() => _selectedMusic = track);
+                          Navigator.pop(ctx);
+                        },
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _showError(String msg) {
@@ -515,6 +622,106 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+
+              // ── Post Location (Safe Coarse Location) ─
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFDBDBDB)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.location_on_outlined, size: 18, color: Color(0xFF262626)),
+                        const SizedBox(width: 8),
+                        Text(
+                          _selectedLocation != null ? 'Location: $_selectedLocation' : 'Location: Off (Private)',
+                          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF262626)),
+                        ),
+                        const Spacer(),
+                        if (_selectedLocation != null)
+                          GestureDetector(
+                            onTap: () => setState(() => _selectedLocation = null),
+                            child: const Text('Turn Off', style: TextStyle(fontSize: 12, color: Colors.red, fontWeight: FontWeight.w500)),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: _safeLocations.map((loc) {
+                          final isSel = _selectedLocation == loc;
+                          return Padding(
+                            padding: const EdgeInsets.only(right: 6),
+                            child: FilterChip(
+                              label: Text(loc, style: TextStyle(fontSize: 12, color: isSel ? Colors.white : const Color(0xFF262626))),
+                              selected: isSel,
+                              selectedColor: AppColors.primary,
+                              backgroundColor: const Color(0xFFF0F0F0),
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              onSelected: (val) {
+                                HapticFeedback.selectionClick();
+                                setState(() => _selectedLocation = val ? loc : null);
+                              },
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+
+              if (_kind == PostKind.story) ...[
+                const SizedBox(height: 12),
+                GestureDetector(
+                  onTap: _openMusicPicker,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFF9F9FF),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.music_note_rounded, color: AppColors.primary, size: 22),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                _selectedMusic != null
+                                    ? '${_selectedMusic!['title']} · ${_selectedMusic!['artist']}'
+                                    : 'Add Pre-Approved Story Music',
+                                style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: Color(0xFF262626)),
+                              ),
+                              Text(
+                                _selectedMusic != null
+                                    ? 'Royalty-free audio attached'
+                                    : 'Browse safe, curated tracks',
+                                style: const TextStyle(fontSize: 11, color: Color(0xFF8E8E8E)),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Icon(
+                          _selectedMusic != null ? Icons.check_circle : Icons.chevron_right,
+                          color: _selectedMusic != null ? AppColors.primary : const Color(0xFF8E8E8E),
+                          size: 20,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
 
               const SizedBox(height: 12),
 

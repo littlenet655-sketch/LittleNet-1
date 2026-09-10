@@ -80,6 +80,7 @@ class UploadParams {
   final String category;
   final String audience;
   final List<String> tags;
+  final String? locationName;
   final AuthState authState;
 
   UploadParams({
@@ -89,6 +90,7 @@ class UploadParams {
     required this.category,
     required this.audience,
     required this.tags,
+    this.locationName,
     required this.authState,
   });
 }
@@ -248,6 +250,8 @@ class UploadManager extends ChangeNotifier {
           'content_category': params.category,
           'audience_age_group': params.audience,
           'tags': params.tags,
+          if (params.locationName != null && params.locationName!.isNotEmpty)
+            'location_name': params.locationName,
         },
       );
 
@@ -501,6 +505,8 @@ class UploadManager extends ChangeNotifier {
           'audience_age_group': params.audience,
           'kind': params.kind,
           if (params.tags.isNotEmpty) 'tags': params.tags,
+          if (params.locationName != null && params.locationName!.isNotEmpty)
+            'location_name': params.locationName,
         },
       );
 
