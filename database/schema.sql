@@ -47,9 +47,35 @@ CREATE TABLE IF NOT EXISTS posts (
  media_type VARCHAR(20) NOT NULL CHECK (media_type IN ('IMAGE','VIDEO','AUDIO','TEXT')),
  media_path VARCHAR(500), story_music_path VARCHAR(500), caption TEXT, content_category VARCHAR(100) DEFAULT 'Other', audience_age_group VARCHAR(10) NOT NULL DEFAULT 'ALL' CHECK(audience_age_group IN ('ALL','6-8','9-11','12-13','14-18')), is_story BOOLEAN NOT NULL DEFAULT FALSE,
  is_reel BOOLEAN NOT NULL DEFAULT FALSE, safety_score NUMERIC(6,2) DEFAULT 0, adult_score NUMERIC(6,2) DEFAULT 0,
- violence_score NUMERIC(6,2) DEFAULT 0, weapon_score NUMERIC(6,2) DEFAULT 0, toxicity_score NUMERIC(6,2) DEFAULT 0,
- is_safe BOOLEAN NOT NULL DEFAULT FALSE, moderation_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (moderation_status IN ('PENDING','ALLOWED','REVIEW','BLOCKED')),
- moderation_reason TEXT, created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+  violence_score NUMERIC(6,2) DEFAULT 0, weapon_score NUMERIC(6,2) DEFAULT 0, toxicity_score NUMERIC(6,2) DEFAULT 0,
+  is_safe BOOLEAN NOT NULL DEFAULT FALSE, moderation_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (moderation_status IN ('PENDING','ALLOWED','REVIEW','BLOCKED')),
+  moderation_reason TEXT,
+  processing_status VARCHAR(20) NOT NULL DEFAULT 'ALLOWED' CHECK (processing_status IN ('UPLOADING','UPLOADED','PROCESSING','REVIEW','ALLOWED','BLOCKED','FAILED')),
+  source_media_path VARCHAR(500), poster_path VARCHAR(500), processing_error TEXT,
+  processing_started_at TIMESTAMP, processing_completed_at TIMESTAMP,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE IF NOT EXISTS post_tags (
+ tag_id BIGSERIAL PRIMARY KEY,
+ post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
+ tag VARCHAR(50) NOT NULL,
+ normalized_tag VARCHAR(50) NOT NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(post_id, normalized_tag)
+);
+CREATE TABLE IF NOT EXISTS upload_sessions (
+ upload_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+ child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+ object_key VARCHAR(500) NOT NULL UNIQUE,
+ media_type VARCHAR(20) NOT NULL CHECK (media_type IN ('IMAGE','VIDEO','AUDIO')),
+ kind VARCHAR(20) NOT NULL CHECK (kind IN ('POST','REEL','STORY')),
+ expected_size_bytes BIGINT NOT NULL,
+ mime_type VARCHAR(100) NOT NULL,
+ extension VARCHAR(20) NOT NULL,
+ status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','UPLOADED','CONSUMED','EXPIRED','CANCELLED')),
+ expires_at TIMESTAMP NOT NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ consumed_at TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS deleted_posts (
  deleted_post_id BIGSERIAL PRIMARY KEY, original_post_id BIGINT, child_id INTEGER, media_type VARCHAR(20), media_path VARCHAR(500), story_music_path VARCHAR(500), caption TEXT, content_category VARCHAR(100), deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -223,8 +249,19 @@ CREATE TABLE IF NOT EXISTS moderation_reviews (
  notes TEXT, reviewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_status VARCHAR(20) NOT NULL DEFAULT 'ALLOWED';
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS source_media_path VARCHAR(500);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS poster_path VARCHAR(500);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_error TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_completed_at TIMESTAMP;
+
 CREATE INDEX IF NOT EXISTS idx_posts_feed ON posts(moderation_status,is_story,is_reel,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_child ON posts(child_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_processing ON posts(processing_status,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_post_tags_post ON post_tags(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_tags_normalized ON post_tags(normalized_tag);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_child ON upload_sessions(child_id,status,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON child_messages(conversation_id,sent_at);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id,is_read,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_parent_notifications ON parent_notifications(parent_id,is_read,created_at DESC);

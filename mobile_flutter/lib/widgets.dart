@@ -89,6 +89,7 @@ class NativeMedia extends StatefulWidget {
     required this.api,
     required this.url,
     required this.mediaType,
+    this.posterUrl,
     this.fit = BoxFit.cover,
     this.autoPlay = true,
   });
@@ -96,6 +97,7 @@ class NativeMedia extends StatefulWidget {
   final ApiClient api;
   final String url;
   final String? mediaType;
+  final String? posterUrl;
   final BoxFit fit;
   final bool autoPlay;
 
@@ -169,26 +171,39 @@ class _NativeMediaState extends State<NativeMedia> {
       );
     }
     final c = controller;
-    if (c == null || initialize == null) {
-      return const ColoredBox(
-        color: Colors.black,
-        child: Center(child: CircularProgressIndicator()),
-      );
-    }
-    return FutureBuilder<void>(
-      future: initialize,
-      builder: (_, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done ||
-            !c.value.isInitialized) {
-          return const ColoredBox(
-            color: Colors.black,
-            child: Center(child: CircularProgressIndicator()),
-          );
-        }
-        return GestureDetector(
-          onTap: () => setState(() => c.value.isPlaying ? c.pause() : c.play()),
-          child: ColoredBox(
-            color: Colors.black,
+    final isReady = c != null && c.value.isInitialized;
+
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        if (widget.posterUrl != null && widget.posterUrl!.isNotEmpty)
+          Positioned.fill(
+            child: Image.network(
+              widget.posterUrl!,
+              fit: widget.fit,
+              errorBuilder: (_, __, ___) => const ColoredBox(
+                color: Color(0xFF1A1A2E),
+                child: Center(
+                  child: Icon(Icons.movie_creation_outlined,
+                      color: Colors.white24, size: 48),
+                ),
+              ),
+            ),
+          )
+        else
+          const Positioned.fill(
+            child: ColoredBox(
+              color: Color(0xFF1A1A2E),
+              child: Center(
+                child: Icon(Icons.movie_creation_outlined,
+                    color: Colors.white24, size: 48),
+              ),
+            ),
+          ),
+        if (isReady)
+          GestureDetector(
+            onTap: () =>
+                setState(() => c.value.isPlaying ? c.pause() : c.play()),
             child: Center(
               child: AspectRatio(
                 aspectRatio:
@@ -196,9 +211,17 @@ class _NativeMediaState extends State<NativeMedia> {
                 child: VideoPlayer(c),
               ),
             ),
+          )
+        else if (widget.posterUrl == null)
+          const Center(
+            child: SizedBox(
+              width: 24,
+              height: 24,
+              child: CircularProgressIndicator(
+                  strokeWidth: 2, color: Colors.white38),
+            ),
           ),
-        );
-      },
+      ],
     );
   }
 }

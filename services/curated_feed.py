@@ -423,18 +423,17 @@ def authorize_curated_media(child_id: int, content_id: int) -> dict[str, Any]:
         raise PermissionError("age_ineligible")
 
     key = row.get("delivery_object_key") or row.get("original_object_key")
-    from services.object_storage import enabled as r2_enabled, signed_download_url
-    media_url = signed_download_url(key) if r2_enabled() else f"/{key}"
+    from services.media_delivery import resolve_media_delivery
 
-    poster_url = None
-    if row.get("poster_object_key"):
-        poster_url = signed_download_url(row["poster_object_key"]) if r2_enabled() else f"/{row['poster_object_key']}"
+    m_res = resolve_media_delivery(key, viewer_id=child_id, viewer_role="CHILD")
+    p_res = resolve_media_delivery(row.get("poster_object_key"), viewer_id=child_id, viewer_role="CHILD")
 
     return {
         "content_id": row["content_id"],
         "media_type": row["media_type"],
-        "media_url": media_url,
-        "poster_url": poster_url,
+        "media_url": m_res.get("url"),
+        "poster_url": p_res.get("url"),
+        "playback_expires_at": m_res.get("expires_at"),
     }
 
 

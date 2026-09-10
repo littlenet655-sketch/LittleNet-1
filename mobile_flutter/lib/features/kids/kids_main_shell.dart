@@ -7,6 +7,7 @@ import '../explore/explore_screen.dart';
 import '../kids/kids_home_screen.dart';
 import '../profile/profile_screen.dart';
 import '../reels/reels_screen.dart';
+import '../../core/upload/upload_progress_banner.dart';
 
 /// LittleNet V2 – main navigation shell.
 ///
@@ -151,14 +152,24 @@ class _KidsMainShellState extends State<KidsMainShell>
       ),
       child: Scaffold(
         backgroundColor: Colors.white,
-        body: IndexedStack(
-          index: _currentIndex > 2 ? _currentIndex - 1 : _currentIndex,
-          children: [
-            _pages[0], // home
-            _pages[1], // feed / search
-            _pages[3], // reels
-            _pages[4], // profile
-          ],
+        body: SafeArea(
+          bottom: false,
+          child: Column(
+            children: [
+              const UploadProgressBanner(),
+              Expanded(
+                child: IndexedStack(
+                  index: _currentIndex > 2 ? _currentIndex - 1 : _currentIndex,
+                  children: [
+                    _pages[0], // home
+                    _pages[1], // feed / search
+                    _pages[3], // reels
+                    _pages[4], // profile
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
         bottomNavigationBar: _LnBottomBar(
           currentIndex: _currentIndex,

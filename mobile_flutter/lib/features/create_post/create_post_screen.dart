@@ -3,9 +3,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:video_player/video_player.dart';
-import '../../api.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
+import '../../core/upload/upload_manager.dart';
 
 /// LittleNet V2 – Create Post screen.
 ///
@@ -37,6 +37,8 @@ enum PostModerationOutcome { none, allowed, review, blocked, error }
 class _CreatePostScreenState extends State<CreatePostScreen> {
   final _picker = ImagePicker();
   final _captionController = TextEditingController();
+  final _tagInputController = TextEditingController();
+  final List<String> _tags = [];
 
   late PostKind _kind;
   String _selectedCategory = 'Art';
@@ -46,7 +48,6 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   bool _isVideo = false;
   VideoPlayerController? _videoController;
 
-  bool _isUploading = false;
   PostModerationOutcome _outcome = PostModerationOutcome.none;
   String? _statusMessage;
   String? _rejectionReason;
@@ -80,8 +81,48 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
   @override
   void dispose() {
     _captionController.dispose();
+    _tagInputController.dispose();
     _videoController?.dispose();
     super.dispose();
+  }
+
+  // ── Hashtags ──────────────────────────────────────────
+
+  void _addTag(String raw) {
+    final clean = raw.trim().toLowerCase().replaceAll(RegExp(r'^#+'), '');
+    if (clean.isEmpty) return;
+
+    if (_tags.length >= 10) {
+      _showError('Maximum 10 hashtags allowed.');
+      return;
+    }
+    if (clean.length > 30) {
+      _showError('Hashtags must be 30 characters or less.');
+      return;
+    }
+    if (!RegExp(r'^[a-z0-9_]+$').hasMatch(clean)) {
+      _showError('Hashtags can only contain letters, numbers, and underscores.');
+      return;
+    }
+    if (RegExp(r'\d{7,}').hasMatch(clean)) {
+      _showError('Phone numbers or sensitive numbers are not allowed.');
+      return;
+    }
+    if (_tags.contains(clean)) {
+      _tagInputController.clear();
+      return;
+    }
+
+    setState(() {
+      _tags.add(clean);
+      _tagInputController.clear();
+    });
+  }
+
+  void _removeTag(String tag) {
+    setState(() {
+      _tags.remove(tag);
+    });
   }
 
   // ── Media Picking ─────────────────────────────────────
@@ -172,65 +213,38 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       return;
     }
 
-    setState(() {
-      _isUploading = true;
-      _outcome = PostModerationOutcome.none;
-      _statusMessage = null;
-      _rejectionReason = null;
-    });
+    // Auto-commit tag text if child typed in the field without tapping '+'
+    if (_tagInputController.text.trim().isNotEmpty) {
+      _addTag(_tagInputController.text.trim());
+    }
 
-    try {
-      final kindStr = switch (_kind) {
-        PostKind.reel => 'reel',
-        PostKind.story => 'story',
-        PostKind.post => 'post',
-      };
+    final kindStr = switch (_kind) {
+      PostKind.reel => 'reel',
+      PostKind.story => 'story',
+      PostKind.post => 'post',
+    };
 
-      final res = await widget.authState.apiClient.multipart(
-        '/api/mobile/v1/kids/posts',
-        file: _selectedFile,
-        fileField: 'media',
-        fields: {
-          'caption': caption,
-          'content_category': _selectedCategory,
-          'audience_age_group': _audience,
-          'kind': kindStr,
-        },
-      );
+    // Dispatch background upload with zero wait time for child
+    UploadManager.instance.startUpload(UploadParams(
+      file: _selectedFile,
+      kind: kindStr,
+      caption: caption,
+      category: _selectedCategory,
+      audience: _audience,
+      tags: List.unmodifiable(_tags),
+      authState: widget.authState,
+    ));
 
-      final status = (res['status'] as String? ?? '').toUpperCase();
+    HapticFeedback.mediumImpact();
+
+    // Immediately pop screen back to feed/reels tray!
+    if (mounted && Navigator.canPop(context)) {
+      Navigator.of(context).pop(true);
+    } else {
       setState(() {
-        if (res['ok'] == true && status == 'ALLOW') {
-          _outcome = PostModerationOutcome.allowed;
-          _statusMessage = 'Your post passed safety checks and is published!';
-        } else if (res['ok'] == true && status == 'REVIEW') {
-          _outcome = PostModerationOutcome.review;
-          _statusMessage =
-              'Sent for Parent Safety Review — it will appear once approved.';
-        } else {
-          _outcome = PostModerationOutcome.error;
-          _statusMessage = 'Post could not be published right now.';
-        }
+        _outcome = PostModerationOutcome.allowed;
+        _statusMessage = 'Upload started! Moderation running in background.';
       });
-    } on ApiException catch (e) {
-      setState(() {
-        if (e.payload?['blocked'] == true || e.message.contains('blocked')) {
-          _outcome = PostModerationOutcome.blocked;
-          _rejectionReason = e.payload?['reason'] as String? ??
-              'Content does not follow child safety standards.';
-          _statusMessage = 'Blocked for safety.';
-        } else {
-          _outcome = PostModerationOutcome.error;
-          _statusMessage = e.message;
-        }
-      });
-    } catch (_) {
-      setState(() {
-        _outcome = PostModerationOutcome.error;
-        _statusMessage = 'Unable to reach safety server. Post saved safely.';
-      });
-    } finally {
-      if (mounted) setState(() => _isUploading = false);
     }
   }
 
@@ -347,6 +361,94 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
               const SizedBox(height: 12),
 
+              // ── Hashtags section ─────────────────────
+              _FormCard(
+                label: 'Hashtags (${_tags.length}/10)',
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (_tags.isNotEmpty) ...[
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        children: _tags.map((tag) {
+                          return Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFEFF6FF),
+                              borderRadius: BorderRadius.circular(16),
+                              border:
+                                  Border.all(color: const Color(0xFFBFDBFE)),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  '#$tag',
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF1D4ED8),
+                                  ),
+                                ),
+                                const SizedBox(width: 4),
+                                GestureDetector(
+                                  onTap: () => _removeTag(tag),
+                                  child: const Icon(
+                                    Icons.close_rounded,
+                                    size: 14,
+                                    color: Color(0xFF1D4ED8),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 8),
+                    ],
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _tagInputController,
+                            decoration: const InputDecoration(
+                              hintText: 'Add a tag (e.g. science, art)',
+                              hintStyle: TextStyle(
+                                  fontSize: 13, color: Color(0xFF8E8E8E)),
+                              prefixText: '#',
+                              prefixStyle: TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF1D4ED8),
+                              ),
+                              border: InputBorder.none,
+                              isDense: true,
+                              contentPadding:
+                                  EdgeInsets.symmetric(vertical: 4),
+                            ),
+                            style: const TextStyle(fontSize: 14),
+                            textInputAction: TextInputAction.done,
+                            onSubmitted: (val) => _addTag(val),
+                          ),
+                        ),
+                        IconButton(
+                          icon: const Icon(Icons.add_circle_outline_rounded,
+                              color: AppColors.primary, size: 22),
+                          onPressed: () => _addTag(_tagInputController.text),
+                          tooltip: 'Add hashtag',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+
+              const SizedBox(height: 12),
+
               // ── Category & Audience row ───────────────
               Row(
                 children: [
@@ -453,7 +555,7 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
 
               // ── Submit ───────────────────────────────
               FilledButton(
-                onPressed: _isUploading ? null : _submitPost,
+                onPressed: UploadManager.instance.state.isActive ? null : _submitPost,
                 style: FilledButton.styleFrom(
                   backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
@@ -463,18 +565,11 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
                   textStyle: const TextStyle(
                       fontSize: 16, fontWeight: FontWeight.w600),
                 ),
-                child: _isUploading
-                    ? const SizedBox(
-                        height: 20,
-                        width: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
-                      )
-                    : Text(switch (_kind) {
-                        PostKind.reel => 'Share Reel',
-                        PostKind.story => 'Share Story',
-                        PostKind.post => 'Publish Post',
-                      }),
+                child: Text(switch (_kind) {
+                  PostKind.reel => 'Share Reel',
+                  PostKind.story => 'Share Story',
+                  PostKind.post => 'Publish Post',
+                }),
               ),
             ],
           ),

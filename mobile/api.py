@@ -4,7 +4,7 @@ import base64
 import os
 import tempfile
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from functools import wraps
 from urllib.parse import quote
@@ -201,15 +201,18 @@ def _child_gate(feature: str | None = None):
     return None
 
 
-def _asset_url(reference):
+def _asset_url(reference, viewer_id=None, viewer_role=None):
     if not reference:
         return None
-    ref = str(reference)
-    if ref.startswith(("http://", "https://")):
-        return ref
-    if ref.startswith("static/"):
-        return f"{Config.BASE_URL.rstrip('/')}/{ref.lstrip('/')}"
-    return f"{Config.BASE_URL.rstrip('/')}/api/mobile/v1/media?ref={quote(ref, safe='')}"
+    from services.media_delivery import resolve_media_delivery
+
+    v_id = viewer_id
+    v_role = viewer_role
+    if v_id is None and hasattr(g, "mobile_user") and g.mobile_user:
+        v_id = g.mobile_user.get("user_id")
+        v_role = g.mobile_user.get("role")
+    res = resolve_media_delivery(reference, viewer_id=v_id, viewer_role=v_role)
+    return res.get("url")
 
 
 def _profile_json(row):
@@ -225,15 +228,37 @@ def _post_json(row, viewer_id=None):
     if not row:
         return None
     out = dict(row)
-    out["media_url"] = _asset_url(out.get("media_path"))
-    out["avatar_url"] = _asset_url(out.get("profile_picture"))
+    v_id = viewer_id
+    v_role = None
+    if v_id is None and hasattr(g, "mobile_user") and g.mobile_user:
+        v_id = g.mobile_user.get("user_id")
+        v_role = g.mobile_user.get("role")
+    elif v_id and hasattr(g, "mobile_user") and g.mobile_user:
+        v_role = g.mobile_user.get("role")
+
+    from services.media_delivery import resolve_media_delivery
+
+    media_res = resolve_media_delivery(out.get("media_path"), viewer_id=v_id, viewer_role=v_role)
+    avatar_res = resolve_media_delivery(out.get("profile_picture"), viewer_id=v_id, viewer_role=v_role)
+    poster_res = resolve_media_delivery(out.get("poster_path"), viewer_id=v_id, viewer_role=v_role)
+
+    out["media_url"] = media_res.get("url")
+    out["avatar_url"] = avatar_res.get("url")
+    out["poster_url"] = poster_res.get("url")
+    if media_res.get("expires_at"):
+        out["playback_expires_at"] = media_res["expires_at"]
     out.pop("media_path", None)
+    out.pop("poster_path", None)
     out.pop("profile_picture", None)
     out.pop("story_music_path", None)
     if viewer_id and out.get("post_id"):
         pid = int(out["post_id"])
         out["viewer_liked"] = bool(fetch_one("SELECT 1 FROM likes WHERE post_id=%s AND child_id=%s", (pid, viewer_id)))
         out["viewer_saved"] = bool(fetch_one("SELECT 1 FROM saved_posts WHERE post_id=%s AND child_id=%s", (pid, viewer_id)))
+    if out.get("post_id"):
+        from services.tag_service import get_post_tags
+
+        out["tags"] = get_post_tags(int(out["post_id"]))
     return _clean(out)
 
 
@@ -1067,6 +1092,16 @@ def register_mobile_api(bp):
                 namespace = "stories" if kind == "story" else "reels" if kind == "reel" else "posts"
                 stored = persist_before_db(path, namespace, uid)
                 persisted = True
+            raw_tags = request.form.getlist("tags") or request.form.getlist("tags[]")
+            if not raw_tags and request.form.get("tags"):
+                t_str = request.form.get("tags", "")
+                raw_tags = [t.strip() for t in t_str.split(",") if t.strip()]
+            from services.tag_service import validate_and_normalize_tags, save_post_tags
+
+            validated_tags, tag_err = validate_and_normalize_tags(raw_tags, uid)
+            if tag_err:
+                return jsonify(error=tag_err), 400
+
             row = execute(
                 """INSERT INTO posts(child_id,media_type,media_path,caption,content_category,audience_age_group,is_story,is_reel,
                    safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason)
@@ -1079,6 +1114,8 @@ def register_mobile_api(bp):
                 ),
                 returning=True,
             )
+            if validated_tags:
+                save_post_tags(row["post_id"], validated_tags)
             event = record(uid, content_type, row["post_id"], merged, decision)
             if decision.action == "REVIEW":
                 parent_notify(uid, "REVIEW_REQUIRED", "Content is waiting for your review", f"/parent/safety/?event={event}")
@@ -1098,6 +1135,277 @@ def register_mobile_api(bp):
                     os.remove(path)
                 except OSError:
                     pass
+
+    @bp.route("/api/mobile/v2/uploads/session", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("30 per hour")
+    @_require_mobile("CHILD")
+    def mobile_v2_upload_session():
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or request.form or {}
+        kind = str(data.get("kind") or "post").lower()
+        if kind not in {"post", "reel", "story"}:
+            return jsonify(error="invalid_kind"), 400
+
+        feature = "reels" if kind == "reel" else "stories" if kind == "story" else "posting"
+        gate = _child_gate(feature)
+        if gate:
+            return gate
+
+        media_type = str(data.get("media_type") or "").upper()
+        if media_type not in {"IMAGE", "VIDEO"}:
+            return jsonify(error="invalid_media_type"), 400
+
+        try:
+            size_bytes = int(data.get("size_bytes") or data.get("file_size") or 0)
+        except (ValueError, TypeError):
+            return jsonify(error="invalid_file_size"), 400
+
+        if size_bytes <= 0:
+            return jsonify(error="file_size_required"), 400
+
+        if media_type == "IMAGE":
+            max_bytes = 20 * 1024 * 1024
+        elif kind == "story":
+            max_bytes = 50 * 1024 * 1024
+        else:
+            max_bytes = Config.MAX_CONTENT_LENGTH
+
+        if size_bytes > max_bytes:
+            return jsonify(error="file_size_exceeded", max_bytes=max_bytes), 400
+
+        ext = str(data.get("extension") or "").lower().lstrip(".")
+        mime_type = str(data.get("mime_type") or "").lower().strip()
+
+        if media_type == "IMAGE":
+            valid_exts = {"jpg", "jpeg", "png", "webp"}
+            valid_mimes = {"image/jpeg", "image/png", "image/webp"}
+        else:
+            valid_exts = {"mp4", "mov", "webm", "mkv"}
+            valid_mimes = {"video/mp4", "video/quicktime", "video/webm", "video/x-matroska"}
+
+        if ext not in valid_exts:
+            return jsonify(error="unsupported_extension", allowed=sorted(list(valid_exts))), 400
+        if mime_type and mime_type not in valid_mimes:
+            return jsonify(error="unsupported_mime_type", allowed=sorted(list(valid_mimes))), 400
+
+        if not mime_type:
+            mime_type = f"image/{ext}" if media_type == "IMAGE" else f"video/{ext}"
+
+        upload_id = str(uuid.uuid4())
+        object_key = f"uploads/r2/quarantine/{uid}/{upload_id}/source.{ext}"
+        expires_seconds = 900
+        expires_at = datetime.utcnow() + timedelta(seconds=expires_seconds)
+
+        execute(
+            """INSERT INTO upload_sessions(upload_id, child_id, object_key, media_type, kind,
+                                          expected_size_bytes, mime_type, extension, status, expires_at)
+               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s)""",
+            (
+                upload_id,
+                uid,
+                object_key,
+                media_type,
+                kind.upper(),
+                size_bytes,
+                mime_type,
+                ext,
+                expires_at,
+            ),
+        )
+
+        from services import object_storage
+
+        if os.environ.get("FORCE_DIRECT_UPLOAD_UNAVAILABLE") == "1" or os.environ.get("DIRECT_UPLOAD_UNAVAILABLE") == "1":
+            return jsonify(
+                error="direct_upload_unavailable",
+                fallback_allowed=not Config._PRODUCTION,
+            ), 503
+
+        if object_storage.enabled():
+            upload_url = object_storage.signed_upload_url(
+                object_key, content_type=mime_type, expires_seconds=expires_seconds
+            )
+        elif Config._PRODUCTION and not os.getenv("PYTEST_CURRENT_TEST"):
+            return jsonify(
+                error="storage_configuration_error",
+                fallback_allowed=False,
+            ), 500
+        else:
+            upload_url = f"{Config.BASE_URL}/api/mobile/v2/uploads/mock-put/{upload_id}"
+
+        return jsonify(
+            ok=True,
+            upload_id=upload_id,
+            upload_url=upload_url,
+            object_key=object_key,
+            expires_at=expires_at.isoformat() + "Z",
+            required_headers={"Content-Type": mime_type},
+        )
+
+    @bp.route("/api/mobile/v2/uploads/mock-put/<upload_id>", methods=["PUT"])
+    @csrf.exempt
+    def mobile_v2_mock_put(upload_id):
+        # PRODUCTION GUARD: mock-PUT is a dev/CI convenience only.
+        # Disabled whenever the server runs under HTTPS or when the explicit
+        # opt-in env var ENABLE_MOCK_PUT is not set to "1".
+        from config import Config  # avoid circular at module level
+
+        if Config._PRODUCTION or os.environ.get("ENABLE_MOCK_PUT", "0") != "1":
+            return jsonify(error="not_found"), 404
+        session_row = fetch_one("SELECT * FROM upload_sessions WHERE upload_id=%s", (upload_id,))
+        if not session_row:
+            return jsonify(error="session_not_found"), 404
+        mock_dir = Path("uploads/mock_quarantine") / str(session_row["child_id"]) / upload_id
+        mock_dir.mkdir(parents=True, exist_ok=True)
+        dest = mock_dir / f"source.{session_row['extension']}"
+        chunk_size = 64 * 1024
+        with dest.open("wb") as f:
+            while True:
+                chunk = request.stream.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+        return "", 200
+
+    @bp.route("/api/mobile/v2/uploads/<upload_id>/complete", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("30 per hour")
+    @_require_mobile("CHILD")
+    def mobile_v2_upload_complete(upload_id):
+        uid = int(g.mobile_user["user_id"])
+        session_row = fetch_one("SELECT * FROM upload_sessions WHERE upload_id=%s", (upload_id,))
+        if not session_row:
+            return jsonify(error="upload_session_not_found"), 404
+
+        if int(session_row["child_id"]) != uid:
+            return jsonify(error="forbidden_upload_owner_mismatch"), 403
+
+        if session_row["status"] == "CONSUMED":
+            existing = fetch_one(
+                "SELECT post_id, processing_status, moderation_status FROM posts WHERE source_media_path=%s LIMIT 1",
+                (session_row["object_key"],),
+            )
+            if existing:
+                return jsonify(
+                    ok=True,
+                    post_id=existing["post_id"],
+                    status=existing["processing_status"],
+                    idempotent=True,
+                )
+
+        if session_row["expires_at"] and session_row["expires_at"] < datetime.utcnow():
+            execute("UPDATE upload_sessions SET status='EXPIRED' WHERE upload_id=%s", (upload_id,))
+            return jsonify(error="upload_session_expired"), 400
+
+        from services import object_storage
+
+        if object_storage.enabled():
+            meta = object_storage.head_object(session_row["object_key"])
+            if not meta or meta.get("content_length", 0) <= 0:
+                return jsonify(error="media_object_missing_in_quarantine"), 400
+
+        data = request.get_json(silent=True) or request.form or {}
+        caption = str(data.get("caption") or "").strip()
+        category = str(data.get("content_category") or "Other")
+        category = category if category in SAFE_CATEGORIES else "Other"
+        if category not in effective_categories(uid):
+            return jsonify(error="category_disabled_by_parent"), 403
+
+        audience_raw = data.get("audience_age_group")
+        if audience_raw is not None and str(audience_raw) not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
+            return jsonify(error="invalid_audience_age_group"), 400
+        audience = str(audience_raw or "ALL")
+
+        if caption and scan_pii(caption).get("detected"):
+            parent_notify(uid, "CONTENT_BLOCKED", "Personal contact information cannot be shared in captions", "/parent/safety/")
+            return jsonify(error="caption_pii_blocked"), 400
+
+        raw_tags = data.get("tags") or []
+        if isinstance(raw_tags, str):
+            raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+
+        from services.tag_service import validate_and_normalize_tags, save_post_tags
+
+        validated_tags, tag_err = validate_and_normalize_tags(raw_tags, uid)
+        if tag_err:
+            return jsonify(error=tag_err), 400
+
+        kind = session_row["kind"].upper()
+        media_type = session_row["media_type"].upper()
+
+        post_row = execute(
+            """INSERT INTO posts(child_id, media_type, source_media_path, caption, content_category,
+                               audience_age_group, is_story, is_reel, is_safe, moderation_status,
+                               processing_status, processing_started_at)
+               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'UPLOADED', NOW())
+               RETURNING post_id""",
+            (
+                uid,
+                media_type,
+                session_row["object_key"],
+                caption,
+                category,
+                audience,
+                kind == "STORY",
+                kind == "REEL",
+            ),
+            returning=True,
+        )
+        post_id = post_row["post_id"]
+
+        if validated_tags:
+            save_post_tags(post_id, validated_tags)
+
+        execute(
+            "UPDATE upload_sessions SET status='CONSUMED', consumed_at=NOW() WHERE upload_id=%s",
+            (upload_id,),
+        )
+
+        from services.job_queue import enqueue_media_job
+
+        enqueue_media_job(post_id, uid, session_row["object_key"], kind)
+
+        return jsonify(
+            ok=True,
+            post_id=post_id,
+            status="PROCESSING",
+        )
+
+    @bp.route("/api/mobile/v2/posts/<int:post_id>/processing-status", methods=["GET"])
+    @_require_mobile("CHILD", "PARENT")
+    def mobile_v2_processing_status(post_id):
+        uid = int(g.mobile_user["user_id"])
+        role = str(g.mobile_user["role"]).upper()
+
+        post = fetch_one(
+            """SELECT post_id, child_id, processing_status, moderation_status, is_safe,
+                      media_path, poster_path, processing_error
+               FROM posts WHERE post_id=%s""",
+            (post_id,),
+        )
+        if not post:
+            return jsonify(error="post_not_found"), 404
+
+        owner_id = int(post["child_id"])
+        if role == "CHILD" and owner_id != uid:
+            return jsonify(error="forbidden_not_post_owner"), 403
+        elif role == "PARENT" and not owns(uid, owner_id):
+            return jsonify(error="forbidden_not_child_guardian"), 403
+
+        st = post.get("processing_status") or "UPLOADED"
+        return jsonify(
+            ok=True,
+            post_id=post_id,
+            status=st,
+            stage=st,
+            moderation_status=post.get("moderation_status"),
+            is_safe=bool(post.get("is_safe")),
+            media_url=_asset_url(post.get("media_path")),
+            poster_url=_asset_url(post.get("poster_path")),
+            error=post.get("processing_error"),
+        )
+
 
     @bp.route("/api/mobile/v1/kids/learning")
     @_require_mobile("CHILD")
@@ -1485,11 +1793,16 @@ def register_mobile_api(bp):
             limit = 10
         session_id = request.args.get("session_id")
         page = get_feed_page(uid, surface="FEED", cursor=cursor, limit=limit, session_id=session_id)
+        from services.media_delivery import resolve_media_delivery
         for item in page["items"]:
             if item.get("media_reference"):
-                item["media_url"] = _asset_url(item["media_reference"])
+                m_res = resolve_media_delivery(item["media_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["media_url"] = m_res.get("url")
+                if m_res.get("expires_at"):
+                    item["playback_expires_at"] = m_res["expires_at"]
             if item.get("poster_reference"):
-                item["poster_url"] = _asset_url(item["poster_reference"])
+                p_res = resolve_media_delivery(item["poster_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["poster_url"] = p_res.get("url")
         return jsonify(ok=True, **_clean(page))
 
     @bp.route("/api/mobile/v2/kids/reels")
@@ -1509,11 +1822,16 @@ def register_mobile_api(bp):
             limit = 10
         session_id = request.args.get("session_id")
         page = get_feed_page(uid, surface="REELS", cursor=cursor, limit=limit, session_id=session_id)
+        from services.media_delivery import resolve_media_delivery
         for item in page["items"]:
             if item.get("media_reference"):
-                item["media_url"] = _asset_url(item["media_reference"])
+                m_res = resolve_media_delivery(item["media_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["media_url"] = m_res.get("url")
+                if m_res.get("expires_at"):
+                    item["playback_expires_at"] = m_res["expires_at"]
             if item.get("poster_reference"):
-                item["poster_url"] = _asset_url(item["poster_reference"])
+                p_res = resolve_media_delivery(item["poster_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["poster_url"] = p_res.get("url")
         return jsonify(ok=True, **_clean(page))
 
     @bp.route("/api/mobile/v2/curated/media/<int:content_id>")

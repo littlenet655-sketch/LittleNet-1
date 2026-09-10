@@ -5,6 +5,9 @@ import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
 import '../../core/widgets/ln_components.dart';
 import '../discovery/discovery_screen.dart';
+import '../feed/comments_sheet.dart';
+import '../feed/report_options_sheet.dart';
+import '../feed/share_sheet.dart';
 
 /// LittleNet V2 – Home screen.
 ///
@@ -303,7 +306,7 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
                           fontWeight: FontWeight.w700,
                           color: Color(0xFF262626))),
                   GestureDetector(
-                    onTap: () {},
+                    onTap: () => Navigator.of(context).pushNamed('/kids/reels'),
                     child: const Text('See all',
                         style: TextStyle(
                             fontSize: 13, color: AppColors.primary,
@@ -378,10 +381,29 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
             delegate: SliverChildBuilderDelegate(
               (ctx, i) {
                 final item = _posts[i] as Map<String, dynamic>;
+                final postId = item['post_id'] as int?;
                 return LnPostCard(
                   item: item,
-                  onComment: () {},
-                  onShare: () {},
+                  onComment: postId != null
+                      ? () => CommentsSheet.show(
+                            context,
+                            authState: widget.authState,
+                            postId: postId,
+                            postCaption: item['caption']?.toString(),
+                          )
+                      : null,
+                  onShare: () => ShareSheet.show(
+                    context,
+                    authState: widget.authState,
+                    postId: postId,
+                    postTitle: item['caption']?.toString(),
+                  ),
+                  onMore: () => ReportOptionsSheet.show(
+                    context,
+                    authState: widget.authState,
+                    postId: postId,
+                    authorHandle: item['username'] != null ? '@${item['username']}' : '@classmate',
+                  ),
                 );
               },
               childCount: _posts.length,
@@ -453,30 +475,44 @@ class _StoriesRow extends StatelessWidget {
 
           return Padding(
             padding: const EdgeInsets.only(right: 14),
-            child: Column(
-              children: [
-                LnStoryRing(
-                  seen: seen,
-                  size: 56,
-                  child: LnAvatar(
-                    url: avatarUrl,
-                    name: name,
-                    radius: 26,
+            child: GestureDetector(
+              onTap: () {
+                Navigator.of(context).pushNamed(
+                  '/kids/story-viewer',
+                  arguments: {
+                    'author_name': name,
+                    'author_handle': s['username'] != null ? '@${s['username']}' : '@classmate',
+                    'avatar_url': avatarUrl,
+                    'media_url': s['media_url'],
+                    'caption': s['caption'] ?? 'Classroom STEM update! 🚀',
+                  },
+                );
+              },
+              child: Column(
+                children: [
+                  LnStoryRing(
+                    seen: seen,
+                    size: 56,
+                    child: LnAvatar(
+                      url: avatarUrl,
+                      name: name,
+                      radius: 26,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 5),
-                SizedBox(
-                  width: 60,
-                  child: Text(
-                    name.split(' ').first,
-                    style: const TextStyle(
-                        fontSize: 11, color: Color(0xFF262626)),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
+                  const SizedBox(height: 5),
+                  SizedBox(
+                    width: 60,
+                    child: Text(
+                      name.split(' ').first,
+                      style: const TextStyle(
+                          fontSize: 11, color: Color(0xFF262626)),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
           );
         },
@@ -499,54 +535,57 @@ class _ReelThumbnail extends StatelessWidget {
     final posterUrl = r['poster_url']?.toString();
     final caption = r['caption']?.toString() ?? 'Learning Reel';
 
-    return Container(
-      width: 108,
-      margin: const EdgeInsets.only(right: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF1A1A2E),
-        borderRadius: BorderRadius.circular(10),
-        image: posterUrl != null
-            ? DecorationImage(
-                image: NetworkImage(posterUrl), fit: BoxFit.cover)
-            : null,
-      ),
-      child: Stack(
-        children: [
-          // Dark scrim at bottom
-          Positioned.fill(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(10),
-                gradient: const LinearGradient(
-                  begin: Alignment.topCenter,
-                  end: Alignment.bottomCenter,
-                  stops: [0.5, 1.0],
-                  colors: [Colors.transparent, Color(0xCC000000)],
+    return GestureDetector(
+      onTap: () => Navigator.of(context).pushNamed('/kids/reels'),
+      child: Container(
+        width: 108,
+        margin: const EdgeInsets.only(right: 10),
+        decoration: BoxDecoration(
+          color: const Color(0xFF1A1A2E),
+          borderRadius: BorderRadius.circular(10),
+          image: posterUrl != null
+              ? DecorationImage(
+                  image: NetworkImage(posterUrl), fit: BoxFit.cover)
+              : null,
+        ),
+        child: Stack(
+          children: [
+            // Dark scrim at bottom
+            Positioned.fill(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(10),
+                  gradient: const LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    stops: [0.5, 1.0],
+                    colors: [Colors.transparent, Color(0xCC000000)],
+                  ),
                 ),
               ),
             ),
-          ),
-          // Play icon
-          const Center(
-            child: Icon(Icons.play_circle_fill,
-                color: Colors.white, size: 32),
-          ),
-          // Caption
-          Positioned(
-            bottom: 8,
-            left: 8,
-            right: 8,
-            child: Text(
-              caption,
-              style: const TextStyle(
-                  fontSize: 10,
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+            // Play icon
+            const Center(
+              child: Icon(Icons.play_circle_fill,
+                  color: Colors.white, size: 32),
             ),
-          ),
-        ],
+            // Caption
+            Positioned(
+              bottom: 8,
+              left: 8,
+              right: 8,
+              child: Text(
+                caption,
+                style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.white,
+                    fontWeight: FontWeight.w500),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

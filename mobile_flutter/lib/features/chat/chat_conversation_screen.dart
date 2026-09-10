@@ -200,6 +200,22 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
             ),
           ],
         ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.info_outline_rounded, color: AppColors.primary),
+            tooltip: 'Chat Details & Safety',
+            onPressed: () {
+              Navigator.of(context).pushNamed(
+                '/kids/chat/details',
+                arguments: {
+                  'peer_id': widget.peerId,
+                  'peer_name': widget.peerName,
+                  'peer_avatar_url': widget.peerAvatarUrl,
+                },
+              );
+            },
+          ),
+        ],
       ),
       body: Column(
         children: [

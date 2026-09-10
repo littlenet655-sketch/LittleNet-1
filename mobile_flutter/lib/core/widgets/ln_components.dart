@@ -123,12 +123,14 @@ class LnPostCard extends StatefulWidget {
     this.onLike,
     this.onComment,
     this.onShare,
+    this.onMore,
   });
 
   final Map<String, dynamic> item;
   final VoidCallback? onLike;
   final VoidCallback? onComment;
   final VoidCallback? onShare;
+  final VoidCallback? onMore;
 
   @override
   State<LnPostCard> createState() => _LnPostCardState();
@@ -207,7 +209,13 @@ class _LnPostCardState extends State<LnPostCard>
                     ],
                   ),
                 ),
-                const Icon(Icons.more_horiz, color: Color(0xFF262626), size: 20),
+                IconButton(
+                  icon: const Icon(Icons.more_horiz, color: Color(0xFF262626), size: 20),
+                  onPressed: widget.onMore,
+                  splashRadius: 18,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                ),
               ],
             ),
           ),

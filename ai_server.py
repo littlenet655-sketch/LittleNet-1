@@ -158,5 +158,58 @@ def face_adult_endpoint():
             except OSError: pass
 
 
+
+@app.post("/ai/jobs/process-media")
+def process_media_job_endpoint():
+    """Receiver endpoint for QStash background media processing dispatch.
+
+    Verifies Upstash signature using QSTASH_CURRENT_SIGNING_KEY / QSTASH_NEXT_SIGNING_KEY,
+    with defense-in-depth AI_SHARED_SECRET fallback. Rejects unauthenticated requests.
+    """
+    from services.qstash_verifier import verify_qstash_signature
+
+    current_key = (os.getenv("QSTASH_CURRENT_SIGNING_KEY") or "").strip()
+    next_key = (os.getenv("QSTASH_NEXT_SIGNING_KEY") or "").strip()
+    signature = request.headers.get("Upstash-Signature", "").strip()
+
+    is_signed_qstash = bool(
+        current_key
+        and signature
+        and verify_qstash_signature(
+            body=request.data,
+            signature=signature,
+            current_key=current_key,
+            next_key=next_key,
+            url=request.base_url,
+        )
+    )
+    is_shared_secret = authorized()
+
+    if not (is_signed_qstash or is_shared_secret):
+        return jsonify(
+            {
+                "ok": False,
+                "error": "unauthorized",
+                "message": "Invalid or missing QStash signature",
+            }
+        ), 401
+
+    data = request.get_json(silent=True) or {}
+    payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
+
+    post_id = payload.get("post_id")
+    child_id = payload.get("child_id")
+    object_key = payload.get("object_key")
+    kind = payload.get("kind", "post")
+
+    if not (post_id and child_id and object_key):
+        return jsonify({"ok": False, "error": "missing_required_payload_fields"}), 400
+
+    from services.media_processor import process_media_job
+
+    res = process_media_job(int(post_id), int(child_id), str(object_key), str(kind))
+    return jsonify({"ok": True, "result": res}), 200
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "8081")))

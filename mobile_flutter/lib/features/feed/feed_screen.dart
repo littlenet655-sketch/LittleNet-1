@@ -4,7 +4,11 @@ import '../../api.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/theme/colors.dart';
 import '../../core/widgets/ln_components.dart';
+import '../../core/upload/upload_manager.dart';
+import '../../core/upload/upload_progress_banner.dart';
 import 'comments_sheet.dart';
+import 'report_options_sheet.dart';
+import 'share_sheet.dart';
 
 /// LittleNet V2 – Feed / Discover screen.
 ///
@@ -52,11 +56,19 @@ class _FeedScreenState extends State<FeedScreen> {
     super.initState();
     _loadInitialFeed();
     _scrollController.addListener(_onScroll);
+    UploadManager.instance.addListener(_onUploadChanged);
+  }
+
+  void _onUploadChanged() {
+    if (UploadManager.instance.state.stage == UploadStage.allowed && mounted) {
+      _loadInitialFeed();
+    }
   }
 
   @override
   void dispose() {
     _scrollController.dispose();
+    UploadManager.instance.removeListener(_onUploadChanged);
     super.dispose();
   }
 
@@ -242,10 +254,17 @@ class _FeedScreenState extends State<FeedScreen> {
               ),
             ),
           ],
-          body: RefreshIndicator(
-            onRefresh: _loadInitialFeed,
-            color: AppColors.primary,
-            child: _buildFeedBody(),
+          body: Column(
+            children: [
+              const UploadProgressBanner(),
+              Expanded(
+                child: RefreshIndicator(
+                  onRefresh: _loadInitialFeed,
+                  color: AppColors.primary,
+                  child: _buildFeedBody(),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -314,7 +333,18 @@ class _FeedScreenState extends State<FeedScreen> {
                     postCaption: item['caption']?.toString(),
                   )
               : null,
-          onShare: () {},
+          onShare: () => ShareSheet.show(
+            context,
+            authState: widget.authState,
+            postId: postId,
+            postTitle: item['caption']?.toString(),
+          ),
+          onMore: () => ReportOptionsSheet.show(
+            context,
+            authState: widget.authState,
+            postId: postId,
+            authorHandle: item['username'] != null ? '@${item['username']}' : '@classmate',
+          ),
         );
       },
     );

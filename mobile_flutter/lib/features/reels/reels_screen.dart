@@ -4,6 +4,8 @@ import 'package:video_player/video_player.dart';
 import '../../api.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/widgets/ln_components.dart';
+import '../../core/upload/upload_manager.dart';
+import 'reel_controller_pool.dart';
 
 class ReelsScreen extends StatefulWidget {
   const ReelsScreen({super.key, required this.authState});
@@ -14,9 +16,9 @@ class ReelsScreen extends StatefulWidget {
   State<ReelsScreen> createState() => _ReelsScreenState();
 }
 
-class _ReelsScreenState extends State<ReelsScreen> {
+class _ReelsScreenState extends State<ReelsScreen> with WidgetsBindingObserver {
   final PageController _pageController = PageController();
-  final Map<int, VideoPlayerController> _controllers = {};
+  final ReelControllerPool _pool = ReelControllerPool();
   final Set<String> _recordedImpressions = {};
 
   bool _isLoading = true;
@@ -28,26 +30,47 @@ class _ReelsScreenState extends State<ReelsScreen> {
   int _cursor = 0;
   bool _hasMore = true;
   List<Map<String, dynamic>> _reels = [];
-  int _focusedIndex = 0;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _pool.onStateChanged = () {
+      if (mounted) setState(() {});
+    };
+    _pool.onRefreshUrl = (index, reel) async {
+      final postId = reel['post_id'];
+      if (postId == null) return null;
+      try {
+        final res = await widget.authState.apiClient.get('/api/mobile/v1/media/$postId/url');
+        if (res['ok'] == true && res['media_url'] != null) {
+          return res['media_url'] as String;
+        }
+      } catch (_) {}
+      return null;
+    };
+    UploadManager.instance.addListener(_onUploadChanged);
     _loadInitialReels();
+  }
+
+  void _onUploadChanged() {
+    if (UploadManager.instance.state.stage == UploadStage.allowed && mounted) {
+      _loadInitialReels();
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _pool.onAppLifecycleChanged(state);
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    UploadManager.instance.removeListener(_onUploadChanged);
     _pageController.dispose();
-    _disposeAllControllers();
+    _pool.disposeAll();
     super.dispose();
-  }
-
-  void _disposeAllControllers() {
-    for (final c in _controllers.values) {
-      c.dispose();
-    }
-    _controllers.clear();
   }
 
   Future<void> _loadInitialReels() async {
@@ -57,8 +80,8 @@ class _ReelsScreenState extends State<ReelsScreen> {
       _gate = null;
       _cursor = 0;
       _reels = [];
-      _disposeAllControllers();
     });
+    _pool.disposeAll();
 
     try {
       final res = await widget.authState.apiClient.get(
@@ -79,10 +102,8 @@ class _ReelsScreenState extends State<ReelsScreen> {
         });
 
         if (items.isNotEmpty) {
-          _initControllerForIndex(0);
-          if (items.length > 1) {
-            _initControllerForIndex(1); // Preload next
-          }
+          if (!mounted) return;
+          _pool.onPageChanged(0, items, context);
           _recordImpression(0);
         }
       }
@@ -137,59 +158,13 @@ class _ReelsScreenState extends State<ReelsScreen> {
   }
 
   void _onPageChanged(int index) {
-    setState(() => _focusedIndex = index);
-
-    // 1. Play current, pause previous
-    _controllers[index]?.play();
-    _controllers[index - 1]?.pause();
-    _controllers[index + 1]?.pause();
-
-    // 2. Preload adjacent window: index - 1, index, index + 1
-    _initControllerForIndex(index - 1);
-    _initControllerForIndex(index);
-    _initControllerForIndex(index + 1);
-
-    // 3. Dispose distant controllers outside [index - 1, index + 1]
-    final keysToRemove =
-        _controllers.keys.where((k) => k < index - 1 || k > index + 1).toList();
-    for (final k in keysToRemove) {
-      _controllers[k]?.dispose();
-      _controllers.remove(k);
-    }
-
-    // 4. Record impression
+    setState(() {});
+    _pool.onPageChanged(index, _reels, context);
     _recordImpression(index);
 
-    // 5. Pre-fetch next page if near end
     if (index >= _reels.length - 2 && _hasMore && !_isLoadingMore) {
       _loadNextPage();
     }
-  }
-
-  void _initControllerForIndex(int index) {
-    if (index < 0 || index >= _reels.length) return;
-    if (_controllers.containsKey(index)) return;
-
-    final mediaUrl = _reels[index]['media_url']?.toString();
-    if (mediaUrl == null || mediaUrl.isEmpty) return;
-
-    final uri = Uri.parse(mediaUrl);
-    late final VideoPlayerController controller;
-    controller = VideoPlayerController.networkUrl(uri)
-      ..setLooping(true)
-      ..setVolume(0.0) // Kept muted consistent with retired audio scope
-      ..initialize().then((_) {
-        if (mounted) {
-          setState(() {});
-          if (index == _focusedIndex) {
-            controller.play();
-          }
-        }
-      }).catchError((_) {
-        // Video initialize failure handled gracefully by UI poster fallback
-      });
-
-    _controllers[index] = controller;
   }
 
   void _recordImpression(int index) {
@@ -216,7 +191,9 @@ class _ReelsScreenState extends State<ReelsScreen> {
     if (_isLoading) {
       return const Scaffold(
         backgroundColor: Colors.black,
-        body: Center(child: CircularProgressIndicator(color: Colors.white)),
+        body: Center(
+          child: CircularProgressIndicator(color: Colors.white),
+        ),
       );
     }
 
@@ -228,15 +205,13 @@ class _ReelsScreenState extends State<ReelsScreen> {
           appBar: AppBar(
             backgroundColor: Colors.white,
             elevation: 0,
-            title: const Text('Reels',
-                style: TextStyle(
-                    fontSize: 17,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF262626))),
-            bottom: const PreferredSize(
-              preferredSize: Size.fromHeight(0.5),
-              child: Divider(
-                  height: 0.5, thickness: 0.5, color: Color(0xFFDBDBDB)),
+            title: const Text(
+              'Reels',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF262626),
+              ),
             ),
           ),
           body: LnEmptyState(
@@ -288,8 +263,8 @@ class _ReelsScreenState extends State<ReelsScreen> {
           onPageChanged: _onPageChanged,
           itemBuilder: (context, index) {
             final reel = _reels[index];
-            final controller = _controllers[index];
-            final isInitialized = controller?.value.isInitialized ?? false;
+            final controller = _pool.getController(index);
+            final isInitialized = _pool.isReady(index);
             final authorName = reel['full_name']?.toString() ??
                 reel['author_name']?.toString() ?? 'LittleNet';
             final avatarUrl = reel['avatar_url']?.toString();
@@ -299,35 +274,52 @@ class _ReelsScreenState extends State<ReelsScreen> {
                 reel['content_category']?.toString() ?? 'Learning';
             final isCurated = reel['source_type'] == 'CURATED';
             final likeCount = reel['likes'] as int? ?? reel['like_count'] as int? ?? 0;
+            final posterUrl = reel['poster_url']?.toString();
 
             return Stack(
               fit: StackFit.expand,
               children: [
-                // ── Video / Poster ──────────────────────
-                if (isInitialized)
-                  Center(
-                    child: AspectRatio(
-                      aspectRatio: controller!.value.aspectRatio,
-                      child: VideoPlayer(controller),
-                    ),
-                  )
-                else if (reel['poster_url'] != null)
-                  Image.network(
-                    reel['poster_url'].toString(),
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const ColoredBox(
-                      color: Color(0xFF1A1A2E),
-                      child: Center(
-                        child: Icon(Icons.movie_creation_outlined,
-                            size: 64, color: Colors.white24),
+                // ── Layer 1: Poster / Immediate placeholder ──
+                if (posterUrl != null && posterUrl.isNotEmpty)
+                  Positioned.fill(
+                    child: Image.network(
+                      posterUrl,
+                      fit: BoxFit.cover,
+                      errorBuilder: (_, __, ___) => const ColoredBox(
+                        color: Color(0xFF1A1A2E),
+                        child: Center(
+                          child: Icon(Icons.movie_creation_outlined,
+                              size: 64, color: Colors.white24),
+                        ),
                       ),
                     ),
                   )
                 else
-                  const ColoredBox(
-                    color: Color(0xFF1A1A2E),
-                    child: Center(
-                        child: CircularProgressIndicator(color: Colors.white38)),
+                  Positioned.fill(
+                    child: ColoredBox(
+                      color: const Color(0xFF1A1A2E),
+                      child: Center(
+                        child: isInitialized
+                            ? const SizedBox.shrink()
+                            : const SizedBox(
+                                width: 24,
+                                height: 24,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white38,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ),
+
+                // ── Layer 2: Video Player (seamless overlay) ────
+                if (isInitialized && controller != null)
+                  Center(
+                    child: AspectRatio(
+                      aspectRatio: controller.value.aspectRatio,
+                      child: VideoPlayer(controller),
+                    ),
                   ),
 
                 // ── Full bottom gradient scrim ────────────

@@ -16,21 +16,27 @@ class ApiException implements Exception {
 }
 
 class ApiClient {
-  ApiClient({String? baseUrl})
+  ApiClient({String? baseUrl, http.Client? httpClient})
       : baseUrl = (baseUrl ??
                 const String.fromEnvironment(
                   'LITTLENET_API_BASE',
                   defaultValue:
                       'https://littlenet655--littlenet-web-web.modal.run',
                 ))
-            .replaceAll(RegExp(r'/+$'), '');
+            .replaceAll(RegExp(r'/+$'), ''),
+        _client = httpClient ?? http.Client();
 
   final String baseUrl;
+  final http.Client _client;
   final FlutterSecureStorage _storage = const FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
   String? _token;
+
+  void dispose() {
+    _client.close();
+  }
 
   Future<void> restore() async {
     try {
@@ -92,7 +98,7 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? query,
   }) async {
-    final response = await http.get(uri(path, query), headers: authHeaders);
+    final response = await _client.get(uri(path, query), headers: authHeaders);
     return _decode(response);
   }
 
@@ -100,7 +106,7 @@ class ApiClient {
     String path,
     Map<String, dynamic> body,
   ) async {
-    final response = await http.post(
+    final response = await _client.post(
       uri(path),
       headers: {...authHeaders, 'Content-Type': 'application/json'},
       body: jsonEncode(body),
@@ -112,7 +118,7 @@ class ApiClient {
     String path,
     Map<String, dynamic> body,
   ) async {
-    final response = await http.put(
+    final response = await _client.put(
       uri(path),
       headers: {...authHeaders, 'Content-Type': 'application/json'},
       body: jsonEncode(body),
@@ -133,7 +139,7 @@ class ApiClient {
       request.files
           .add(await http.MultipartFile.fromPath(fileField, file.path));
     }
-    final streamed = await request.send();
+    final streamed = await _client.send(request);
     final response = await http.Response.fromStream(streamed);
     return _decode(response);
   }

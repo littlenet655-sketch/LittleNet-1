@@ -5,12 +5,15 @@ import '../features/auth/login_screen.dart';
 import '../features/auth/parent_liveness_screen.dart';
 import '../features/auth/parent_signup_screen.dart';
 import '../features/chat/chat_conversation_screen.dart';
+import '../features/chat/chat_details_screen.dart';
 import '../features/chat/chat_list_screen.dart';
 import '../features/create_post/create_post_screen.dart';
 import '../features/discovery/discovery_screen.dart';
 import '../features/explore/explore_screen.dart';
 import '../features/feed/feed_screen.dart';
 import '../features/kids/kids_main_shell.dart';
+import '../features/kids/notifications_screen.dart';
+import '../features/kids/story_viewer_screen.dart';
 import '../features/learning/learning_screen.dart';
 import '../features/moderator/incident_detail_screen.dart';
 import '../features/moderator/moderator_audit_screen.dart';
@@ -142,6 +145,42 @@ class AppRouter {
             peerName: peerName,
             peerAvatarUrl: peerAvatarUrl,
           ),
+          settings: settings,
+        );
+
+      case '/kids/chat/details':
+      case '/kids/chat/info':
+        final peerId = args['peer_id'] is int
+            ? args['peer_id'] as int
+            : int.tryParse(args['peer_id']?.toString() ?? '') ?? 0;
+        final peerName = args['peer_name']?.toString() ?? 'Classmate';
+        final peerAvatarUrl = args['peer_avatar_url']?.toString();
+        return MaterialPageRoute(
+          builder: (_) => ChatDetailsScreen(
+            authState: authState,
+            peerId: peerId,
+            peerName: peerName,
+            peerAvatarUrl: peerAvatarUrl,
+          ),
+          settings: settings,
+        );
+
+      case '/kids/story-viewer':
+        return MaterialPageRoute(
+          builder: (_) => StoryViewerScreen(
+            authState: authState,
+            authorName: args['author_name']?.toString() ?? 'Classmate',
+            authorHandle: args['author_handle']?.toString() ?? '@classmate',
+            avatarUrl: args['avatar_url']?.toString(),
+            mediaUrl: args['media_url']?.toString(),
+            caption: args['caption']?.toString() ?? 'Classroom STEM update! 🚀',
+          ),
+          settings: settings,
+        );
+
+      case '/kids/notifications':
+        return MaterialPageRoute(
+          builder: (_) => NotificationsScreen(authState: authState),
           settings: settings,
         );
 

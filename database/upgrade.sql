@@ -171,3 +171,44 @@ CREATE TABLE IF NOT EXISTS parent_weekly_digests (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_parent_digests_child ON parent_weekly_digests(child_id, week_start_date DESC);
+
+-- Phase 2: Direct Upload, Async Processing, and Manual Hashtags
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_status VARCHAR(20) NOT NULL DEFAULT 'ALLOWED';
+DO $$ BEGIN
+  ALTER TABLE posts ADD CONSTRAINT posts_processing_status_check
+    CHECK (processing_status IN ('UPLOADING','UPLOADED','PROCESSING','REVIEW','ALLOWED','BLOCKED','FAILED'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS source_media_path VARCHAR(500);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS poster_path VARCHAR(500);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_error TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_completed_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_posts_processing ON posts(processing_status,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS post_tags (
+  tag_id BIGSERIAL PRIMARY KEY,
+  post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
+  tag VARCHAR(50) NOT NULL,
+  normalized_tag VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(post_id, normalized_tag)
+);
+CREATE INDEX IF NOT EXISTS idx_post_tags_post ON post_tags(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_tags_normalized ON post_tags(normalized_tag);
+
+CREATE TABLE IF NOT EXISTS upload_sessions (
+  upload_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  object_key VARCHAR(500) NOT NULL UNIQUE,
+  media_type VARCHAR(20) NOT NULL CHECK (media_type IN ('IMAGE','VIDEO','AUDIO')),
+  kind VARCHAR(20) NOT NULL CHECK (kind IN ('POST','REEL','STORY')),
+  expected_size_bytes BIGINT NOT NULL,
+  mime_type VARCHAR(100) NOT NULL,
+  extension VARCHAR(20) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','UPLOADED','CONSUMED','EXPIRED','CANCELLED')),
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  consumed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_child ON upload_sessions(child_id, status, created_at DESC);

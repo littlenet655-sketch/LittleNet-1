@@ -48,3 +48,5 @@ static/vendor/
 *.zip
 playwright-report/
 test-results/
+.codex/
+stitch_ui_reference/
