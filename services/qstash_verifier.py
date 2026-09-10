@@ -1,16 +1,22 @@
 """QStash inbound signature verification for LittleNet background job receivers.
 
-Verifies the `Upstash-Signature` JWT header using current and next signing keys,
-preventing arbitrary public requests from triggering asynchronous processing jobs.
+Verifies the `Upstash-Signature` JWT header using the official Upstash QStash
+Python SDK Receiver, enforcing official claim semantics:
+- iss == "Upstash"
+- sub == destination URL
+- exp not expired
+- nbf already valid (clock tolerance applied)
+- body claim == SHA-256 base64url hash of raw request body
+- Current key with rotation fallback to next key
+
+Never logs or exposes secret signing keys or sensitive tokens.
 """
 from __future__ import annotations
 
-import base64
-import hashlib
-import time
-from typing import Any
+import logging
+from typing import Optional
 
-import jwt
+logger = logging.getLogger(__name__)
 
 
 def verify_qstash_signature(
@@ -21,54 +27,35 @@ def verify_qstash_signature(
     url: str | None = None,
     tolerance: int = 900,
 ) -> bool:
-    """Verify an Upstash QStash request signature.
+    """Verify an Upstash QStash request signature using the official Receiver.
 
-    Supports current and next signing keys for key rotation.
-    Fails closed on missing/invalid signature, expired token, or body hash mismatch.
-    Never logs or exposes secret keys.
+    Supports current and next signing keys for seamless key rotation.
+    Fails closed on missing/invalid signature, expired token, mismatched URL (sub),
+    or body hash mismatch.
     """
     if not signature or not current_key:
         return False
 
-    keys = [k.strip() for k in (current_key, next_key) if k and k.strip()]
-    if not keys:
+    c_key = current_key.strip()
+    n_key = (next_key or current_key).strip()
+    if not c_key:
         return False
 
-    raw_bytes = body.encode("utf-8") if isinstance(body, str) else body
+    raw_str = body.decode("utf-8", errors="replace") if isinstance(body, bytes) else str(body)
 
-    # Compute body hashes (QStash uses base64url or hex SHA-256)
-    sha256_digest = hashlib.sha256(raw_bytes).digest()
-    b64url_hash = base64.urlsafe_b64encode(sha256_digest).decode("utf-8").rstrip("=")
-    hex_hash = hashlib.sha256(raw_bytes).hexdigest()
+    try:
+        from qstash import Receiver
+        from qstash.errors import SignatureError
 
-    for key in keys:
-        try:
-            claims: dict[str, Any] = jwt.decode(
-                signature,
-                key,
-                algorithms=["HS256"],
-                options={"verify_exp": True, "verify_nbf": False},
-                leeway=tolerance,
-            )
-
-            # Issuer must be Upstash
-            if claims.get("iss") != "Upstash":
-                continue
-
-            # Optional URL/subject claim verification
-            if url and claims.get("sub"):
-                target = claims["sub"].rstrip("/")
-                incoming = url.rstrip("/")
-                if target != incoming:
-                    continue
-
-            # Body hash verification: if present, must match computed digest
-            body_claim = claims.get("body")
-            if body_claim and body_claim not in (b64url_hash, hex_hash):
-                continue
-
-            return True
-        except Exception:
-            continue
-
-    return False
+        receiver = Receiver(current_signing_key=c_key, next_signing_key=n_key)
+        receiver.verify(
+            body=raw_str,
+            signature=signature.strip(),
+            url=url.strip() if url else None,
+            clock_tolerance=tolerance,
+        )
+        return True
+    except SignatureError:
+        return False
+    except Exception:
+        return False

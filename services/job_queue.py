@@ -78,6 +78,11 @@ class QStashJobQueue(JobQueue):
         if deduplication_id:
             headers["Upstash-Deduplication-Id"] = deduplication_id
 
+        # Defense-in-depth: forward AI_SHARED_SECRET to Modal receiver via Upstash-Forward header
+        ai_secret = (os.getenv("AI_SHARED_SECRET") or "").strip()
+        if ai_secret:
+            headers["Upstash-Forward-X-LittleNet-AI-Key"] = ai_secret
+
         # Target endpoint (Modal webhook or LittleNet worker)
         qstash_url = f"https://qstash.upstash.io/v2/publish/{self.endpoint_url}"
         data = {

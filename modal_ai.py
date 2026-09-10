@@ -38,6 +38,7 @@ image = (
         "Pillow==12.3.0",
         "pypdf==6.16.1",
         "requests==2.33.0",
+        "qstash>=3.4.0,<4",
     )
     .workdir("/root/littlenet")
     .env(

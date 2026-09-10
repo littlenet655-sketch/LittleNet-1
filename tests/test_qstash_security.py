@@ -1,4 +1,15 @@
-"""Security and contract tests for Upstash QStash job queue and signature verification."""
+"""Security and contract tests for Upstash QStash job queue and signature verification.
+
+Verifies the official Upstash claim contract:
+- iss == "Upstash"
+- sub == canonical destination URL
+- exp == valid, not expired
+- nbf == valid, not in future
+- body == SHA-256 base64url hash of the raw request body
+- Current and next signing key support (key rotation)
+- Defense-in-depth AI_SHARED_SECRET forwarding and verification
+- Fail-closed production queue provider gating
+"""
 from __future__ import annotations
 
 import base64
@@ -6,7 +17,7 @@ import hashlib
 import json
 import os
 import time
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 
 import jwt
 import pytest
@@ -15,74 +26,200 @@ from services.job_queue import LocalJobQueue, QStashJobQueue, get_job_queue, val
 from services.qstash_verifier import verify_qstash_signature
 
 
+CANONICAL_URL = "https://modal.littlenet.ai/ai/jobs/process-media"
+CURRENT_KEY = "sig_current_key_12345678901234567890"
+NEXT_KEY = "sig_next_key_987654321098765432109876"
+
+
 def _make_jwt(
-    body: bytes,
+    body: bytes | str,
     key: str,
     iss: str = "Upstash",
     sub: str | None = None,
     exp_offset: int = 300,
+    nbf_offset: int = -10,
     tamper_body_claim: bool = False,
 ) -> str:
-    digest = hashlib.sha256(body).digest()
+    raw_bytes = body.encode("utf-8") if isinstance(body, str) else body
+    digest = hashlib.sha256(raw_bytes).digest()
     b64url = base64.urlsafe_b64encode(digest).decode("utf-8").rstrip("=")
     if tamper_body_claim:
         b64url = "invalid_hash_claim"
     payload = {
         "iss": iss,
+        "sub": sub or CANONICAL_URL,
         "exp": int(time.time()) + exp_offset,
-        "nbf": int(time.time()) - 10,
+        "nbf": int(time.time()) + nbf_offset,
         "body": b64url,
     }
-    if sub:
-        payload["sub"] = sub
     return jwt.encode(payload, key, algorithm="HS256")
 
 
-def test_qstash_signature_missing_rejected():
-    assert verify_qstash_signature(b"{}", "", "sig_key_1_1234567890_1234567890_1234") is False
+# ────────────────────────────────────────────────────────────────────────────
+# 1-9: Explicit Official QStash Signature Semantics
+# ────────────────────────────────────────────────────────────────────────────
+
+def test_1_valid_official_qstash_signature_accepted():
+    body = b'{"job_type": "process_media", "payload": {"post_id": 101}}'
+    sig = _make_jwt(body, CURRENT_KEY, sub=CANONICAL_URL)
+    assert verify_qstash_signature(body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is True
 
 
-def test_qstash_signature_invalid_rejected():
-    assert verify_qstash_signature(b"{}", "invalid.jwt.signature", "sig_key_1_1234567890_1234567890_1234") is False
+def test_2_missing_signature_rejected():
+    body = b'{"test": 1}'
+    assert verify_qstash_signature(body, "", CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is False
 
 
-def test_qstash_signature_valid_current_key_accepted():
-    key1 = "current_key_secret_1234567890123456"
-    key2 = "next_key_secret_1234567890123456789"
-    body = json.dumps({"job": "proc", "id": 123}).encode("utf-8")
-    sig = _make_jwt(body, key1)
-    assert verify_qstash_signature(body, sig, key1, key2) is True
+def test_3_invalid_signature_rejected():
+    body = b'{"test": 1}'
+    assert verify_qstash_signature(body, "invalid.jwt.token", CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is False
 
 
-def test_qstash_signature_valid_next_key_accepted_for_rotation():
-    key1 = "current_key_secret_1234567890123456"
-    key2 = "next_key_secret_1234567890123456789"
-    body = json.dumps({"job": "proc", "id": 456}).encode("utf-8")
-    sig = _make_jwt(body, key2)
-    assert verify_qstash_signature(body, sig, key1, key2) is True
+def test_4_expired_jwt_rejected():
+    body = b'{"test": 1}'
+    sig = _make_jwt(body, CURRENT_KEY, sub=CANONICAL_URL, exp_offset=-100)
+    assert verify_qstash_signature(body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is False
 
 
-def test_qstash_signature_wrong_key_rejected():
-    key1 = "current_key_secret_1234567890123456"
-    key2 = "next_key_secret_1234567890123456789"
-    body = b"sample_payload"
-    sig = _make_jwt(body, "wrong_key_12345678901234567890123456")
-    assert verify_qstash_signature(body, sig, key1, key2) is False
+def test_5_nbf_in_future_rejected():
+    body = b'{"test": 1}'
+    # nbf is 2000 seconds in future (exceeding tolerance)
+    sig = _make_jwt(body, CURRENT_KEY, sub=CANONICAL_URL, nbf_offset=2000)
+    assert verify_qstash_signature(body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is False
 
 
-def test_qstash_signature_tampered_body_rejected():
-    key = "current_key_secret_1234567890123456"
-    original_body = b'{"post_id": 1}'
-    tampered_body = b'{"post_id": 999}'
-    sig = _make_jwt(original_body, key)
-    assert verify_qstash_signature(tampered_body, sig, key) is False
+def test_6_wrong_sub_destination_url_rejected():
+    body = b'{"test": 1}'
+    sig = _make_jwt(body, CURRENT_KEY, sub="https://attacker.host/ai/jobs/process-media")
+    assert verify_qstash_signature(body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is False
 
 
-def test_qstash_signature_expired_token_rejected():
-    key = "current_key_secret_1234567890123456"
-    body = b'{"post_id": 1}'
-    sig = _make_jwt(body, key, exp_offset=-1000)
-    assert verify_qstash_signature(body, sig, key) is False
+def test_7_changed_raw_body_rejected():
+    original_body = b'{"post_id": 100, "child_id": 5}'
+    tampered_body = b'{"post_id": 999, "child_id": 5}'
+    sig = _make_jwt(original_body, CURRENT_KEY, sub=CANONICAL_URL)
+    assert verify_qstash_signature(tampered_body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is False
+
+
+def test_8_current_signing_key_accepted():
+    body = b'{"item": "current_key_test"}'
+    sig = _make_jwt(body, CURRENT_KEY, sub=CANONICAL_URL)
+    assert verify_qstash_signature(body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is True
+
+
+def test_9_next_signing_key_accepted_for_rotation():
+    body = b'{"item": "next_key_test"}'
+    sig = _make_jwt(body, NEXT_KEY, sub=CANONICAL_URL)
+    assert verify_qstash_signature(body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is True
+
+
+def test_wrong_signing_key_rejected():
+    body = b'{"item": "wrong_key"}'
+    sig = _make_jwt(body, "completely_wrong_key_1234567890123456", sub=CANONICAL_URL)
+    assert verify_qstash_signature(body, sig, CURRENT_KEY, NEXT_KEY, url=CANONICAL_URL) is False
+
+
+# ────────────────────────────────────────────────────────────────────────────
+# 10-12: AI_SHARED_SECRET Forwarding and Defense in Depth
+# ────────────────────────────────────────────────────────────────────────────
+
+def test_10_ai_shared_secret_forwarded_correctly_when_publishing():
+    """QStashJobQueue must forward AI_SHARED_SECRET via Upstash-Forward header."""
+    q = QStashJobQueue(token="qstash_token_xyz", endpoint_url=CANONICAL_URL)
+    payload = {"post_id": 1, "child_id": 2, "object_key": "k"}
+
+    with patch.dict(os.environ, {"AI_SHARED_SECRET": "secret_ai_token_456"}), \
+         patch("requests.post") as mock_post:
+        mock_resp = MagicMock()
+        mock_resp.json.return_value = {"messageId": "msg_123"}
+        mock_resp.raise_for_status.return_value = None
+        mock_post.return_value = mock_resp
+
+        q.enqueue("process_media", payload, deduplication_id="dedup_01")
+
+        assert mock_post.called
+        call_args = mock_post.call_args
+        headers = call_args[1]["headers"]
+
+        # Token must be in Upstash-Forward header, NOT exposed in JSON body or missing
+        assert headers.get("Upstash-Forward-X-LittleNet-AI-Key") == "secret_ai_token_456"
+        assert headers.get("Upstash-Deduplication-Id") == "dedup_01"
+        assert "secret_ai_token_456" not in call_args[1]["data"]
+
+
+def test_11_valid_qstash_signature_but_invalid_ai_shared_secret_rejected():
+    """If Modal has AI_SHARED_SECRET configured, mismatched secret must be rejected with 401."""
+    from ai_server import app
+    client = app.test_client()
+
+    body = json.dumps({"payload": {"post_id": 88, "child_id": 9, "object_key": "k", "kind": "post"}}).encode("utf-8")
+    sig = _make_jwt(body, CURRENT_KEY, sub=CANONICAL_URL)
+
+    env = {
+        "QSTASH_CURRENT_SIGNING_KEY": CURRENT_KEY,
+        "QSTASH_MODAL_ENDPOINT": CANONICAL_URL,
+        "AI_SHARED_SECRET": "modal_strict_secret",
+    }
+    with patch.dict(os.environ, env):
+        # Request has valid QStash signature, but wrong X-LittleNet-AI-Key
+        resp = client.post(
+            "/ai/jobs/process-media",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Upstash-Signature": sig,
+                "X-LittleNet-AI-Key": "wrong_secret_attacker",
+            },
+        )
+        assert resp.status_code == 401
+        assert resp.get_json()["error"] == "unauthorized"
+
+
+def test_12_arbitrary_direct_public_post_cannot_trigger_processing():
+    """Public arbitrary POST with no signature and no secret must be rejected."""
+    from ai_server import app
+    client = app.test_client()
+
+    with patch.dict(os.environ, {"QSTASH_CURRENT_SIGNING_KEY": CURRENT_KEY}):
+        resp = client.post(
+            "/ai/jobs/process-media",
+            data=b'{"post_id": 1, "child_id": 2, "object_key": "k"}',
+            headers={"Content-Type": "application/json"},
+        )
+        assert resp.status_code == 401
+        assert resp.get_json()["error"] == "unauthorized"
+
+
+def test_ai_server_accepts_valid_signature_and_forwarded_secret():
+    """Valid QStash signature + matching forwarded secret must trigger processing."""
+    from ai_server import app
+    client = app.test_client()
+
+    body = json.dumps({"payload": {"post_id": 777, "child_id": 88, "object_key": "uploads/r2/k.mp4", "kind": "reel"}}).encode("utf-8")
+    sig = _make_jwt(body, CURRENT_KEY, sub=CANONICAL_URL)
+
+    env = {
+        "QSTASH_CURRENT_SIGNING_KEY": CURRENT_KEY,
+        "QSTASH_NEXT_SIGNING_KEY": NEXT_KEY,
+        "QSTASH_MODAL_ENDPOINT": CANONICAL_URL,
+        "AI_SHARED_SECRET": "modal_strict_secret",
+    }
+    with patch.dict(os.environ, env), \
+         patch("services.media_processor.process_media_job") as mock_proc:
+        mock_proc.return_value = {"ok": True, "status": "ALLOWED"}
+
+        resp = client.post(
+            "/ai/jobs/process-media",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Upstash-Signature": sig,
+                "X-LittleNet-AI-Key": "modal_strict_secret",
+            },
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["ok"] is True
+        mock_proc.assert_called_once_with(777, 88, "uploads/r2/k.mp4", "reel")
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -149,38 +286,3 @@ def test_job_queue_prod_succeeds_when_fully_configured():
         assert provider == "qstash"
         q = get_job_queue()
         assert isinstance(q, QStashJobQueue)
-
-
-# ────────────────────────────────────────────────────────────────────────────
-# Receiver Endpoint In ai_server.py
-# ────────────────────────────────────────────────────────────────────────────
-
-def test_ai_server_process_media_rejects_unsigned_request():
-    from ai_server import app
-    client = app.test_client()
-
-    resp = client.post("/ai/jobs/process-media", json={"post_id": 1, "child_id": 2, "object_key": "k"})
-    assert resp.status_code == 401
-    assert "unauthorized" in resp.get_json().get("error", "")
-
-
-def test_ai_server_process_media_accepts_valid_qstash_signature():
-    from ai_server import app
-    client = app.test_client()
-
-    sig_key = "test_sig_key_1234567890123456789012"
-    body = json.dumps({"payload": {"post_id": 9999, "child_id": 10, "object_key": "k", "kind": "post"}}).encode("utf-8")
-    sig = _make_jwt(body, sig_key)
-
-    with patch.dict(os.environ, {"QSTASH_CURRENT_SIGNING_KEY": sig_key}), \
-         patch("services.media_processor.process_media_job") as mock_proc:
-        mock_proc.return_value = {"ok": True, "status": "ALLOWED"}
-
-        resp = client.post(
-            "/ai/jobs/process-media",
-            data=body,
-            headers={"Content-Type": "application/json", "Upstash-Signature": sig},
-        )
-        assert resp.status_code == 200
-        assert resp.get_json()["ok"] is True
-        mock_proc.assert_called_once_with(9999, 10, "k", "post")

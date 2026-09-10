@@ -163,8 +163,11 @@ def face_adult_endpoint():
 def process_media_job_endpoint():
     """Receiver endpoint for QStash background media processing dispatch.
 
-    Verifies Upstash signature using QSTASH_CURRENT_SIGNING_KEY / QSTASH_NEXT_SIGNING_KEY,
-    with defense-in-depth AI_SHARED_SECRET fallback. Rejects unauthenticated requests.
+    Verifies Upstash signature on the exact raw request body using official
+    Receiver (QSTASH_CURRENT_SIGNING_KEY / QSTASH_NEXT_SIGNING_KEY), checking:
+    iss=Upstash, sub=canonical endpoint, exp, nbf, body=SHA256(raw body).
+    Also validates forwarded AI_SHARED_SECRET for defense in depth when configured.
+    Rejects unauthorized or tampered requests before any parsing or processing.
     """
     from services.qstash_verifier import verify_qstash_signature
 
@@ -172,20 +175,24 @@ def process_media_job_endpoint():
     next_key = (os.getenv("QSTASH_NEXT_SIGNING_KEY") or "").strip()
     signature = request.headers.get("Upstash-Signature", "").strip()
 
+    # Canonical destination URL
+    canonical_url = (os.getenv("QSTASH_MODAL_ENDPOINT") or "").strip() or request.base_url
+
+    raw_body = request.get_data()
+
     is_signed_qstash = bool(
         current_key
         and signature
         and verify_qstash_signature(
-            body=request.data,
+            body=raw_body,
             signature=signature,
             current_key=current_key,
             next_key=next_key,
-            url=request.base_url,
+            url=canonical_url,
         )
     )
-    is_shared_secret = authorized()
 
-    if not (is_signed_qstash or is_shared_secret):
+    if not is_signed_qstash:
         return jsonify(
             {
                 "ok": False,
@@ -194,7 +201,24 @@ def process_media_job_endpoint():
             }
         ), 401
 
-    data = request.get_json(silent=True) or {}
+    # Defense in depth: if AI_SHARED_SECRET is configured on Modal receiver,
+    # the forwarded X-LittleNet-AI-Key header must also match.
+    configured_ai_secret = (os.getenv("AI_SHARED_SECRET") or "").strip()
+    if configured_ai_secret and not authorized():
+        return jsonify(
+            {
+                "ok": False,
+                "error": "unauthorized",
+                "message": "Invalid or missing shared secret",
+            }
+        ), 401
+
+    # Parse JSON only after signature and defense-in-depth authorization succeed
+    try:
+        data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+    except Exception:
+        return jsonify({"ok": False, "error": "invalid_json_payload"}), 400
+
     payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
 
     post_id = payload.get("post_id")
