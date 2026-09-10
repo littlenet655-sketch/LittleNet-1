@@ -21,7 +21,7 @@ class ApiClient {
                 const String.fromEnvironment(
                   'LITTLENET_API_BASE',
                   defaultValue:
-                      'https://littlenet655--littlenet-web-web.modal.run',
+                      'https://p01--littlenet-api-dev--vkkyb6h8z9r8.code.run',
                 ))
             .replaceAll(RegExp(r'/+$'), ''),
         _client = httpClient ?? http.Client();
