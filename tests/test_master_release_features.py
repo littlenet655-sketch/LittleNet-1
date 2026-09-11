@@ -53,6 +53,23 @@ def test_face_challenge_and_replay_protection(client):
     assert action in {"BLINK", "TURN_LEFT", "TURN_RIGHT"}
     assert len(nonce) >= 32
 
+    # Ensure user has biometric credentials enrolled
+    import hmac, hashlib, secrets
+    face_prof = fetch_one("SELECT biometric_key FROM face_profiles WHERE child_id=%s", (user["user_id"],))
+    if not face_prof or not face_prof.get("biometric_key"):
+        b_key = secrets.token_hex(32)
+        execute(
+            """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+               VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+               ON CONFLICT (child_id) DO UPDATE SET biometric_key=EXCLUDED.biometric_key""",
+            (user["user_id"], b_key),
+        )
+    else:
+        b_key = face_prof["biometric_key"]
+
+    msg = f"{challenge_id}:{nonce}:{action}:{user['user_id']}".encode("utf-8")
+    sig = hmac.new(b_key.encode("utf-8"), msg, hashlib.sha256).hexdigest().lower()
+
     # 2. Complete challenge successfully
     res_verify = client.post(
         "/api/mobile/v1/auth/face/verify-challenge",
@@ -60,6 +77,7 @@ def test_face_challenge_and_replay_protection(client):
             "challenge_id": challenge_id,
             "nonce": nonce,
             "action_completed": action,
+            "signature": sig,
             "similarity_score": 0.94,
         },
     )
@@ -76,6 +94,7 @@ def test_face_challenge_and_replay_protection(client):
             "challenge_id": challenge_id,
             "nonce": nonce,
             "action_completed": action,
+            "signature": sig,
             "similarity_score": 0.94,
         },
     )
