@@ -975,9 +975,11 @@ def register_mobile_api(bp):
         if not cid:
             return jsonify(error="approved_connection_required"), 403
         if request.method == "GET":
+            limit = request.args.get("limit", type=int)
+            before_id = request.args.get("before_id", type=int)
             execute("UPDATE child_messages SET is_seen=TRUE,seen_at=NOW(),delivered_at=COALESCE(delivered_at,NOW()) WHERE conversation_id=%s AND receiver_child_id=%s AND moderation_status='ALLOWED'", (cid, uid))
             peer = fetch_one("SELECT user_id,username,full_name FROM users WHERE user_id=%s", (peer_id,)) or {}
-            rows = messages(cid, uid)
+            rows = messages(cid, uid, limit=limit, before_id=before_id)
             out = []
             for row in rows:
                 item = dict(row)
@@ -1835,6 +1837,48 @@ def register_mobile_api(bp):
             return jsonify(ok=True, muted=False)
         execute("INSERT INTO muted_users(muter_id,muted_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, target_id))
         return jsonify(ok=True, muted=True)
+
+    @bp.route("/api/mobile/v1/kids/report", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_report():
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        kind = str(data.get("target_type") or "").upper()
+        try:
+            tid = int(data.get("target_id", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_target"), 400
+        reason = str(data.get("reason") or "").strip()
+        details = str(data.get("details") or "").strip()
+        if kind not in {"USER", "POST", "COMMENT", "MESSAGE"} or not reason or not tid:
+            return jsonify(error="invalid_report"), 400
+
+        valid = False
+        if kind == "USER":
+            is_child = bool(fetch_one("SELECT 1 FROM users WHERE user_id=%s AND role='CHILD' AND user_id<>%s", (tid, uid)))
+            has_interaction = bool(fetch_one("SELECT 1 FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)", (uid, tid, tid, uid)))
+            has_conv = bool(fetch_one("SELECT 1 FROM child_conversations WHERE (child1_id=%s AND child2_id=%s) OR (child1_id=%s AND child2_id=%s)", (min(uid, tid), max(uid, tid), min(uid, tid), max(uid, tid))))
+            valid = is_child and (has_interaction or has_conv or can_discover_child(uid, tid))
+        elif kind == "POST":
+            from services.social import post_visible_to
+            valid = bool(post_visible_to(uid, tid))
+        elif kind == "COMMENT":
+            from services.social import post_visible_to
+            row = fetch_one("SELECT post_id FROM comments WHERE comment_id=%s AND moderation_status='ALLOWED'", (tid,))
+            valid = bool(row and post_visible_to(uid, row["post_id"]))
+        elif kind == "MESSAGE":
+            valid = bool(fetch_one("SELECT 1 FROM child_messages WHERE child_message_id=%s AND (sender_child_id=%s OR receiver_child_id=%s)", (tid, uid, uid)))
+
+        if not valid:
+            return jsonify(error="target_unavailable"), 404
+
+        execute(
+            "INSERT INTO reports(reporter_id, target_type, target_id, reason, details) VALUES(%s, %s, %s, %s, %s)",
+            (uid, kind, tid, reason[:100], details[:2000]),
+        )
+        parent_notify(uid, "REPORT_FILED", f"Report submitted for {kind.lower()}", "/parent/safety/")
+        return jsonify(ok=True)
 
     @bp.route("/api/mobile/v1/parent/dashboard")
     @_require_mobile("PARENT")

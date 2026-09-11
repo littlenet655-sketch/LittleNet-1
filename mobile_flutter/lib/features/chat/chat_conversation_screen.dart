@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../../api.dart';
 import '../../core/auth/auth_state.dart';
@@ -24,7 +25,8 @@ class ChatConversationScreen extends StatefulWidget {
   State<ChatConversationScreen> createState() => _ChatConversationScreenState();
 }
 
-class _ChatConversationScreenState extends State<ChatConversationScreen> {
+class _ChatConversationScreenState extends State<ChatConversationScreen>
+    with WidgetsBindingObserver {
   final _messageController = TextEditingController();
   final ScrollController _scrollController = ScrollController();
   final List<Map<String, dynamic>> _messages = [];
@@ -34,17 +36,119 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
   bool _isSending = false;
   String? _safetyBanner;
 
+  Timer? _pollTimer;
+  bool _isAppForeground = true;
+  bool _isLoadingOlder = false;
+  bool _hasMoreOlder = true;
+
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _scrollController.addListener(_onScroll);
     _loadMessages();
+    _startPolling();
   }
 
   @override
   void dispose() {
-    _messageController.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    _pollTimer?.cancel();
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
+    _messageController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final isForeground = state == AppLifecycleState.resumed;
+    _isAppForeground = isForeground;
+    if (isForeground) {
+      _startPolling();
+    } else {
+      _pollTimer?.cancel();
+    }
+  }
+
+  void _onScroll() {
+    if (_scrollController.hasClients &&
+        _scrollController.position.pixels <= 40 &&
+        !_isLoadingOlder &&
+        _hasMoreOlder &&
+        _messages.isNotEmpty) {
+      _loadOlderMessages();
+    }
+  }
+
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 4), (_) {
+      if (!mounted || !_isAppForeground || _isLoading || _isSending) return;
+      _pollNewMessages();
+    });
+  }
+
+  Future<void> _pollNewMessages() async {
+    try {
+      final res = await widget.authState.apiClient.get(
+        '/api/mobile/v1/kids/chat/${widget.peerId}?limit=30',
+      );
+      final list = (res['messages'] as List<dynamic>?) ?? [];
+      final existingIds = _messages.map((m) => m['child_message_id']).toSet();
+      final newItems = <Map<String, dynamic>>[];
+      for (final item in list) {
+        if (item is Map<String, dynamic> &&
+            !existingIds.contains(item['child_message_id'])) {
+          newItems.add(item);
+        }
+      }
+      if (newItems.isNotEmpty && mounted) {
+        final wasNearBottom = !_scrollController.hasClients ||
+            (_scrollController.position.maxScrollExtent -
+                    _scrollController.position.pixels <
+                120);
+        setState(() {
+          _messages.addAll(newItems);
+        });
+        if (wasNearBottom) {
+          _scrollToBottom();
+        }
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _loadOlderMessages() async {
+    if (_isLoadingOlder || !_hasMoreOlder || _messages.isEmpty) return;
+    _isLoadingOlder = true;
+    final oldestId = _messages.first['child_message_id'];
+    try {
+      final res = await widget.authState.apiClient.get(
+        '/api/mobile/v1/kids/chat/${widget.peerId}?limit=30&before_id=$oldestId',
+      );
+      final list = (res['messages'] as List<dynamic>?) ?? [];
+      if (list.isEmpty) {
+        _hasMoreOlder = false;
+      } else {
+        if (list.length < 30) {
+          _hasMoreOlder = false;
+        }
+        final olderItems = <Map<String, dynamic>>[];
+        for (final item in list) {
+          if (item is Map<String, dynamic>) {
+            olderItems.add(item);
+          }
+        }
+        if (mounted && olderItems.isNotEmpty) {
+          setState(() {
+            _messages.insertAll(0, olderItems);
+          });
+        }
+      }
+    } catch (_) {
+    } finally {
+      _isLoadingOlder = false;
+    }
   }
 
   Future<void> _loadMessages() async {
@@ -55,7 +159,7 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
 
     try {
       final res = await widget.authState.apiClient.get(
-        '/api/mobile/v1/kids/chat/${widget.peerId}',
+        '/api/mobile/v1/kids/chat/${widget.peerId}?limit=30',
       );
       final list = (res['messages'] as List<dynamic>?) ?? [];
       setState(() {
@@ -64,6 +168,9 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
           if (item is Map<String, dynamic>) {
             _messages.add(item);
           }
+        }
+        if (list.length < 30) {
+          _hasMoreOlder = false;
         }
       });
       _scrollToBottom();
@@ -113,13 +220,13 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
       _messageController.clear();
 
       if (status == 'ALLOW') {
-        await _loadMessages();
+        await _pollNewMessages();
       } else if (status == 'REVIEW') {
         setState(() {
           _safetyBanner =
               'Your message was sent to your parent for a quick safety review.';
         });
-        await _loadMessages();
+        await _pollNewMessages();
       }
     } on ApiException catch (e) {
       // Child-friendly denial instead of raw safety payload
@@ -202,7 +309,8 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.info_outline_rounded, color: AppColors.primary),
+            icon: const Icon(Icons.info_outline_rounded,
+                color: AppColors.primary),
             tooltip: 'Chat Details & Safety',
             onPressed: () {
               Navigator.of(context).pushNamed(
@@ -351,9 +459,23 @@ class _ChatConversationScreenState extends State<ChatConversationScreen> {
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.all(AppSpacing.md),
-      itemCount: _messages.length,
+      itemCount: _messages.length + (_isLoadingOlder ? 1 : 0),
       itemBuilder: (context, index) {
-        final m = _messages[index];
+        if (_isLoadingOlder && index == 0) {
+          return const Center(
+            child: Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          );
+        }
+
+        final msgIndex = _isLoadingOlder ? index - 1 : index;
+        final m = _messages[msgIndex];
         final isMe = m['sender_child_id'] == myUid;
         final text = m['message_text'] as String? ?? '';
         final status = m['moderation_status'] as String? ?? 'ALLOWED';
