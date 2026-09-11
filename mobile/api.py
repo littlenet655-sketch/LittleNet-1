@@ -261,6 +261,17 @@ def _post_json(row, viewer_id=None):
         from services.tag_service import get_post_tags
 
         out["tags"] = get_post_tags(int(out["post_id"]))
+
+    if out.get("is_story") and (out.get("story_music_id") or out.get("story_music_url")):
+        out["story_music"] = {
+            "music_id": out.get("story_music_id"),
+            "title": out.get("story_music_title") or "Curated Music",
+            "artist": out.get("story_music_artist") or "LittleNet",
+            "audio_url": out.get("story_music_url"),
+            "start_seconds": out.get("story_music_start") or 0,
+            "duration_seconds": out.get("story_music_duration") or 30,
+        }
+
     return _clean(out)
 
 
@@ -271,6 +282,12 @@ def _save_request_image(prefix: str):
         fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
         os.close(fd)
         upload.save(path)
+        if os.path.getsize(path) > Config.MAX_CONTENT_LENGTH:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return None
         return path
     data = request.get_json(silent=True) or {}
     raw = str(data.get("photo_b64") or data.get("selfie_data") or "").strip()
@@ -293,8 +310,16 @@ def _save_request_image(prefix: str):
 
 def _mobile_user_payload(user):
     profile = None
+    quiz_required = False
+    posts_seen = 0
+    quiz_interval = 4
     if user.get("role") == "CHILD":
-        profile = _profile_json(get_child_profile(user["user_id"]))
+        uid = int(user["user_id"])
+        profile = _profile_json(get_child_profile(uid))
+        q_state = feed_quiz_state(uid)
+        quiz_required = bool(q_state.get("required") or needs_onboarding_quiz(uid))
+        posts_seen = int(q_state.get("posts_seen", 0))
+        quiz_interval = int(q_state.get("interval", 4))
     return {
         "user_id": int(user["user_id"]),
         "username": user.get("username"),
@@ -303,6 +328,9 @@ def _mobile_user_payload(user):
         "role": user.get("role"),
         "age": user.get("age"),
         "profile": profile,
+        "quiz_required": quiz_required,
+        "posts_seen": posts_seen,
+        "quiz_interval": quiz_interval,
     }
 
 
@@ -318,11 +346,14 @@ def _mobile_login_response(user, method="PASSWORD"):
         "auth_method": method,
         "user": _mobile_user_payload(user),
     }
+    face_prof = fetch_one("SELECT biometric_key FROM face_profiles WHERE child_id=%s", (user["user_id"],))
+    if face_prof and face_prof.get("biometric_key"):
+        response["biometric_key"] = face_prof["biometric_key"]
     if user["role"] == "CHILD":
         uid = int(user["user_id"])
         response["onboarding"] = {
             "face_required": not bool(fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s", (uid,))),
-            "quiz_required": bool(needs_onboarding_quiz(uid)),
+            "quiz_required": bool(feed_quiz_state(uid).get("required") or needs_onboarding_quiz(uid)),
         }
     return jsonify(_clean(response))
 
@@ -579,6 +610,27 @@ def register_mobile_api(bp):
         if action_completed and challenge["action"] != action_completed:
             return jsonify(error="challenge_action_mismatch"), 400
 
+        # Fetch user's enrolled biometric key
+        face_profile = fetch_one("SELECT biometric_key FROM face_profiles WHERE child_id=%s", (challenge["user_id"],))
+        biometric_key = face_profile.get("biometric_key") if face_profile else None
+        if not biometric_key:
+            return jsonify(error="biometric_credentials_not_enrolled"), 403
+
+        # Challenge-bound cryptographic signature verification
+        client_signature = str(data.get("signature") or "").strip().lower()
+        if not client_signature:
+            # Echo attack detected: client supplied nonce & action without cryptographic proof
+            return jsonify(error="biometric_proof_required_echo_attack_rejected"), 403
+
+        import hashlib
+        import hmac
+
+        expected_msg = f"{challenge_id}:{nonce}:{challenge['action']}:{challenge['user_id']}".encode("utf-8")
+        expected_sig = hmac.new(biometric_key.encode("utf-8"), expected_msg, hashlib.sha256).hexdigest().lower()
+
+        if not hmac.compare_digest(expected_sig, client_signature):
+            return jsonify(error="biometric_signature_invalid"), 403
+
         # Mark challenge consumed immediately
         execute(
             "UPDATE face_auth_challenges SET used_at=NOW() WHERE challenge_id=%s",
@@ -661,29 +713,31 @@ def register_mobile_api(bp):
             except Exception as exc:
                 result = {"is_adult": False, "reason": "adult_face_service_unavailable", "error": str(exc)}
 
-            client_blink_passed = bool(data.get("blink_passed") or request.form.get("blink_passed"))
-
             if result.get("reason") == "under_age":
-                return jsonify(error="adult_liveness_failed", reason="under_age"), 403
+                return jsonify(error="adult_verification_failed", reason="under_age"), 403
 
             if not result.get("is_adult"):
-                # If remote AI service was unavailable or liveness model failed to load,
-                # allow the verified client camera blink if face was captured
-                if client_blink_passed or result.get("reason") in (
-                    "adult_face_service_unavailable",
-                    "liveness_unavailable",
-                    "adult_face_error",
-                    "single_face_required",
-                ):
-                    result = {"is_adult": True, "method": "CLIENT_BLINK_VERIFIED", "reason": None}
-                else:
-                    return jsonify(error="adult_liveness_failed", reason=result.get("reason")), 403
+                reason = result.get("reason")
+                if reason in ("adult_face_service_unavailable", "liveness_unavailable", "adult_face_error"):
+                    return jsonify(
+                        error="adult_verification_unavailable",
+                        message="Adult verification service is temporarily busy. Please try again.",
+                    ), 503
+                return jsonify(error="adult_verification_failed", reason=reason or "adult_face_required"), 403
 
             # Gracefully attempt Face ID enrollment, never fail parent activation if remote embedding throws
             try:
                 enroll(int(pending["uid"]), path)
             except Exception:
                 pass
+
+            b_key = secrets.token_hex(32)
+            execute(
+                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
+                (int(pending["uid"]), b_key),
+            )
 
             execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'", (int(pending["uid"]),))
             user = fetch_one("SELECT * FROM users WHERE user_id=%s", (int(pending["uid"]),))
@@ -737,8 +791,22 @@ def register_mobile_api(bp):
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            enroll(g.mobile_user["user_id"], path)
-            return jsonify(ok=True, quiz_required=bool(needs_onboarding_quiz(g.mobile_user["user_id"])))
+            try:
+                enroll(g.mobile_user["user_id"], path)
+            except Exception:
+                pass
+            b_key = secrets.token_hex(32)
+            execute(
+                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
+                (g.mobile_user["user_id"], b_key),
+            )
+            return jsonify(
+                ok=True,
+                biometric_key=b_key,
+                quiz_required=bool(needs_onboarding_quiz(g.mobile_user["user_id"])),
+            )
         except Exception:
             return jsonify(error="face_enrollment_failed"), 400
         finally:
@@ -1206,6 +1274,12 @@ def register_mobile_api(bp):
                 fd, path = tempfile.mkstemp(prefix="littlenet_mobile_post_", suffix=f".{ext}")
                 os.close(fd)
                 media.save(path)
+                if os.path.getsize(path) > Config.MAX_CONTENT_LENGTH:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+                    return jsonify(error="upload_size_exceeded"), 413
                 if content_type == "VIDEO":
                     from safety.visual_service import video_duration_seconds
 
@@ -1239,16 +1313,32 @@ def register_mobile_api(bp):
                 return jsonify(error=tag_err), 400
 
             location_name = str(request.form.get("location_name") or "").strip()[:120] or None
+            music_id = request.form.get("music_id")
+            music_row = None
+            if kind == "story" and music_id:
+                try:
+                    music_row = fetch_one("SELECT * FROM curated_music WHERE music_id=%s AND is_active=TRUE", (int(music_id),))
+                except Exception:
+                    music_row = None
+            s_music_id = music_row["music_id"] if music_row else None
+            s_music_title = music_row["title"] if music_row else None
+            s_music_artist = music_row["artist"] if music_row else None
+            s_music_url = music_row["audio_url"] if music_row else None
+            s_music_start = int(request.form.get("music_start") or 0)
+            s_music_dur = int(request.form.get("music_duration") or (music_row["duration_seconds"] if music_row else 30))
+
             row = execute(
                 """INSERT INTO posts(child_id,media_type,media_path,caption,content_category,audience_age_group,is_story,is_reel,
-                   safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason,location_name)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id""",
+                   safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason,location_name,
+                   story_music_id,story_music_title,story_music_artist,story_music_url,story_music_start,story_music_duration)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id""",
                 (
                     uid, content_type, stored, caption, category, audience, kind == "story", kind == "reel",
                     decision.risk, merged["adult_score"] * 100, merged["violence_score"] * 100,
                     merged["weapon_score"] * 100, merged["toxicity_score"] * 100,
                     decision.action == "ALLOW", "ALLOWED" if decision.action == "ALLOW" else "REVIEW", decision.reason,
                     location_name,
+                    s_music_id, s_music_title, s_music_artist, s_music_url, s_music_start, s_music_dur,
                 ),
                 returning=True,
             )
@@ -1473,11 +1563,26 @@ def register_mobile_api(bp):
         media_type = session_row["media_type"].upper()
 
         location_name = str(data.get("location_name") or "").strip()[:120] or None
+        music_id = data.get("music_id")
+        music_row = None
+        if kind == "STORY" and music_id:
+            try:
+                music_row = fetch_one("SELECT * FROM curated_music WHERE music_id=%s AND is_active=TRUE", (int(music_id),))
+            except Exception:
+                music_row = None
+        s_music_id = music_row["music_id"] if music_row else None
+        s_music_title = music_row["title"] if music_row else None
+        s_music_artist = music_row["artist"] if music_row else None
+        s_music_url = music_row["audio_url"] if music_row else None
+        s_music_start = int(data.get("music_start") or 0)
+        s_music_dur = int(data.get("music_duration") or (music_row["duration_seconds"] if music_row else 30))
+
         post_row = execute(
             """INSERT INTO posts(child_id, media_type, source_media_path, caption, content_category,
                                audience_age_group, is_story, is_reel, is_safe, moderation_status,
-                               processing_status, processing_started_at, location_name)
-               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'UPLOADED', NOW(), %s)
+                               processing_status, processing_started_at, location_name,
+                               story_music_id, story_music_title, story_music_artist, story_music_url, story_music_start, story_music_duration)
+               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'UPLOADED', NOW(), %s, %s, %s, %s, %s, %s, %s)
                RETURNING post_id""",
             (
                 uid,
@@ -1489,6 +1594,12 @@ def register_mobile_api(bp):
                 kind == "STORY",
                 kind == "REEL",
                 location_name,
+                s_music_id,
+                s_music_title,
+                s_music_artist,
+                s_music_url,
+                s_music_start,
+                s_music_dur,
             ),
             returning=True,
         )
@@ -1774,10 +1885,21 @@ def register_mobile_api(bp):
             return jsonify(error="live_camera_photo_required"), 400
         try:
             enroll(child_id, path)
+            b_key = secrets.token_hex(32)
+            try:
+                execute(
+                    """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+                       VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+                       ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
+                    (child_id, b_key),
+                )
+            except Exception:
+                pass
             return jsonify(
                 ok=True,
                 child_id=child_id,
                 face_enrolled=True,
+                biometric_key=b_key,
                 quiz_required=bool(needs_onboarding_quiz(child_id)),
             )
         except Exception:
@@ -1999,7 +2121,7 @@ def register_mobile_api(bp):
         uid = int(g.mobile_user["user_id"])
         data = request.get_json(silent=True) or {}
         session_id = str(data.get("session_id") or "").strip()
-        source_type = str(data.get("source_type") or "").strip().upper()
+        source_type = str(data.get("source_type") or "POST").strip().upper()
         try:
             source_id = int(data.get("source_id"))
         except (TypeError, ValueError):
@@ -2015,13 +2137,33 @@ def register_mobile_api(bp):
         liked = bool(data.get("liked", False))
         saved = bool(data.get("saved", False))
 
+        state = feed_quiz_state(uid)
+        if state.get("required"):
+            return jsonify(error="quiz_required", gate="quiz", quiz_required=True), 428
+
         ok = record_feed_impression(
             uid, session_id, source_type, source_id, surface,
             watched_ms=watched_ms, completed=completed, liked=liked, saved=saved
         )
         if not ok:
             return jsonify(error="invalid_session_item"), 403
-        return jsonify(ok=True)
+
+        # Advance combined server counter for eligible substantially-viewed item
+        view_res = record_feed_view(uid, source_id, source_type=source_type)
+        if view_res.get("required"):
+            return jsonify(
+                ok=True,
+                quiz_required=True,
+                gate="quiz",
+                posts_seen=view_res.get("posts_seen", 4),
+                error="quiz_required",
+            ), 428
+
+        return jsonify(
+            ok=True,
+            quiz_required=False,
+            posts_seen=view_res.get("posts_seen", 0),
+        )
 
     @bp.route("/api/mobile/v2/kids/discover")
     @_require_mobile("CHILD")
