@@ -373,10 +373,13 @@ class UploadManager extends ChangeNotifier {
       _startStatusPolling(params.authState.apiClient, postId, kindName);
     } catch (e) {
       debugPrint('[UploadManager] Upload failed: $e');
+      final quizRequired = e is ApiException && e.isQuizGate;
       _setState(_state.copyWith(
         stage: UploadStage.failed,
-        error: e.toString(),
-        message: 'Upload failed: ${e.toString().replaceAll("Exception: ", "")}',
+        error: quizRequired ? 'quiz_required' : e.toString(),
+        message: quizRequired
+            ? 'Complete the required safety quiz before uploading.'
+            : 'Upload failed: ${e.toString().replaceAll("Exception: ", "")}',
       ));
     }
   }

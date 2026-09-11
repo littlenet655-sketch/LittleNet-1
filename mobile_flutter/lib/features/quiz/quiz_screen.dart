@@ -26,6 +26,7 @@ class _QuizScreenState extends State<QuizScreen> {
   int? _selectedOptionIndex;
   int? _correctOptionIndex;
   String? _serverExplanation;
+  String? _answerError;
   bool _answered = false;
   int _score = 0;
   bool _completed = false;
@@ -44,6 +45,7 @@ class _QuizScreenState extends State<QuizScreen> {
       _selectedOptionIndex = null;
       _correctOptionIndex = null;
       _serverExplanation = null;
+      _answerError = null;
       _answered = false;
       _score = 0;
       _completed = false;
@@ -55,40 +57,9 @@ class _QuizScreenState extends State<QuizScreen> {
       );
       if (res['ok'] == true) {
         final list = (res['quizzes'] as List<dynamic>?) ?? [];
-        var loaded = list.whereType<Map<String, dynamic>>().toList();
-        final required = res['required'] == true || res['reason'] == 'feed_break';
-
-        // Provide client-side digital safety questions if server returned 0 quizzes
-        if (loaded.isEmpty && required) {
-          loaded = [
-            {
-              'quiz_id': 99901,
-              'category': 'Digital Safety',
-              'question': 'What should you do if someone you don\'t know asks for your personal information online?',
-              'options': [
-                'Never share it and tell a parent or guardian right away',
-                'Send it if they seem friendly',
-                'Post it in a public comment',
-                'Share your school name instead',
-              ],
-              'correct_option_index': 0,
-              'explanation': 'Never share personal details like your address, phone number, or school name with anyone online.',
-            },
-            {
-              'quiz_id': 99902,
-              'category': 'Kindness Online',
-              'question': 'How should we treat friends and classmates in comments and chats?',
-              'options': [
-                'With kindness, respect, and encouragement',
-                'By posting mean jokes',
-                'Spamming hurtful comments',
-                'Ignoring everyone\'s feelings',
-              ],
-              'correct_option_index': 0,
-              'explanation': 'Being kind and respectful makes the internet safe and fun for all of us.',
-            },
-          ];
-        }
+        final loaded = list.whereType<Map<String, dynamic>>().toList();
+        final required =
+            res['required'] == true || res['reason'] == 'feed_break';
 
         setState(() {
           _quizzes = loaded;
@@ -108,10 +79,9 @@ class _QuizScreenState extends State<QuizScreen> {
     if (_answered || _submitting || _currentIndex >= _quizzes.length) return;
 
     final q = _quizzes[_currentIndex];
-    final options = (q['options'] as List<dynamic>?)
-            ?.map((e) => e.toString())
-            .toList() ??
-        [];
+    final options =
+        (q['options'] as List<dynamic>?)?.map((e) => e.toString()).toList() ??
+            [];
     final selectedAnswer = (optionIndex >= 0 && optionIndex < options.length)
         ? options[optionIndex]
         : optionIndex.toString();
@@ -119,6 +89,7 @@ class _QuizScreenState extends State<QuizScreen> {
 
     setState(() {
       _selectedOptionIndex = optionIndex;
+      _answerError = null;
       _submitting = true;
     });
 
@@ -134,10 +105,12 @@ class _QuizScreenState extends State<QuizScreen> {
 
         int correctIdx = -1;
         if (correctAnswer != null) {
-          correctIdx = options.indexWhere((opt) => opt.trim() == correctAnswer.trim());
+          correctIdx =
+              options.indexWhere((opt) => opt.trim() == correctAnswer.trim());
         }
         if (correctIdx == -1) {
-          correctIdx = (q['correct_option_index'] as num?)?.toInt() ?? (isCorrect ? optionIndex : -1);
+          correctIdx = (q['correct_option_index'] as num?)?.toInt() ??
+              (isCorrect ? optionIndex : -1);
         }
 
         if (mounted) {
@@ -150,17 +123,23 @@ class _QuizScreenState extends State<QuizScreen> {
           });
         }
       }
-    } catch (_) {
-      // Local fallback evaluation for safety questions
-      final localCorrectIdx = (q['correct_option_index'] as num?)?.toInt() ?? 0;
-      final isCorrect = (optionIndex == localCorrectIdx);
+    } on ApiException catch (e) {
       if (mounted) {
         setState(() {
-          _answered = true;
           _submitting = false;
-          _serverExplanation = q['explanation']?.toString() ?? 'Always protect your safety online!';
-          _correctOptionIndex = localCorrectIdx;
-          if (isCorrect) _score++;
+          _selectedOptionIndex = null;
+          _answerError = e.message == 'quiz_not_available'
+              ? 'This question is no longer available. Reload the quiz.'
+              : 'We could not save your answer. Check your connection and try again.';
+        });
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _submitting = false;
+          _selectedOptionIndex = null;
+          _answerError =
+              'We could not save your answer. Check your connection and try again.';
         });
       }
     }
@@ -173,6 +152,7 @@ class _QuizScreenState extends State<QuizScreen> {
         _selectedOptionIndex = null;
         _correctOptionIndex = null;
         _serverExplanation = null;
+        _answerError = null;
         _answered = false;
       });
     } else {
@@ -320,7 +300,8 @@ class _QuizScreenState extends State<QuizScreen> {
               const SizedBox(height: AppSpacing.xl),
               ElevatedButton(
                 onPressed: () => Navigator.of(context).pop(true),
-                child: Text(_isMandatory ? 'Continue Browsing 🚀' : 'Back to Learning'),
+                child: Text(
+                    _isMandatory ? 'Continue Browsing 🚀' : 'Back to Learning'),
               ),
             ],
           ),
@@ -334,9 +315,11 @@ class _QuizScreenState extends State<QuizScreen> {
             ?.map((e) => e.toString())
             .toList() ??
         [];
-    final explanation = _serverExplanation ?? currentQuiz['explanation'] as String?;
-    final correctIdx =
-        _correctOptionIndex ?? (currentQuiz['correct_option_index'] as num?)?.toInt() ?? 0;
+    final explanation =
+        _serverExplanation ?? currentQuiz['explanation'] as String?;
+    final correctIdx = _correctOptionIndex ??
+        (currentQuiz['correct_option_index'] as num?)?.toInt() ??
+        0;
 
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -346,7 +329,7 @@ class _QuizScreenState extends State<QuizScreen> {
           // Progress bar
           LinearProgressIndicator(
             value: (_currentIndex + 1) / _quizzes.length,
-            backgroundColor: Colors.white12,
+            backgroundColor: AppColors.cardBorder,
             color: AppColors.kidsAccent,
             borderRadius: BorderRadius.circular(4),
           ),
@@ -362,13 +345,16 @@ class _QuizScreenState extends State<QuizScreen> {
           Container(
             padding: const EdgeInsets.all(AppSpacing.lg),
             decoration: BoxDecoration(
-              color: AppColors.cardDark,
+              color: AppColors.surface,
               borderRadius: BorderRadius.circular(AppRadius.lg),
-              border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+              border: Border.all(color: AppColors.cardBorder),
             ),
             child: Text(
               question,
-              style: AppTypography.titleMedium.copyWith(height: 1.4),
+              style: AppTypography.titleMedium.copyWith(
+                height: 1.4,
+                color: AppColors.textPrimary,
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.lg),
@@ -380,8 +366,8 @@ class _QuizScreenState extends State<QuizScreen> {
               separatorBuilder: (_, __) =>
                   const SizedBox(height: AppSpacing.sm),
               itemBuilder: (context, i) {
-                Color border = Colors.white.withValues(alpha: 0.1);
-                Color bg = AppColors.cardDark;
+                Color border = AppColors.cardBorder;
+                Color bg = AppColors.surface;
 
                 if (_answered) {
                   if (i == correctIdx) {
@@ -391,6 +377,9 @@ class _QuizScreenState extends State<QuizScreen> {
                     border = AppColors.error;
                     bg = AppColors.error.withValues(alpha: 0.15);
                   }
+                } else if (i == _selectedOptionIndex) {
+                  border = AppColors.primary;
+                  bg = AppColors.primary.withValues(alpha: 0.08);
                 }
 
                 return GestureDetector(
@@ -409,11 +398,11 @@ class _QuizScreenState extends State<QuizScreen> {
                       children: [
                         CircleAvatar(
                           radius: 14,
-                          backgroundColor: Colors.white10,
+                          backgroundColor: AppColors.background,
                           child: Text(
                             String.fromCharCode(65 + i),
                             style: const TextStyle(
-                              color: Colors.white70,
+                              color: AppColors.textPrimary,
                               fontSize: 12,
                               fontWeight: FontWeight.bold,
                             ),
@@ -423,7 +412,8 @@ class _QuizScreenState extends State<QuizScreen> {
                         Expanded(
                           child: Text(
                             options[i],
-                            style: AppTypography.bodyMedium,
+                            style: AppTypography.bodyMedium
+                                .copyWith(color: AppColors.textPrimary),
                           ),
                         ),
                       ],
@@ -434,19 +424,29 @@ class _QuizScreenState extends State<QuizScreen> {
             ),
           ),
 
+          if (_answerError != null) ...[
+            const SizedBox(height: AppSpacing.md),
+            Text(
+              _answerError!,
+              style: AppTypography.bodyMedium.copyWith(color: AppColors.error),
+              textAlign: TextAlign.center,
+            ),
+          ],
+
           // Feedback & Next Button
           if (_answered) ...[
             if (explanation != null && explanation.isNotEmpty) ...[
               Container(
                 padding: const EdgeInsets.all(AppSpacing.md),
                 decoration: BoxDecoration(
-                  color: Colors.white.withValues(alpha: 0.04),
+                  color: AppColors.surface,
                   borderRadius: BorderRadius.circular(AppRadius.md),
+                  border: Border.all(color: AppColors.cardBorder),
                 ),
                 child: Text(
                   '💡 $explanation',
-                  style: AppTypography.caption
-                      .copyWith(color: AppColors.textMutedDark),
+                  style: AppTypography.bodySmall
+                      .copyWith(color: AppColors.textPrimary),
                 ),
               ),
               const SizedBox(height: AppSpacing.md),

@@ -1690,46 +1690,6 @@ def register_mobile_api(bp):
         )
         return jsonify(ok=True, correct=correct, points_awarded=points, total_points=learning_points(uid))
 
-DEFAULT_SAFETY_QUIZZES = [
-    {
-        "quiz_id": 99901,
-        "category": "Digital Safety",
-        "question": "What should you do if someone you don't know asks for your personal information online?",
-        "option_a": "Never share it and tell a parent or guardian right away",
-        "option_b": "Send it if they seem friendly",
-        "option_c": "Post it in a comment",
-        "option_d": "Share your school name instead",
-        "correct_answer": "Never share it and tell a parent or guardian right away",
-        "age_group": "ALL",
-        "explanation": "Never share your address, phone number, or school name with anyone online.",
-    },
-    {
-        "quiz_id": 99902,
-        "category": "Kindness Online",
-        "question": "How should we treat friends and classmates in comments and chats?",
-        "option_a": "With kindness, respect, and encouragement",
-        "option_b": "By posting mean jokes",
-        "option_c": "Spamming hurtful comments",
-        "option_d": "Ignoring everyone's feelings",
-        "correct_answer": "With kindness, respect, and encouragement",
-        "age_group": "ALL",
-        "explanation": "Being kind and respectful makes the internet safe and fun for all of us.",
-    },
-    {
-        "quiz_id": 99903,
-        "category": "Healthy Habits",
-        "question": "Why is it important to take screen breaks throughout the day?",
-        "option_a": "To rest your eyes, stretch, and refresh your mind",
-        "option_b": "It is not important at all",
-        "option_c": "Only when device battery reaches zero",
-        "option_d": "So you can play video games faster",
-        "correct_answer": "To rest your eyes, stretch, and refresh your mind",
-        "age_group": "ALL",
-        "explanation": "Taking quick breaks keeps your eyes healthy and helps you stay energized!",
-    },
-]
-
-
     @bp.route("/api/mobile/v1/kids/quiz")
     @_require_mobile("CHILD")
     def mobile_quiz():
@@ -1743,16 +1703,8 @@ DEFAULT_SAFETY_QUIZZES = [
             rows = quizzes(uid, 2)
             reason = "onboarding" if needs_onboarding_quiz(uid) else "practice"
 
-        # If DB query returned no rows for this child/age group, fallback to any available quiz
         if not rows:
-            try:
-                rows = fetch_all("SELECT * FROM quizzes ORDER BY RANDOM() LIMIT 2")
-            except Exception:
-                rows = []
-
-        # If database table is empty or unseeded, supply canonical built-in safety questions
-        if not rows:
-            rows = DEFAULT_SAFETY_QUIZZES[:2]
+            return jsonify(error="quiz_bank_unavailable"), 503
 
         payload = []
         for row in rows:
@@ -1780,35 +1732,10 @@ DEFAULT_SAFETY_QUIZZES = [
         if not answer:
             return jsonify(error="answer_required"), 400
 
-        # Handle built-in safety questions
-        fallback_q = next((q for q in DEFAULT_SAFETY_QUIZZES if q["quiz_id"] == quiz_id), None)
-        if fallback_q:
-            correct = (answer.strip().lower() == fallback_q["correct_answer"].strip().lower())
-            correct_answer = fallback_q["correct_answer"]
-            explanation = fallback_q["explanation"]
-            xp = 10 if correct else 2
-            try:
-                execute(
-                    """INSERT INTO child_quiz_attempts(child_id, quiz_id, selected_answer, is_correct, attempted_at)
-                       VALUES(%s, %s, %s, %s, NOW())""",
-                    (uid, quiz_id, answer, correct),
-                )
-            except Exception:
-                pass
-            state = feed_quiz_state(uid)
-            if state.get("required") and (state.get("quiz_id") == quiz_id or not state.get("quiz_id")):
-                complete_required_feed_quiz(uid, quiz_id)
-            return jsonify(
-                ok=True,
-                correct=correct,
-                correct_answer=correct_answer,
-                xp=xp,
-                explanation=explanation,
-                onboarding_complete=not needs_onboarding_quiz(uid),
-                required=bool(feed_quiz_state(uid).get("required")),
-            )
-
-        row = fetch_one("SELECT * FROM quizzes WHERE quiz_id=%s", (quiz_id,))
+        row = fetch_one(
+            "SELECT * FROM quizzes WHERE quiz_id=%s AND age_group=%s",
+            (quiz_id, age_group(uid)),
+        )
         if not row:
             return jsonify(error="quiz_not_available"), 404
         correct, correct_answer, xp, explanation = record_feed_answer(uid, quiz_id, answer)

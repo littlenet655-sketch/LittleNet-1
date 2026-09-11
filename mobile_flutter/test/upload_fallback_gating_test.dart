@@ -193,5 +193,30 @@ void main() {
       expect(v1Called, isTrue, reason: 'Explicit fallback_allowed=true MUST trigger V1 fallback');
       expect(manager.state.postId, equals(888));
     });
+
+    test('onboarding gate navigates to quiz and never exposes raw backend code',
+        () async {
+      var quizNavigationRequested = false;
+      ApiClient.onQuizRequired = () => quizNavigationRequested = true;
+      final apiClient = ApiClient(
+        httpClient: MockClient((request) async => http.Response(
+              '{"error":"onboarding_quiz_required","gate":"quiz"}',
+              428,
+            )),
+      );
+      final manager = UploadManager.instance;
+
+      await manager.startUpload(createParams(apiClient));
+
+      expect(quizNavigationRequested, isTrue);
+      expect(manager.state.stage, UploadStage.failed);
+      expect(
+        manager.state.message,
+        'Complete the required safety quiz before uploading.',
+      );
+      expect(
+          manager.state.message, isNot(contains('onboarding_quiz_required')));
+      ApiClient.onQuizRequired = null;
+    });
   });
 }

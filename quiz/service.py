@@ -63,7 +63,7 @@ def needs_onboarding_quiz(cid, required_questions=2):
     face = fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1', (cid,))
     if not face:
         return False
-    row = fetch_one('SELECT COUNT(*) AS n FROM child_quiz_attempts WHERE child_id=%s', (cid,)) or {'n': 0}
+    row = fetch_one('SELECT COUNT(DISTINCT quiz_id) AS n FROM child_quiz_attempts WHERE child_id=%s', (cid,)) or {'n': 0}
     return int(row.get('n') or 0) < int(required_questions)
 
 # ─── Classic quiz bank (used by quiz page) ────────────────────────────────────
