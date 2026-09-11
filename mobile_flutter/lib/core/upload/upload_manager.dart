@@ -154,7 +154,8 @@ class UploadManager extends ChangeNotifier {
       final kind = data['kind'] as String? ?? 'post';
       if (postId == null) return;
 
-      final res = await apiClient.getJson('/api/mobile/v2/posts/$postId/processing-status');
+      final res = await apiClient
+          .getJson('/api/mobile/v2/posts/$postId/processing-status');
       if (res['ok'] == true) {
         final status = (res['status'] as String? ?? '').toUpperCase();
         final stage = (res['stage'] as String? ?? '').toUpperCase();
@@ -186,7 +187,8 @@ class UploadManager extends ChangeNotifier {
           _scheduleAutoDismiss(seconds: 5);
         } else if (status == 'BLOCKED' || stage == 'BLOCKED') {
           await _clearPendingUpload();
-          final reason = res['moderation_reason']?.toString() ?? 'Content does not follow child safety standards.';
+          final reason = res['moderation_reason']?.toString() ??
+              'Content does not follow child safety standards.';
           _setState(_state.copyWith(
             stage: UploadStage.blocked,
             postId: postId,
@@ -194,13 +196,16 @@ class UploadManager extends ChangeNotifier {
             error: reason,
             message: 'Blocked: $reason',
           ));
-        } else if (status == 'PROCESSING' || stage == 'PROCESSING' || status == 'PENDING') {
+        } else if (status == 'PROCESSING' ||
+            stage == 'PROCESSING' ||
+            status == 'PENDING') {
           _setState(_state.copyWith(
             stage: UploadStage.processing,
             postId: postId,
             kind: kind,
             progress: 0.9,
-            message: 'Still checking your $kindName. You can keep using LittleNet.',
+            message:
+                'Still checking your $kindName. You can keep using LittleNet.',
           ));
           _startStatusPolling(apiClient, postId, kindName);
         }
@@ -277,12 +282,18 @@ class UploadManager extends ChangeNotifier {
 
       Map<String, dynamic> sessionResp;
       try {
+        final ext = filename.contains('.')
+            ? filename.split('.').last.toLowerCase()
+            : (isVideo ? 'mp4' : 'jpg');
         sessionResp = await params.authState.apiClient.postJson(
           '/api/mobile/v2/uploads/session',
           {
             'kind': params.kind,
             'filename': filename,
+            'media_type': isVideo ? 'VIDEO' : 'IMAGE',
+            'extension': ext,
             'content_type': mimeType,
+            'mime_type': mimeType,
             'size_bytes': sizeBytes,
           },
         );
@@ -314,7 +325,8 @@ class UploadManager extends ChangeNotifier {
       final uploadUrlStr = sessionResp['upload_url']?.toString() ?? '';
 
       if (uploadId.isEmpty || uploadUrlStr.isEmpty) {
-        throw Exception('Invalid upload session response: missing URL or session ID.');
+        throw Exception(
+            'Invalid upload session response: missing URL or session ID.');
       }
 
       // Step 2: Stream media PUT directly to storage upload URL
@@ -352,7 +364,8 @@ class UploadManager extends ChangeNotifier {
             'location_name': params.locationName,
           if (params.musicId != null) 'music_id': params.musicId,
           if (params.musicStart != null) 'music_start': params.musicStart,
-          if (params.musicDuration != null) 'music_duration': params.musicDuration,
+          if (params.musicDuration != null)
+            'music_duration': params.musicDuration,
         },
       );
 
@@ -418,11 +431,11 @@ class UploadManager extends ChangeNotifier {
     );
 
     fileStream.transform(transformer).listen(
-      request.sink.add,
-      onDone: request.sink.close,
-      onError: request.sink.addError,
-      cancelOnError: true,
-    );
+          request.sink.add,
+          onDone: request.sink.close,
+          onError: request.sink.addError,
+          cancelOnError: true,
+        );
 
     final streamedResponse = await request.send();
     final response = await http.Response.fromStream(streamedResponse);
@@ -444,7 +457,8 @@ class UploadManager extends ChangeNotifier {
         timer.cancel();
         _setState(_state.copyWith(
           stage: UploadStage.processing,
-          message: 'Still checking your $kindName. You can keep using LittleNet.',
+          message:
+              'Still checking your $kindName. You can keep using LittleNet.',
         ));
         _persistPendingUpload();
         return;
@@ -597,7 +611,8 @@ class UploadManager extends ChangeNotifier {
   }
 
   /// Text-only post submission
-  Future<void> _uploadTextOnlyFallback(UploadParams params, String kindName) async {
+  Future<void> _uploadTextOnlyFallback(
+      UploadParams params, String kindName) async {
     try {
       _setState(UploadTaskState(
         stage: UploadStage.processing,
@@ -618,7 +633,8 @@ class UploadManager extends ChangeNotifier {
             'location_name': params.locationName,
           if (params.musicId != null) 'music_id': params.musicId,
           if (params.musicStart != null) 'music_start': params.musicStart,
-          if (params.musicDuration != null) 'music_duration': params.musicDuration,
+          if (params.musicDuration != null)
+            'music_duration': params.musicDuration,
         },
       );
 

@@ -162,6 +162,14 @@ class _QuizScreenState extends State<QuizScreen> {
     }
   }
 
+  void _finishQuiz() {
+    if (_isMandatory) {
+      Navigator.of(context).pushNamedAndRemoveUntil('/kids/home', (_) => false);
+      return;
+    }
+    Navigator.of(context).pop(true);
+  }
+
   @override
   Widget build(BuildContext context) {
     return PopScope(
@@ -299,7 +307,7 @@ class _QuizScreenState extends State<QuizScreen> {
               ),
               const SizedBox(height: AppSpacing.xl),
               ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(true),
+                onPressed: _finishQuiz,
                 child: Text(
                     _isMandatory ? 'Continue Browsing 🚀' : 'Back to Learning'),
               ),

@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any
 
-from database.connection import execute, fetch_all, fetch_one
+from database.connection import execute, fetch_all, fetch_one, get_db_connection
 from services.controls import EDUCATIONAL_CATEGORIES, effective_categories
 from services.social import _age_group, child_surface_open
 
@@ -88,8 +88,8 @@ def normalize_social_item(row: dict[str, Any]) -> dict[str, Any]:
         "source_type": "SOCIAL",
         "source_id": int(row["post_id"]),
         "media_type": str(row.get("media_type") or "TEXT").upper(),
-        "media_reference": row.get("media_path") or "",
-        "poster_reference": None,
+        "media_reference": row.get("media_path") or row.get("media_url") or "",
+        "poster_reference": row.get("poster_path") or row.get("thumbnail_url"),
         "title": None,
         "caption": str(row.get("caption") or ""),
         "category": cat,
@@ -151,10 +151,38 @@ def fetch_curated_candidates(child_id: int, surface: str = "FEED", limit: int = 
 
 
 def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 60) -> list[dict[str, Any]]:
-    """Retrieve social posts for the child from their approved connections."""
+    """Retrieve social posts for the child from their approved connections or open discovery reels."""
     cats = effective_categories(child_id)
     age_grp = _age_group(child_id)
     is_reel = str(surface).upper() == "REELS"
+
+    if is_reel:
+        # Per LittleNet Frozen Spec Section 6 & 23:
+        # Reels is a child-safe vertical video discovery surface across eligible community
+        # and educational reels. It is not restricted to existing friends.
+        rows = fetch_all(
+            """SELECT p.*, u.full_name, cp.profile_picture,
+                 (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
+                 (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.post_id AND c.moderation_status = 'ALLOWED') AS comments_count,
+                 EXISTS(SELECT 1 FROM followers f WHERE f.approved = TRUE AND f.approval_stage = 'ACTIVE'
+                   AND ((f.child_id = %s AND f.following_child_id = p.child_id) OR (f.child_id = p.child_id AND f.following_child_id = %s))) AS is_following
+               FROM posts p
+               JOIN users u ON u.user_id = p.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = p.child_id
+               WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE AND p.is_story = FALSE
+                 AND p.is_reel = TRUE
+                 AND p.content_category = ANY(%s)
+                 AND (%s IS NULL OR p.audience_age_group = 'ALL' OR p.audience_age_group = %s)
+                 AND p.child_id <> %s
+                 AND p.child_id NOT IN (
+                   SELECT blocked_id FROM blocked_users WHERE blocker_id = %s
+                   UNION SELECT blocker_id FROM blocked_users WHERE blocked_id = %s
+                   UNION SELECT muted_id FROM muted_users WHERE muter_id = %s)
+               ORDER BY p.created_at DESC
+               LIMIT %s""",
+            (child_id, child_id, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
+        )
+        return [normalize_social_item(r) for r in rows]
 
     from child.service import discoverable_child_ids
     allowed_child_ids = discoverable_child_ids(child_id)
@@ -167,12 +195,12 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
              (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
              (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.post_id AND c.moderation_status = 'ALLOWED') AS comments_count,
              EXISTS(SELECT 1 FROM followers f WHERE f.approved = TRUE AND f.approval_stage = 'ACTIVE'
-               AND ((f.child_id = %s AND f.following_child_id = p.child_id) OR (f.child_id = p.child_id AND f.following_child_id = %s))) AS is_following
+               AND ((f.child_id = %s AND f.following_child_id = p.child_id) OR (f.child_id = p.child_id AND f.following_child_id = p.child_id))) AS is_following
            FROM posts p
            JOIN users u ON u.user_id = p.child_id
            LEFT JOIN child_profiles cp ON cp.child_id = p.child_id
            WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE AND p.is_story = FALSE
-             AND p.is_reel = %s
+             AND p.is_reel = FALSE
              AND p.child_id = ANY(%s)
              AND p.content_category = ANY(%s)
              AND (%s IS NULL OR p.audience_age_group = 'ALL' OR p.audience_age_group = %s)
@@ -183,7 +211,7 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
                UNION SELECT muted_id FROM muted_users WHERE muter_id = %s)
            ORDER BY p.created_at DESC
            LIMIT %s""",
-        (child_id, child_id, is_reel, allowed_child_ids, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
+        (child_id, child_id, allowed_child_ids, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
     )
     return [normalize_social_item(r) for r in rows]
 
@@ -308,12 +336,23 @@ def get_or_create_feed_session(child_id: int, surface: str = "FEED", session_id:
     )
     new_session_id = str(row["session_id"])
 
-    for pos, item in enumerate(final_items):
-        execute(
-            """INSERT INTO feed_session_items(session_id, position, source_type, source_id)
-               VALUES(%s, %s, %s, %s)""",
-            (new_session_id, pos, item["source_type"], item["source_id"]),
-        )
+    if final_items:
+        records = [(new_session_id, pos, item["source_type"], item["source_id"]) for pos, item in enumerate(final_items)]
+        from psycopg2.extras import execute_values
+        conn = get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                execute_values(
+                    cur,
+                    "INSERT INTO feed_session_items(session_id, position, source_type, source_id) VALUES %s",
+                    records,
+                )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     return new_session_id, final_items
 

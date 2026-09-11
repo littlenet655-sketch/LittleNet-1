@@ -76,6 +76,7 @@ from services.curated_feed import (
 from services.social import (
     active_stories,
     can_interact,
+    discoverable_posts,
     notify,
     parent_notify,
     post_visible_to,
@@ -1381,8 +1382,25 @@ def register_mobile_api(bp):
         gate = _child_gate(feature)
         if gate:
             return gate
-
+        filename = str(data.get("filename") or "").strip()
         media_type = str(data.get("media_type") or "").upper()
+        if not media_type:
+            ct = str(data.get("content_type") or data.get("mime_type") or "").lower()
+            if ct.startswith("image/"):
+                media_type = "IMAGE"
+            elif ct.startswith("video/"):
+                media_type = "VIDEO"
+            else:
+                ext_test = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                if ext_test in {"jpg", "jpeg", "png", "webp"}:
+                    media_type = "IMAGE"
+                elif ext_test in {"mp4", "mov", "webm", "mkv"}:
+                    media_type = "VIDEO"
+                elif kind in {"reel", "story_video"}:
+                    media_type = "VIDEO"
+                else:
+                    media_type = "IMAGE"
+
         if media_type not in {"IMAGE", "VIDEO"}:
             return jsonify(error="invalid_media_type"), 400
 
@@ -1405,7 +1423,14 @@ def register_mobile_api(bp):
             return jsonify(error="file_size_exceeded", max_bytes=max_bytes), 400
 
         ext = str(data.get("extension") or "").lower().lstrip(".")
-        mime_type = str(data.get("mime_type") or "").lower().strip()
+        if not ext and filename and "." in filename:
+            ext = filename.rsplit(".", 1)[-1].lower().lstrip(".")
+        if not ext:
+            ext = "jpg" if media_type == "IMAGE" else "mp4"
+
+        mime_type = str(data.get("mime_type") or data.get("content_type") or "").lower().strip()
+        if not mime_type:
+            mime_type = f"image/{ext}" if media_type == "IMAGE" else f"video/{ext}"
 
         if media_type == "IMAGE":
             valid_exts = {"jpg", "jpeg", "png", "webp"}
@@ -1418,9 +1443,6 @@ def register_mobile_api(bp):
             return jsonify(error="unsupported_extension", allowed=sorted(list(valid_exts))), 400
         if mime_type and mime_type not in valid_mimes:
             return jsonify(error="unsupported_mime_type", allowed=sorted(list(valid_mimes))), 400
-
-        if not mime_type:
-            mime_type = f"image/{ext}" if media_type == "IMAGE" else f"video/{ext}"
 
         upload_id = str(uuid.uuid4())
         object_key = f"uploads/r2/quarantine/{uid}/{upload_id}/source.{ext}"
@@ -2252,7 +2274,7 @@ def register_mobile_api(bp):
             row.pop("profile_picture", None)
             out_kids.append(_clean(row))
 
-        posts = visible_posts(uid, False, 30, 0)
+        posts = discoverable_posts(uid, False, 30, 0)
         if q:
             needle = q.lstrip("#").casefold()
             posts = [

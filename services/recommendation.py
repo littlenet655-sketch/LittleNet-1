@@ -48,11 +48,8 @@ def candidates(cid: int, cap: int = 60, surface: str = "FEED") -> list[dict[str,
     # viewer could not otherwise discover under Parent Mode policy.
     from child.service import discoverable_child_ids
 
-    allowed_child_ids = discoverable_child_ids(cid)
-    if not allowed_child_ids:
-        social_rows = []
-    else:
-        is_reel = str(surface).upper() == "REELS"
+    is_reel = str(surface).upper() == "REELS"
+    if is_reel:
         social_rows = fetch_all(
             """SELECT p.*,u.full_name,cp.profile_picture,
                 (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,
@@ -60,8 +57,7 @@ def candidates(cid: int, cap: int = 60, surface: str = "FEED") -> list[dict[str,
                 EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'
                   AND ((f.child_id=%s AND f.following_child_id=p.child_id) OR (f.child_id=p.child_id AND f.following_child_id=%s))) is_following
               FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
-              WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=%s
-                AND p.child_id=ANY(%s)
+              WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=TRUE
                 AND p.content_category=ANY(%s)
                 AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
                 AND p.child_id<>%s
@@ -70,8 +66,32 @@ def candidates(cid: int, cap: int = 60, surface: str = "FEED") -> list[dict[str,
                   UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
                   UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
               ORDER BY p.created_at DESC LIMIT %s""",
-            (cid, cid, is_reel, allowed_child_ids, cats, age_group, age_group, cid, cid, cid, cid, cap),
+            (cid, cid, cats, age_group, age_group, cid, cid, cid, cid, cap),
         )
+    else:
+        allowed_child_ids = discoverable_child_ids(cid)
+        if not allowed_child_ids:
+            social_rows = []
+        else:
+            social_rows = fetch_all(
+                """SELECT p.*,u.full_name,cp.profile_picture,
+                    (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,
+                    (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,
+                    EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'
+                      AND ((f.child_id=%s AND f.following_child_id=p.child_id) OR (f.child_id=p.child_id AND f.following_child_id=%s))) is_following
+                  FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
+                  WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=FALSE
+                    AND p.child_id=ANY(%s)
+                    AND p.content_category=ANY(%s)
+                    AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
+                    AND p.child_id<>%s
+                    AND p.child_id NOT IN (
+                      SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
+                      UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
+                      UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
+                  ORDER BY p.created_at DESC LIMIT %s""",
+                (cid, cid, allowed_child_ids, cats, age_group, age_group, cid, cid, cid, cid, cap),
+            )
 
     social_candidates = [normalize_social_item(r) for r in social_rows]
     curated_candidates = fetch_curated_candidates(cid, surface=surface, limit=cap)
