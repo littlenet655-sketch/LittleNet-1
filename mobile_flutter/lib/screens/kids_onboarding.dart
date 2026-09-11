@@ -175,7 +175,9 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
             ),
             if (message != null) ...[
               const SizedBox(height: 18),
-              Text(message!, textAlign: TextAlign.center, style: const TextStyle(color: Colors.red)),
+              Text(message!,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: Colors.red)),
             ],
             const SizedBox(height: 28),
             FilledButton.icon(
@@ -298,7 +300,9 @@ class _QuizGateScreenState extends State<QuizGateScreen> {
           }
           final safeIndex = index.clamp(0, quizzes.length - 1);
           final quiz = quizzes[safeIndex];
-          final options = (quiz['options'] as List? ?? const []).map((e) => e.toString()).toList();
+          final options = (quiz['options'] as List? ?? const [])
+              .map((e) => e.toString())
+              .toList();
           return ListView(
             padding: const EdgeInsets.all(24),
             children: [
@@ -311,7 +315,8 @@ class _QuizGateScreenState extends State<QuizGateScreen> {
               const SizedBox(height: 10),
               Text(
                 quiz['question']?.toString() ?? '',
-                style: const TextStyle(fontSize: 25, fontWeight: FontWeight.w900),
+                style:
+                    const TextStyle(fontSize: 25, fontWeight: FontWeight.w900),
               ),
               const SizedBox(height: 22),
               for (final option in options)
@@ -321,7 +326,8 @@ class _QuizGateScreenState extends State<QuizGateScreen> {
                     onPressed: submitting ? null : () => _answer(quiz, option),
                     style: OutlinedButton.styleFrom(
                       alignment: Alignment.centerLeft,
-                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 16),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 18, vertical: 16),
                     ),
                     child: Text(option, style: const TextStyle(fontSize: 17)),
                   ),

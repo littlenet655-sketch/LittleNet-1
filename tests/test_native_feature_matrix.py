@@ -76,6 +76,7 @@ def test_parent_native_surface_and_mobile_api_cover_locked_scope():
         "/api/mobile/v1/auth/parent/verify-liveness",
         "/api/mobile/v1/parent/dashboard",
         "/api/mobile/v1/parent/children",
+        "/api/mobile/v1/parent/children/<int:child_id>/face/enroll",
         "/api/mobile/v1/parent/controls/<int:child_id>",
         "/api/mobile/v1/parent/time-limit/<int:child_id>",
         "/api/mobile/v1/parent/safety",

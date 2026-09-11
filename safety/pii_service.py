@@ -1,4 +1,5 @@
 import re
+import unicodedata
 from typing import Dict, Any, List, Tuple
 
 # Word-to-digit translation map for spelled-out phone numbers
@@ -7,10 +8,11 @@ WORD_DIGITS = {
     'five': '5', 'six': '6', 'seven': '7', 'eight': '8', 'nine': '9'
 }
 
-# Regex for standard and formatted phone numbers (Indian and global)
+# Regex for standard and obfuscated phone numbers (Indian and global)
+# Matches 10-digit numbers starting with 6-9, or +91 followed by 10 digits, with optional separators
 RE_PHONE_STANDARD = re.compile(
-    r'(?:\+?91[\s\-]?)?(?:\(?\b[6-9]\d{2}\)?[\s\-]?\d{3}[\s\-]?\d{4}\b)|'
-    r'(?:\b(?:\d[\s\-_.]?){9,11}\d\b)'
+    r'(?:\+?91[\s\-]?)?(?:\(?\b[6-9]\d{2}\)?[\s\-]?[0-9]{3}[\s\-]?[0-9]{4}\b)|'
+    r'(?:\b(?:\+?91[\s\-.]?)?[6-9](?:[\s\-._]?[0-9]){9}\b)'
 )
 RE_EMAIL_STANDARD = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b')
 RE_EMAIL_OBFUSCATED = re.compile(r'\b[A-Za-z0-9._%+-]+\s+(?:at|@)\s+[A-Za-z0-9.-]+\s+(?:dot|\.)\s+[A-Za-z]{2,}\b', re.IGNORECASE)
@@ -52,16 +54,40 @@ RE_SECRECY_CUES = re.compile(
     re.IGNORECASE
 )
 
+# Common date patterns (ISO, standard dates) to preserve without false positives
+RE_DATE_PATTERN = re.compile(
+    r'\b(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4})\b'
+)
+
+
+def _normalize_text(text: str) -> str:
+    """
+    Unicode normalization (NFKC) + Arabic-Indic and Eastern Arabic-Indic digit translation.
+    Converts full-width numbers (０-９) and Arabic digits (٠-٩, ۰-۹) to standard ASCII 0-9.
+    NOTE: Optical Character Recognition (OCR) on embedded images is a planned future enhancement.
+    """
+    norm = unicodedata.normalize('NFKC', text)
+    res = []
+    for ch in norm:
+        val = ord(ch)
+        if 0x0660 <= val <= 0x0669:
+            res.append(chr(ord('0') + (val - 0x0660)))
+        elif 0x06F0 <= val <= 0x06F9:
+            res.append(chr(ord('0') + (val - 0x06F0)))
+        else:
+            res.append(ch)
+    return "".join(res)
+
 
 def _check_spelled_out_numbers(text: str) -> Tuple[bool, str]:
     """Detect word-spelled/mixed phone numbers such as '984 five zero ...'."""
     low = text.lower()
     for w, d in WORD_DIGITS.items():
         low = re.sub(r'\b' + w + r'\b', d, low)
-    digits = re.sub(r'\D', '', low)
-    if len(digits) == 10 and digits[0] in '6789':
-        return True, digits
-    if len(digits) == 12 and digits.startswith('91') and digits[2] in '6789':
+    # Look for 10 consecutive/spaced digits starting with 6-9
+    m = re.search(r'\b[6-9](?:[\s\-_.]?\d){9}\b', low)
+    if m:
+        digits = re.sub(r'\D', '', m.group(0))
         return True, digits
     return False, ""
 
@@ -81,22 +107,23 @@ def scan_pii(text: str) -> Dict[str, Any]:
             "presidio_available": False,
         }
 
-    raw = text.strip()
+    raw = _normalize_text(text.strip())
     categories: List[str] = []
     reason_codes: List[str] = []
     redacted = raw
 
-    digits_only = re.sub(r'\D', '', raw)
-    has_raw_phone = False
-    if len(digits_only) == 10 and digits_only[0] in '6789':
-        has_raw_phone = True
-    elif len(digits_only) == 12 and digits_only.startswith('91') and digits_only[2] in '6789':
-        has_raw_phone = True
-
+    # Phone detection with tight boundary checks (avoids false-positive on dates/scattered numbers)
     phone_matches = RE_PHONE_STANDARD.findall(raw)
-    valid_phones = [p for p in phone_matches if len(re.sub(r'\D', '', p)) in (10, 11, 12)]
+    valid_phones = []
+    for p in phone_matches:
+        d = re.sub(r'\D', '', p)
+        if len(d) == 10 and d[0] in '6789':
+            valid_phones.append(p)
+        elif len(d) == 12 and d.startswith('91') and d[2] in '6789':
+            valid_phones.append(p)
+
     spelled_phone, _ = _check_spelled_out_numbers(raw)
-    if valid_phones or has_raw_phone or spelled_phone or RE_CONTACT_NUDGE.search(raw):
+    if valid_phones or spelled_phone or RE_CONTACT_NUDGE.search(raw):
         categories.append("PHONE_NUMBER")
         reason_codes.append("DETECTED_PHONE_OR_CONTACT_REQUEST")
         redacted = RE_PHONE_STANDARD.sub("[PHONE]", redacted)

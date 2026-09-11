@@ -11,42 +11,91 @@ class ApiException implements Exception {
   final String message;
   final Map<String, dynamic>? payload;
 
+  bool get isQuizGate =>
+      statusCode == 428 &&
+      (payload?['gate'] == 'quiz' ||
+          payload?['error'] == 'quiz_required' ||
+          payload?['error'] == 'onboarding_quiz_required');
+
   @override
   String toString() => message;
 }
 
 class ApiClient {
-  ApiClient({String? baseUrl})
+  ApiClient({String? baseUrl, http.Client? httpClient})
       : baseUrl = (baseUrl ??
                 const String.fromEnvironment(
                   'LITTLENET_API_BASE',
                   defaultValue:
-                      'https://littlenet655--littlenet-web-web.modal.run',
+                      'https://p01--littlenet-api-dev--vkkyb6h8z9r8.code.run',
                 ))
-            .replaceAll(RegExp(r'/+$'), '');
+            .replaceAll(RegExp(r'/+$'), ''),
+        _client = httpClient ?? http.Client();
+
+  static void Function()? onQuizRequired;
+  static void Function()? onSessionExpired;
 
   final String baseUrl;
+  final http.Client _client;
   final FlutterSecureStorage _storage = const FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
   );
 
   String? _token;
 
+  void dispose() {
+    _client.close();
+  }
+
   Future<void> restore() async {
-    _token = await _storage.read(key: 'littlenet_mobile_token');
+    try {
+      _token = await _storage.read(key: 'littlenet_mobile_token');
+    } catch (_) {
+      _token = null;
+    }
   }
 
   bool get hasToken => _token != null && _token!.isNotEmpty;
 
   Future<void> setToken(String token) async {
     _token = token;
-    await _storage.write(key: 'littlenet_mobile_token', value: token);
+    try {
+      await _storage.write(key: 'littlenet_mobile_token', value: token);
+    } catch (_) {}
   }
 
   Future<void> clearToken() async {
     _token = null;
-    await _storage.delete(key: 'littlenet_mobile_token');
+    try {
+      await _storage.delete(key: 'littlenet_mobile_token');
+    } catch (_) {}
   }
+
+  Future<void> clear() => clearToken();
+
+  Future<Map<String, dynamic>> get(
+    String path, {
+    Map<String, dynamic>? query,
+  }) =>
+      getJson(path, query: query);
+
+  Future<Map<String, dynamic>> post(
+    String path, {
+    Map<String, dynamic>? body,
+  }) =>
+      postJson(path, body ?? const {});
+
+  Future<Map<String, dynamic>> put(
+    String path, {
+    Map<String, dynamic>? body,
+  }) =>
+      putJson(path, body ?? const {});
+
+  Future<Map<String, dynamic>> delete(
+    String path, {
+    Map<String, dynamic>? query,
+  }) =>
+      deleteJson(path, query: query);
 
   Map<String, String> get authHeaders => {
         'Accept': 'application/json',
@@ -68,7 +117,7 @@ class ApiClient {
     String path, {
     Map<String, dynamic>? query,
   }) async {
-    final response = await http.get(uri(path, query), headers: authHeaders);
+    final response = await _client.get(uri(path, query), headers: authHeaders);
     return _decode(response);
   }
 
@@ -76,7 +125,7 @@ class ApiClient {
     String path,
     Map<String, dynamic> body,
   ) async {
-    final response = await http.post(
+    final response = await _client.post(
       uri(path),
       headers: {...authHeaders, 'Content-Type': 'application/json'},
       body: jsonEncode(body),
@@ -88,11 +137,19 @@ class ApiClient {
     String path,
     Map<String, dynamic> body,
   ) async {
-    final response = await http.put(
+    final response = await _client.put(
       uri(path),
       headers: {...authHeaders, 'Content-Type': 'application/json'},
       body: jsonEncode(body),
     );
+    return _decode(response);
+  }
+
+  Future<Map<String, dynamic>> deleteJson(
+    String path, {
+    Map<String, dynamic>? query,
+  }) async {
+    final response = await _client.delete(uri(path, query), headers: authHeaders);
     return _decode(response);
   }
 
@@ -106,9 +163,10 @@ class ApiClient {
     request.headers.addAll(authHeaders);
     request.fields.addAll(fields ?? const {});
     if (file != null) {
-      request.files.add(await http.MultipartFile.fromPath(fileField, file.path));
+      request.files
+          .add(await http.MultipartFile.fromPath(fileField, file.path));
     }
-    final streamed = await request.send();
+    final streamed = await _client.send(request);
     final response = await http.Response.fromStream(streamed);
     return _decode(response);
   }
@@ -193,6 +251,16 @@ class ApiClient {
       final message = data['error']?.toString() ??
           data['message']?.toString() ??
           'Request failed (${response.statusCode})';
+      if (response.statusCode == 401) {
+        clearToken();
+        onSessionExpired?.call();
+      }
+      if (response.statusCode == 428 &&
+          (data['gate'] == 'quiz' ||
+              data['error'] == 'quiz_required' ||
+              data['error'] == 'onboarding_quiz_required')) {
+        onQuizRequired?.call();
+      }
       throw ApiException(response.statusCode, message, data);
     }
     return data;

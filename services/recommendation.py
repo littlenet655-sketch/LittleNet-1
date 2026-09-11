@@ -1,101 +1,185 @@
-"""Safe personalized ranking for LittleNet's dedicated For You feed."""
-from database.connection import fetch_all,fetch_one
-from services.controls import effective_categories
+"""Safe personalized ranking for LittleNet's dedicated Kids feed.
+
+Merges social graph candidates with safe curated educational content.
+Never returns an empty feed solely because the child has zero approved social connections.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+from database.connection import fetch_all, fetch_one
+from services.controls import EDUCATIONAL_CATEGORIES, effective_categories
+from services.curated_feed import (
+    apply_category_diversity,
+    fetch_curated_candidates,
+    merge_candidates,
+    normalize_curated_item,
+    normalize_social_item,
+)
 from services.social import _age_group
 
 
-def _profile_terms(cid):
-    rows=fetch_all('''SELECT value FROM (\n      SELECT skill_name value FROM child_skills WHERE child_id=%s AND approved=TRUE\n      UNION SELECT interest_name FROM child_interests WHERE child_id=%s AND approved=TRUE\n      UNION SELECT ambition_name FROM child_ambitions WHERE child_id=%s AND approved=TRUE\n    ) x''',(cid,cid,cid))
-    terms=[str(r['value']).strip() for r in rows if r.get('value')]
-    profile=fetch_one('SELECT bio,current_class FROM child_profiles WHERE child_id=%s',(cid,)) or {}
-    context=' '.join(terms+[str(profile.get('bio') or ''),str(profile.get('current_class') or '')]).strip()
-    return terms,context or 'safe educational and age appropriate content'
+def _profile_terms(cid: int) -> tuple[list[str], str]:
+    rows = fetch_all(
+        """SELECT value FROM (
+             SELECT skill_name AS value FROM child_skills WHERE child_id = %s AND approved = TRUE
+             UNION SELECT interest_name FROM child_interests WHERE child_id = %s AND approved = TRUE
+             UNION SELECT ambition_name FROM child_ambitions WHERE child_id = %s AND approved = TRUE
+           ) x""",
+        (cid, cid, cid),
+    )
+    terms = [str(r["value"]).strip() for r in rows if r.get("value")]
+    profile = fetch_one("SELECT bio, current_class FROM child_profiles WHERE child_id = %s", (cid,)) or {}
+    context = " ".join(terms + [str(profile.get("bio") or ""), str(profile.get("current_class") or "")]).strip()
+    return terms, context or "safe educational and age appropriate content"
 
 
-def candidates(cid,cap=60):
-    cats=effective_categories(cid);age_group=_age_group(cid)
+def candidates(cid: int, cap: int = 60, surface: str = "FEED") -> list[dict[str, Any]]:
+    """Retrieve combined candidates from social connections and curated catalog independently.
+
+    A child with zero social connections will receive curated LittleNet content rather
+    than experiencing empty-feed starvation.
+    """
+    cats = effective_categories(cid)
+    age_group = _age_group(cid)
+
     # Reuse the exact child-discovery boundary instead of building a wider
     # recommendation-only graph. Recommendations must never reveal children the
     # viewer could not otherwise discover under Parent Mode policy.
     from child.service import discoverable_child_ids
-    allowed_child_ids=discoverable_child_ids(cid)
-    if not allowed_child_ids:
-        return []
-    return fetch_all('''SELECT p.*,u.full_name,cp.profile_picture,\n        (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,\n        (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,\n        EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'\n          AND ((f.child_id=%s AND f.following_child_id=p.child_id) OR (f.child_id=p.child_id AND f.following_child_id=%s))) is_following\n      FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id\n      WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=FALSE\n        AND p.child_id=ANY(%s)\n        AND p.content_category=ANY(%s)\n        AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)\n        AND p.child_id<>%s\n        AND p.child_id NOT IN (\n          SELECT blocked_id FROM blocked_users WHERE blocker_id=%s\n          UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s\n          UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)\n      ORDER BY p.created_at DESC LIMIT %s''',(cid,cid,allowed_child_ids,cats,age_group,age_group,cid,cid,cid,cid,cap))
+
+    is_reel = str(surface).upper() == "REELS"
+    if is_reel:
+        social_rows = fetch_all(
+            """SELECT p.*,u.full_name,cp.profile_picture,
+                (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,
+                (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,
+                EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'
+                  AND ((f.child_id=%s AND f.following_child_id=p.child_id) OR (f.child_id=p.child_id AND f.following_child_id=%s))) is_following
+              FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
+              WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=TRUE
+                AND p.content_category=ANY(%s)
+                AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
+                AND p.child_id<>%s
+                AND p.child_id NOT IN (
+                  SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
+                  UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
+                  UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
+              ORDER BY p.created_at DESC LIMIT %s""",
+            (cid, cid, cats, age_group, age_group, cid, cid, cid, cid, cap),
+        )
+    else:
+        allowed_child_ids = discoverable_child_ids(cid)
+        if not allowed_child_ids:
+            social_rows = []
+        else:
+            social_rows = fetch_all(
+                """SELECT p.*,u.full_name,cp.profile_picture,
+                    (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,
+                    (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count,
+                    EXISTS(SELECT 1 FROM followers f WHERE f.approved=TRUE AND f.approval_stage='ACTIVE'
+                      AND ((f.child_id=%s AND f.following_child_id=p.child_id) OR (f.child_id=p.child_id AND f.following_child_id=%s))) is_following
+                  FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
+                  WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=FALSE
+                    AND p.child_id=ANY(%s)
+                    AND p.content_category=ANY(%s)
+                    AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
+                    AND p.child_id<>%s
+                    AND p.child_id NOT IN (
+                      SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
+                      UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
+                      UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
+                  ORDER BY p.created_at DESC LIMIT %s""",
+                (cid, cid, allowed_child_ids, cats, age_group, age_group, cid, cid, cid, cid, cap),
+            )
+
+    social_candidates = [normalize_social_item(r) for r in social_rows]
+    curated_candidates = fetch_curated_candidates(cid, surface=surface, limit=cap)
+
+    # Both social and curated are normalized to the common feed schema.
+    # Provide backward-compatibility keys for legacy callers expecting post-like dicts:
+    for item in social_candidates + curated_candidates:
+        if "post_id" not in item:
+            item["post_id"] = item["source_id"]
+        if "content_category" not in item:
+            item["content_category"] = item["category"]
+        if "media_path" not in item:
+            item["media_path"] = item["media_reference"]
+
+    return merge_candidates(social_candidates, curated_candidates)
 
 
-def _text_for(post):
-    return ' '.join(str(post.get(k) or '') for k in ('content_category','caption','full_name'))[:500]
+def _text_for(item: dict[str, Any]) -> str:
+    parts = [
+        item.get("category"),
+        item.get("content_category"),
+        item.get("title"),
+        item.get("caption"),
+        item.get("ranking_metadata", {}).get("author_name") if isinstance(item.get("ranking_metadata"), dict) else None,
+        item.get("full_name"),
+    ]
+    return " ".join(str(p or "") for p in parts)[:500]
 
 
-def _fallback_score(post,terms):
-    hay=_text_for(post).lower();score=0.0
+def _fallback_score(item: dict[str, Any], terms: list[str]) -> float:
+    hay = _text_for(item).lower()
+    score = 0.0
     for term in terms:
-        if term.lower() in hay:score+=3.0
-    if post.get('is_following'):score+=2.0
-    if post.get('content_category') in {'Science','Math','Technology','Education','Nature','Books','Coding','General Knowledge'}:score+=0.5
-    score+=min(float(post.get('likes') or 0),100.0)/100.0
+        if term.lower() in hay:
+            score += 3.0
+
+    meta = item.get("ranking_metadata") or {}
+    if meta.get("is_following"):
+        score += 2.0
+    if item.get("category") in EDUCATIONAL_CATEGORIES or item.get("content_category") in EDUCATIONAL_CATEGORIES:
+        score += 1.0
+    if item.get("source_type") == "CURATED":
+        score += float(meta.get("editorial_weight") or 1.0)
+    score += min(float(meta.get("likes") or item.get("likes") or 0), 100.0) / 100.0
     return score
 
 
-def rank_candidates(cid,rows):
-    terms,profile_text=_profile_terms(cid)
-    ai_scores={}
+def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not rows:
+        return []
+    terms, profile_text = _profile_terms(cid)
+    ai_scores: dict[int, float] = {}
     try:
         from safety import remote_client
+
         if remote_client.enabled():
-            ranked=remote_client.rank_texts(profile_text,[{'id':p['post_id'],'text':_text_for(p)} for p in rows])
-            ai_scores={int(x['id']):float(x['score']) for x in ranked}
+            ranked = remote_client.rank_texts(
+                profile_text,
+                [{"id": p.get("source_id", p.get("post_id")), "text": _text_for(p)} for p in rows],
+            )
+            ai_scores = {int(x["id"]): float(x["score"]) for x in ranked}
         else:
             from safety.semantic_service import rank_texts
-            scores=rank_texts(profile_text,[_text_for(p) for p in rows])
-            ai_scores={int(p['post_id']):float(score) for p,score in zip(rows,scores)}
+
+            scores = rank_texts(profile_text, [_text_for(p) for p in rows])
+            ai_scores = {int(p.get("source_id", p.get("post_id"))): float(score) for p, score in zip(rows, scores)}
     except Exception:
-        # Personalization is not a safety gate. A semantic model outage must not
-        # break Kids Mode; safe deterministic ranking remains available.
-        ai_scores={}
-    return sorted(rows,key=lambda p:(ai_scores.get(int(p['post_id']),-2.0),_fallback_score(p,terms),p.get('created_at')),reverse=True)
+        # Personalization is not a safety gate. Safe deterministic ranking remains available.
+        ai_scores = {}
+
+    return sorted(
+        rows,
+        key=lambda p: (
+            ai_scores.get(int(p.get("source_id", p.get("post_id"))), -2.0),
+            _fallback_score(p, terms),
+            p.get("ranking_metadata", {}).get("created_at") or p.get("created_at") or "",
+        ),
+        reverse=True,
+    )
 
 
-EDUCATIONAL_CATEGORIES = {'Science', 'Math', 'Technology', 'Education', 'Nature', 'Books', 'Coding', 'General Knowledge'}
-
-def apply_diversity_and_balance(ranked_posts, max_consecutive=2):
-    """
-    Enforces category diversity and guarantees educational balance in Kids feed.
-    Prevents single-category starvation and spaces out entertainment posts.
-    """
-    if not ranked_posts or len(ranked_posts) <= 2:
-        return ranked_posts
-
-    balanced = []
-    pool = list(ranked_posts)
-    last_cat = None
-    consecutive_count = 0
-
-    while pool:
-        selected_idx = None
-        for idx, p in enumerate(pool):
-            cat = p.get('content_category', 'Other')
-            if cat != last_cat or consecutive_count < max_consecutive:
-                selected_idx = idx
-                break
-        if selected_idx is None:
-            selected_idx = 0
-
-        post = pool.pop(selected_idx)
-        cat = post.get('content_category', 'Other')
-        if cat == last_cat:
-            consecutive_count += 1
-        else:
-            last_cat = cat
-            consecutive_count = 1
-        balanced.append(post)
-
-    return balanced
+def apply_diversity_and_balance(ranked_items: list[dict[str, Any]], max_consecutive: int = 2) -> list[dict[str, Any]]:
+    """Enforces category diversity and guarantees educational balance in Kids feed."""
+    return apply_category_diversity(ranked_items, max_consecutive=max_consecutive)
 
 
-def personalized_posts(cid,limit=30,offset=0):
-    rows=candidates(cid,max(60,limit+offset+20))
-    ranked=rank_candidates(cid,rows)
-    balanced=apply_diversity_and_balance(ranked)
-    return balanced[offset:offset+limit]
+def personalized_posts(cid: int, limit: int = 30, offset: int = 0) -> list[dict[str, Any]]:
+    rows = candidates(cid, max(60, limit + offset + 20))
+    ranked = rank_candidates(cid, rows)
+    balanced = apply_diversity_and_balance(ranked)
+    return balanced[offset : offset + limit]

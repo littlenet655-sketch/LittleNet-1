@@ -148,11 +148,21 @@ def delete_reference(reference: str) -> None:
 def _request_media_gate() -> None:
     """Prevent a signed URL from bypassing child account/time/onboarding controls."""
     try:
-        from flask import has_request_context, session
+        from flask import g, has_request_context, session
 
-        if not has_request_context() or session.get("role") != "CHILD":
+        if not has_request_context():
             return
-        uid = int(session.get("user_id") or 0)
+        uid = None
+        role = None
+        if hasattr(g, "mobile_user") and g.mobile_user:
+            uid = int(g.mobile_user.get("user_id") or 0)
+            role = str(g.mobile_user.get("role") or "").upper()
+        elif session:
+            uid = int(session.get("user_id") or 0)
+            role = str(session.get("role") or "").upper()
+
+        if role != "CHILD":
+            return
         if not uid:
             raise PermissionError("child_session_required")
         from services.social import child_surface_open
@@ -180,3 +190,71 @@ def signed_download_url(reference: str, expires_seconds: int | None = None) -> s
         },
         ExpiresIn=max(60, min(expiry, 600)),
     )
+
+
+def signed_upload_url(reference_or_key: str, content_type: str, expires_seconds: int | None = None) -> str:
+    """Generate a short-lived presigned PUT URL for direct client-to-R2 upload."""
+    if not _enabled():
+        raise RuntimeError("Cloudflare R2 is not configured")
+    key = str(reference_or_key)
+    if key.startswith(R2_REFERENCE_PREFIX):
+        key = key[len(R2_REFERENCE_PREFIX) :]
+    expiry = expires_seconds or int(os.getenv("R2_PRESIGNED_UPLOAD_TTL", "900"))
+    return _client().generate_presigned_url(
+        "put_object",
+        Params={
+            "Bucket": os.environ["R2_BUCKET"],
+            "Key": key,
+            "ContentType": content_type,
+        },
+        ExpiresIn=max(60, min(expiry, 3600)),
+    )
+
+
+def head_object(reference_or_key: str) -> dict | None:
+    """Query object metadata in R2; returns None if object does not exist."""
+    if not _enabled():
+        raise RuntimeError("Cloudflare R2 is not configured")
+    key = str(reference_or_key)
+    if key.startswith(R2_REFERENCE_PREFIX):
+        key = key[len(R2_REFERENCE_PREFIX) :]
+    try:
+        res = _client().head_object(Bucket=os.environ["R2_BUCKET"], Key=key)
+        return {
+            "content_length": int(res.get("ContentLength", 0)),
+            "content_type": str(res.get("ContentType", "")),
+            "etag": str(res.get("ETag", "")),
+        }
+    except Exception:
+        return None
+
+
+def copy_object(source_ref_or_key: str, target_ref_or_key: str, content_type: str | None = None) -> str:
+    """Move/copy an object between R2 namespaces (e.g. quarantine -> published)."""
+    if not _enabled():
+        raise RuntimeError("Cloudflare R2 is not configured")
+    src = str(source_ref_or_key)
+    if src.startswith(R2_REFERENCE_PREFIX):
+        src = src[len(R2_REFERENCE_PREFIX) :]
+    dst = str(target_ref_or_key)
+    if dst.startswith(R2_REFERENCE_PREFIX):
+        dst = dst[len(R2_REFERENCE_PREFIX) :]
+    bucket = os.environ["R2_BUCKET"]
+    copy_source = {"Bucket": bucket, "Key": src}
+    extra = {}
+    if content_type:
+        extra["ContentType"] = content_type
+        extra["MetadataDirective"] = "REPLACE"
+    _client().copy_object(Bucket=bucket, Key=dst, CopySource=copy_source, **extra)
+    return f"{R2_REFERENCE_PREFIX}{dst}"
+
+
+def download_file(reference_or_key: str, local_path: str | Path) -> None:
+    """Download an R2 object to local ephemeral storage for worker processing."""
+    if not _enabled():
+        raise RuntimeError("Cloudflare R2 is not configured")
+    key = str(reference_or_key)
+    if key.startswith(R2_REFERENCE_PREFIX):
+        key = key[len(R2_REFERENCE_PREFIX) :]
+    _client().download_file(os.environ["R2_BUCKET"], key, str(local_path))
+

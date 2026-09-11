@@ -171,3 +171,88 @@ CREATE TABLE IF NOT EXISTS parent_weekly_digests (
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE INDEX IF NOT EXISTS idx_parent_digests_child ON parent_weekly_digests(child_id, week_start_date DESC);
+
+-- Phase 2: Direct Upload, Async Processing, and Manual Hashtags
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_status VARCHAR(20) NOT NULL DEFAULT 'ALLOWED';
+DO $$ BEGIN
+  ALTER TABLE posts ADD CONSTRAINT posts_processing_status_check
+    CHECK (processing_status IN ('UPLOADING','UPLOADED','PROCESSING','REVIEW','ALLOWED','BLOCKED','FAILED'));
+EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS source_media_path VARCHAR(500);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS poster_path VARCHAR(500);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_error TEXT;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_completed_at TIMESTAMP;
+CREATE INDEX IF NOT EXISTS idx_posts_processing ON posts(processing_status,created_at DESC);
+
+CREATE TABLE IF NOT EXISTS post_tags (
+  tag_id BIGSERIAL PRIMARY KEY,
+  post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
+  tag VARCHAR(50) NOT NULL,
+  normalized_tag VARCHAR(50) NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(post_id, normalized_tag)
+);
+CREATE INDEX IF NOT EXISTS idx_post_tags_post ON post_tags(post_id);
+CREATE INDEX IF NOT EXISTS idx_post_tags_normalized ON post_tags(normalized_tag);
+
+CREATE TABLE IF NOT EXISTS upload_sessions (
+  upload_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  object_key VARCHAR(500) NOT NULL UNIQUE,
+  media_type VARCHAR(20) NOT NULL CHECK (media_type IN ('IMAGE','VIDEO','AUDIO')),
+  kind VARCHAR(20) NOT NULL CHECK (kind IN ('POST','REEL','STORY')),
+  expected_size_bytes BIGINT NOT NULL,
+  mime_type VARCHAR(100) NOT NULL,
+  extension VARCHAR(20) NOT NULL,
+  status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING','UPLOADED','CONSUMED','EXPIRED','CANCELLED')),
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  consumed_at TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_upload_sessions_child ON upload_sessions(child_id, status, created_at DESC);
+
+-- Master Final Release: Post Location, Replay Protection & Curated Music
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS location_name VARCHAR(120);
+
+CREATE TABLE IF NOT EXISTS face_auth_challenges (
+  challenge_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  nonce VARCHAR(64) NOT NULL UNIQUE,
+  action VARCHAR(32) NOT NULL DEFAULT 'BLINK',
+  issued_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at TIMESTAMPTZ NOT NULL,
+  used_at TIMESTAMPTZ,
+  session_context VARCHAR(128)
+);
+CREATE INDEX IF NOT EXISTS idx_face_auth_challenges_user ON face_auth_challenges(user_id, expires_at);
+CREATE INDEX IF NOT EXISTS idx_face_auth_challenges_nonce ON face_auth_challenges(nonce);
+
+CREATE TABLE IF NOT EXISTS curated_music (
+  music_id SERIAL PRIMARY KEY,
+  title VARCHAR(120) NOT NULL,
+  artist VARCHAR(120) NOT NULL,
+  category VARCHAR(60) NOT NULL DEFAULT 'Happy',
+  audio_url TEXT NOT NULL,
+  duration_seconds INTEGER NOT NULL DEFAULT 30,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO curated_music (title, artist, category, audio_url, duration_seconds)
+VALUES
+  ('Sunshine Whistle', 'LittleNet Studio', 'Happy', 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=sunshine-113069.mp3', 30),
+  ('Playful Ukulele', 'FunKids Media', 'Acoustic', 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=ukulele-trip-version-60s-9893.mp3', 30),
+  ('Lofi Study Beats', 'SafeChill', 'Learning', 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=lofi-study-112191.mp3', 45),
+  ('Silly Cartoon Bounce', 'ComedyKids', 'Comedy', 'https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f77c30.mp3?filename=funny-kids-123495.mp3', 25),
+  ('Space Adventure', 'AstroSound', 'Sci-Fi', 'https://cdn.pixabay.com/download/audio/2021/08/04/audio_12b0c7443c.mp3?filename=space-adventure-6681.mp3', 35)
+ON CONFLICT DO NOTHING;
+
+ALTER TABLE face_profiles ADD COLUMN IF NOT EXISTS biometric_key VARCHAR(64);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS story_music_id INTEGER REFERENCES curated_music(music_id) ON DELETE SET NULL;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS story_music_start INTEGER DEFAULT 0;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS story_music_duration INTEGER DEFAULT 30;
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS story_music_title VARCHAR(120);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS story_music_artist VARCHAR(120);
+ALTER TABLE posts ADD COLUMN IF NOT EXISTS story_music_url TEXT;
