@@ -1,6 +1,4 @@
-import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import '../../api.dart';
 import '../../brand_logo.dart';
 import '../../core/auth/auth_state.dart';
@@ -11,6 +9,8 @@ import '../../core/theme/typography.dart';
 import '../../core/widgets/app_button.dart';
 import '../../core/widgets/app_text_field.dart';
 import '../../core/widgets/gradient_scaffold.dart';
+import '../../core/biometrics/face_biometrics.dart';
+import 'live_face_auth_modal.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key, required this.authState});
@@ -30,7 +30,6 @@ class _LoginScreenState extends State<LoginScreen>
 
   bool _isLoading = false;
   String? _error;
-  final ImagePicker _picker = ImagePicker();
 
   String get _currentMode {
     switch (_tabController.index) {
@@ -128,47 +127,67 @@ class _LoginScreenState extends State<LoginScreen>
       return;
     }
 
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
     try {
-      final photo = await _picker.pickImage(
-        source: ImageSource.camera,
-        preferredCameraDevice: CameraDevice.front,
-        maxWidth: 720,
-        maxHeight: 720,
-        imageQuality: 85,
-      );
-      if (photo == null) return;
-
-      setState(() {
-        _isLoading = true;
-        _error = null;
-      });
-
-      final bytes = await photo.readAsBytes();
-      final photoB64 = base64Encode(bytes);
-
-      final res = await widget.authState.apiClient.post(
-        '/api/mobile/v1/auth/face-login',
+      // 1. Request server challenge nonce bound to user and randomized action
+      final challengeRes = await widget.authState.apiClient.post(
+        '/api/mobile/v1/auth/face/challenge',
         body: {
           'identifier': identifier,
           'mode': _currentMode,
-          'photo_b64': photoB64,
+          'session_context': 'mobile_flutter_mlkit',
         },
       );
 
-      if (res['ok'] == true && res['token'] != null && res['user'] != null) {
-        final user = User.fromJson(res['user'] as Map<String, dynamic>);
-        widget.authState.setAuthenticated(user, res['token'].toString());
+      if (challengeRes['ok'] != true || challengeRes['challenge_id'] == null) {
+        throw ApiException(400, challengeRes['error']?.toString() ?? 'Failed to initiate face challenge');
+      }
+
+      final challengeId = challengeRes['challenge_id'].toString();
+      final nonce = challengeRes['nonce'].toString();
+      final actionStr = challengeRes['action'].toString();
+      final userId = challengeRes['user_id'] is int
+          ? challengeRes['user_id'] as int
+          : int.parse(challengeRes['user_id'].toString());
+      final username = challengeRes['username']?.toString() ?? identifier;
+      final action = FaceLivenessActionExt.fromString(actionStr);
+
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+      });
+
+      // 2. Launch on-device Google ML Kit liveness + local template verification screen
+      final verified = await Navigator.of(context).push<bool>(
+        MaterialPageRoute(
+          fullscreenDialog: true,
+          builder: (_) => LiveFaceAuthScreen(
+            authState: widget.authState,
+            challengeId: challengeId,
+            nonce: nonce,
+            action: action,
+            userId: userId,
+            username: username,
+          ),
+        ),
+      );
+
+      // 3. On successful challenge completion, authState is updated and we navigate home
+      if (verified == true && widget.authState.isAuthenticated && widget.authState.currentUser != null) {
         if (!mounted) return;
-        _navigateHomeForUser(user);
-        return;
+        _navigateHomeForUser(widget.authState.currentUser!);
       }
     } on ApiException catch (e) {
       setState(() {
         _error = _humanErrorMessage(e.message);
       });
-    } catch (_) {
+    } catch (e) {
       setState(() {
-        _error = 'Face verification failed. Please try password login.';
+        _error = 'Face verification error: $e';
       });
     } finally {
       if (mounted) {

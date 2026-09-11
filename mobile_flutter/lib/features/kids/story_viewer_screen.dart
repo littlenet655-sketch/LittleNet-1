@@ -1,9 +1,10 @@
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../core/auth/auth_state.dart';
 import '../../core/widgets/ln_components.dart';
 
-/// Screen 16: Story Viewer (Instagram-for-Kids style)
+/// Screen 16: Story Viewer (Instagram-for-Kids style with synchronized audio)
 class StoryViewerScreen extends StatefulWidget {
   const StoryViewerScreen({
     super.key,
@@ -13,6 +14,9 @@ class StoryViewerScreen extends StatefulWidget {
     this.avatarUrl,
     this.mediaUrl,
     this.caption = 'Check out my Mars Rover 3D model! 🚀',
+    this.musicTitle,
+    this.musicArtist,
+    this.musicUrl,
   });
 
   final AuthState authState;
@@ -21,6 +25,9 @@ class StoryViewerScreen extends StatefulWidget {
   final String? avatarUrl;
   final String? mediaUrl;
   final String caption;
+  final String? musicTitle;
+  final String? musicArtist;
+  final String? musicUrl;
 
   @override
   State<StoryViewerScreen> createState() => _StoryViewerScreenState();
@@ -30,12 +37,14 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     with SingleTickerProviderStateMixin {
   late AnimationController _progressController;
   final TextEditingController _replyController = TextEditingController();
+  AudioPlayer? _audioPlayer;
 
   final List<String> _quickReactions = ['❤️', '👏', '🚀', '🔬', '🌟'];
 
   @override
   void initState() {
     super.initState();
+    _initAudio();
     _progressController = AnimationController(
       vsync: this,
       duration: const Duration(seconds: 6),
@@ -50,18 +59,31 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
     _progressController.forward();
   }
 
+  Future<void> _initAudio() async {
+    if (widget.musicUrl != null && widget.musicUrl!.isNotEmpty) {
+      try {
+        _audioPlayer = AudioPlayer();
+        await _audioPlayer!.play(UrlSource(widget.musicUrl!));
+      } catch (_) {}
+    }
+  }
+
   @override
   void dispose() {
+    _audioPlayer?.stop();
+    _audioPlayer?.dispose();
     _progressController.dispose();
     _replyController.dispose();
     super.dispose();
   }
 
   void _pauseStory() {
+    _audioPlayer?.pause();
     _progressController.stop();
   }
 
   void _resumeStory() {
+    _audioPlayer?.resume();
     _progressController.forward();
   }
 
@@ -189,6 +211,30 @@ class _StoryViewerScreenState extends State<StoryViewerScreen>
                           ),
                         ],
                       ),
+                      if (widget.musicTitle != null && widget.musicTitle!.isNotEmpty) ...[
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withValues(alpha: 0.5),
+                              borderRadius: BorderRadius.circular(16),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                const Icon(Icons.music_note, color: Colors.white, size: 14),
+                                const SizedBox(width: 4),
+                                Text(
+                                  '${widget.musicTitle} · ${widget.musicArtist ?? "LittleNet"}',
+                                  style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w500),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),

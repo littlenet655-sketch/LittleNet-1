@@ -166,6 +166,7 @@ class AppRouter {
         );
 
       case '/kids/story-viewer':
+        final music = args['story_music'] as Map<String, dynamic>?;
         return MaterialPageRoute(
           builder: (_) => StoryViewerScreen(
             authState: authState,
@@ -174,6 +175,9 @@ class AppRouter {
             avatarUrl: args['avatar_url']?.toString(),
             mediaUrl: args['media_url']?.toString(),
             caption: args['caption']?.toString() ?? 'Classroom STEM update! 🚀',
+            musicTitle: music?['title']?.toString() ?? args['music_title']?.toString(),
+            musicArtist: music?['artist']?.toString() ?? args['music_artist']?.toString(),
+            musicUrl: music?['audio_url']?.toString() ?? args['music_url']?.toString(),
           ),
           settings: settings,
         );

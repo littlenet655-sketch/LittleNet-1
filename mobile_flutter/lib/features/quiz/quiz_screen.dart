@@ -19,9 +19,13 @@ class _QuizScreenState extends State<QuizScreen> {
   List<Map<String, dynamic>> _quizzes = [];
   int _currentIndex = 0;
   bool _isLoading = true;
+  bool _submitting = false;
   String? _error;
+  bool _isMandatory = false;
 
   int? _selectedOptionIndex;
+  int? _correctOptionIndex;
+  String? _serverExplanation;
   bool _answered = false;
   int _score = 0;
   bool _completed = false;
@@ -38,6 +42,8 @@ class _QuizScreenState extends State<QuizScreen> {
       _error = null;
       _currentIndex = 0;
       _selectedOptionIndex = null;
+      _correctOptionIndex = null;
+      _serverExplanation = null;
       _answered = false;
       _score = 0;
       _completed = false;
@@ -51,6 +57,7 @@ class _QuizScreenState extends State<QuizScreen> {
         final list = (res['quizzes'] as List<dynamic>?) ?? [];
         setState(() {
           _quizzes = list.whereType<Map<String, dynamic>>().toList();
+          _isMandatory = res['required'] == true || res['reason'] == 'feed_break';
         });
       }
     } on ApiException catch (e) {
@@ -62,30 +69,59 @@ class _QuizScreenState extends State<QuizScreen> {
     }
   }
 
-  void _submitOption(int optionIndex) {
-    if (_answered || _currentIndex >= _quizzes.length) return;
+  Future<void> _submitOption(int optionIndex) async {
+    if (_answered || _submitting || _currentIndex >= _quizzes.length) return;
 
     final q = _quizzes[_currentIndex];
-    final correctIdx = (q['correct_option_index'] as num?)?.toInt() ?? 0;
-    final isCorrect = optionIndex == correctIdx;
+    final options = (q['options'] as List<dynamic>?)
+            ?.map((e) => e.toString())
+            .toList() ??
+        [];
+    final selectedAnswer = (optionIndex >= 0 && optionIndex < options.length)
+        ? options[optionIndex]
+        : optionIndex.toString();
+    final quizId = q['quiz_id'] as int?;
 
     setState(() {
       _selectedOptionIndex = optionIndex;
-      _answered = true;
-      if (isCorrect) _score++;
+      _submitting = true;
     });
 
-    // Fire answer record to server
-    final quizId = q['quiz_id'] as int?;
-    if (quizId != null) {
-      widget.authState.apiClient.post(
-        '/api/mobile/v1/kids/quiz',
-        body: {
-          'quiz_id': quizId,
-          'selected_option': optionIndex,
-          'is_correct': isCorrect,
-        },
-      ).catchError((_) => <String, dynamic>{});
+    try {
+      if (quizId != null) {
+        final res = await widget.authState.apiClient.post(
+          '/api/mobile/v1/kids/quiz/$quizId/answer',
+          body: {'answer': selectedAnswer},
+        );
+        final isCorrect = res['correct'] == true;
+        final serverExplanation = res['explanation']?.toString();
+        final correctAnswer = res['correct_answer']?.toString();
+
+        int correctIdx = -1;
+        if (correctAnswer != null) {
+          correctIdx = options.indexWhere((opt) => opt.trim() == correctAnswer.trim());
+        }
+        if (correctIdx == -1) {
+          correctIdx = (q['correct_option_index'] as num?)?.toInt() ?? (isCorrect ? optionIndex : -1);
+        }
+
+        if (mounted) {
+          setState(() {
+            _answered = true;
+            _submitting = false;
+            _serverExplanation = serverExplanation;
+            _correctOptionIndex = correctIdx;
+            if (isCorrect) _score++;
+          });
+        }
+      }
+    } catch (_) {
+      if (mounted) {
+        setState(() {
+          _answered = true;
+          _submitting = false;
+        });
+      }
     }
   }
 
@@ -94,6 +130,8 @@ class _QuizScreenState extends State<QuizScreen> {
       setState(() {
         _currentIndex++;
         _selectedOptionIndex = null;
+        _correctOptionIndex = null;
+        _serverExplanation = null;
         _answered = false;
       });
     } else {
@@ -105,17 +143,22 @@ class _QuizScreenState extends State<QuizScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return GradientScaffold(
-      appBar: AppBar(
-        title: const Text('Brain Quiz 🧠'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh_rounded),
-            onPressed: _loadQuiz,
-          ),
-        ],
+    return PopScope(
+      canPop: _completed || !_isMandatory,
+      child: GradientScaffold(
+        appBar: AppBar(
+          automaticallyImplyLeading: !_isMandatory || _completed,
+          title: Text(_isMandatory ? 'Brain Break Quiz 🧠' : 'Brain Quiz 🧠'),
+          actions: [
+            if (!_isMandatory || _completed)
+              IconButton(
+                icon: const Icon(Icons.refresh_rounded),
+                onPressed: _loadQuiz,
+              ),
+          ],
+        ),
+        body: _buildBody(),
       ),
-      body: _buildBody(),
     );
   }
 
@@ -206,8 +249,8 @@ class _QuizScreenState extends State<QuizScreen> {
               ),
               const SizedBox(height: AppSpacing.xl),
               ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('Back to Learning'),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(_isMandatory ? 'Continue Browsing 🚀' : 'Back to Learning'),
               ),
             ],
           ),
@@ -221,9 +264,9 @@ class _QuizScreenState extends State<QuizScreen> {
             ?.map((e) => e.toString())
             .toList() ??
         [];
-    final explanation = currentQuiz['explanation'] as String?;
+    final explanation = _serverExplanation ?? currentQuiz['explanation'] as String?;
     final correctIdx =
-        (currentQuiz['correct_option_index'] as num?)?.toInt() ?? 0;
+        _correctOptionIndex ?? (currentQuiz['correct_option_index'] as num?)?.toInt() ?? 0;
 
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.md),

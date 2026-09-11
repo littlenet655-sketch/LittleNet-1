@@ -108,14 +108,25 @@ class _FeedScreenState extends State<FeedScreen> {
           _items = newItems;
         });
 
-        _recordVisibleImpressions(newItems);
+        // Items are recorded as they are scrolled into view in ListView.builder
       }
     } on ApiException catch (e) {
+      if (e.isQuizGate && mounted) {
+        _openQuizGate();
+        return;
+      }
       setState(() => _error = e.message);
     } catch (_) {
       setState(() => _error = 'Unable to connect. Check your internet.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _openQuizGate() async {
+    final res = await Navigator.of(context).pushNamed('/kids/quiz');
+    if (res == true && mounted) {
+      _loadInitialFeed();
     }
   }
 
@@ -143,8 +154,10 @@ class _FeedScreenState extends State<FeedScreen> {
           _hasMore = res['has_more'] as bool? ?? false;
           _items.addAll(newItems);
         });
-
-        _recordVisibleImpressions(newItems);
+      }
+    } on ApiException catch (e) {
+      if (e.isQuizGate && mounted) {
+        _openQuizGate();
       }
     } catch (_) {
       // Silent - allow retry on scroll
@@ -153,22 +166,25 @@ class _FeedScreenState extends State<FeedScreen> {
     }
   }
 
-  void _recordVisibleImpressions(List<Map<String, dynamic>> items) {
+  void _recordItemImpression(Map<String, dynamic> item) {
     if (_sessionId == null) return;
-    for (final item in items) {
-      final key = '${item['source_type']}_${item['source_id']}';
-      if (!_recordedImpressions.contains(key)) {
-        _recordedImpressions.add(key);
-        widget.authState.apiClient.post(
-          '/api/mobile/v2/kids/impressions',
-          body: {
-            'session_id': _sessionId,
-            'source_type': item['source_type'],
-            'source_id': item['source_id'],
-            'surface': 'FEED',
-          },
-        ).catchError((_) => <String, dynamic>{});
-      }
+    final key = '${item['source_type']}_${item['source_id']}';
+    if (!_recordedImpressions.contains(key)) {
+      _recordedImpressions.add(key);
+      widget.authState.apiClient.post(
+        '/api/mobile/v2/kids/impressions',
+        body: {
+          'session_id': _sessionId,
+          'source_type': item['source_type'],
+          'source_id': item['source_id'],
+          'surface': 'FEED',
+        },
+      ).catchError((err) {
+        if (err is ApiException && err.isQuizGate && mounted) {
+          _openQuizGate();
+        }
+        return <String, dynamic>{};
+      });
     }
   }
 
@@ -311,6 +327,7 @@ class _FeedScreenState extends State<FeedScreen> {
         }
 
         final item = _items[index];
+        _recordItemImpression(item);
         final isCurated = item['source_type'] == 'CURATED';
         final postId = item['post_id'] as int?;
 

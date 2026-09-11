@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../api.dart';
 import '../core/auth/auth_state.dart';
+import '../core/upload/upload_manager.dart';
 import 'router.dart';
 import 'theme.dart';
 
@@ -14,6 +15,9 @@ class LittleNetAppV2 extends StatefulWidget {
 }
 
 class _LittleNetAppV2State extends State<LittleNetAppV2> {
+  static final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+  static bool _isQuizScreenOpen = false;
+
   late final ApiClient _apiClient;
   late final AuthState _authState;
   late final AppRouter _router;
@@ -25,6 +29,25 @@ class _LittleNetAppV2State extends State<LittleNetAppV2> {
     _apiClient = widget.apiClient ?? ApiClient();
     _authState = AuthState(apiClient: _apiClient);
     _router = AppRouter(authState: _authState);
+
+    ApiClient.onQuizRequired = () {
+      if (!_isQuizScreenOpen &&
+          _authState.isAuthenticated &&
+          (_authState.currentUser?.isChild ?? false)) {
+        _isQuizScreenOpen = true;
+        navigatorKey.currentState?.pushNamed('/kids/quiz').then((_) {
+          _isQuizScreenOpen = false;
+        });
+      }
+    };
+
+    ApiClient.onSessionExpired = () {
+      if (_authState.isAuthenticated) {
+        _authState.logout();
+        navigatorKey.currentState?.pushNamedAndRemoveUntil('/login', (route) => false);
+      }
+    };
+
     _bootstrap();
   }
 
@@ -34,6 +57,9 @@ class _LittleNetAppV2State extends State<LittleNetAppV2> {
         setState(() {
           _initialized = true;
         });
+        if (_authState.isAuthenticated) {
+          UploadManager.instance.reconcilePendingUpload(_apiClient);
+        }
       }
     });
   }
@@ -56,6 +82,7 @@ class _LittleNetAppV2State extends State<LittleNetAppV2> {
       listenable: _authState,
       builder: (context, _) {
         return MaterialApp(
+          navigatorKey: navigatorKey,
           title: 'LittleNet',
           debugShowCheckedModeBanner: false,
           theme: AppTheme.lightTheme,
@@ -70,7 +97,10 @@ class _LittleNetAppV2State extends State<LittleNetAppV2> {
     if (_authState.isAuthenticated) {
       final user = _authState.currentUser;
       if (user != null) {
-        if (user.isChild) return '/kids/home';
+        if (user.isChild) {
+          if (user.quizRequired) return '/kids/quiz';
+          return '/kids/home';
+        }
         if (user.isParent) return '/parent/dashboard';
         if (user.isAdmin) return '/moderator/queue';
       }

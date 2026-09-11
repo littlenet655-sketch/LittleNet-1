@@ -11,6 +11,12 @@ class ApiException implements Exception {
   final String message;
   final Map<String, dynamic>? payload;
 
+  bool get isQuizGate =>
+      statusCode == 428 &&
+      (payload?['gate'] == 'quiz' ||
+          payload?['error'] == 'quiz_required' ||
+          payload?['error'] == 'onboarding_quiz_required');
+
   @override
   String toString() => message;
 }
@@ -25,6 +31,9 @@ class ApiClient {
                 ))
             .replaceAll(RegExp(r'/+$'), ''),
         _client = httpClient ?? http.Client();
+
+  static void Function()? onQuizRequired;
+  static void Function()? onSessionExpired;
 
   final String baseUrl;
   final http.Client _client;
@@ -50,12 +59,16 @@ class ApiClient {
 
   Future<void> setToken(String token) async {
     _token = token;
-    await _storage.write(key: 'littlenet_mobile_token', value: token);
+    try {
+      await _storage.write(key: 'littlenet_mobile_token', value: token);
+    } catch (_) {}
   }
 
   Future<void> clearToken() async {
     _token = null;
-    await _storage.delete(key: 'littlenet_mobile_token');
+    try {
+      await _storage.delete(key: 'littlenet_mobile_token');
+    } catch (_) {}
   }
 
   Future<void> clear() => clearToken();
@@ -224,6 +237,16 @@ class ApiClient {
       final message = data['error']?.toString() ??
           data['message']?.toString() ??
           'Request failed (${response.statusCode})';
+      if (response.statusCode == 401) {
+        clearToken();
+        onSessionExpired?.call();
+      }
+      if (response.statusCode == 428 &&
+          (data['gate'] == 'quiz' ||
+              data['error'] == 'quiz_required' ||
+              data['error'] == 'onboarding_quiz_required')) {
+        onQuizRequired?.call();
+      }
       throw ApiException(response.statusCode, message, data);
     }
     return data;

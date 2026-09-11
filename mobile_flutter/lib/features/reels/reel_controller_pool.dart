@@ -88,6 +88,12 @@ class ReelControllerPool {
     onStateChanged?.call();
   }
 
+  /// Preload/precache posters for newly fetched batch of reels.
+  void preload(List<Map<String, dynamic>> reels, BuildContext context) {
+    final targetIndex = _focusedIndex >= 0 ? _focusedIndex : 0;
+    _precachePosters(targetIndex, reels, context);
+  }
+
   void _pruneDistantControllers(int targetIndex) {
     final toRemove = _controllers.keys
         .where((idx) => (idx - targetIndex).abs() > 1)

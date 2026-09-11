@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 import '../../api.dart';
 import '../auth/auth_state.dart';
@@ -81,6 +82,9 @@ class UploadParams {
   final String audience;
   final List<String> tags;
   final String? locationName;
+  final int? musicId;
+  final int? musicStart;
+  final int? musicDuration;
   final AuthState authState;
 
   UploadParams({
@@ -91,6 +95,9 @@ class UploadParams {
     required this.audience,
     required this.tags,
     this.locationName,
+    this.musicId,
+    this.musicStart,
+    this.musicDuration,
     required this.authState,
   });
 }
@@ -105,11 +112,102 @@ class UploadManager extends ChangeNotifier {
   Timer? _pollingTimer;
   Timer? _autoDismissTimer;
 
+  static const String _pendingUploadKey = 'littlenet_pending_upload';
+  final FlutterSecureStorage _storage = const FlutterSecureStorage(
+    aOptions: AndroidOptions(encryptedSharedPreferences: true),
+  );
+
   UploadTaskState get state => _state;
 
   void _setState(UploadTaskState newState) {
     _state = newState;
     notifyListeners();
+  }
+
+  Future<void> _persistPendingUpload() async {
+    try {
+      if (_state.postId != null && _state.isActive) {
+        final data = {
+          'postId': _state.postId,
+          'uploadId': _state.uploadId,
+          'kind': _state.kind,
+          'stage': _state.stage.name,
+        };
+        await _storage.write(key: _pendingUploadKey, value: jsonEncode(data));
+      }
+    } catch (_) {}
+  }
+
+  Future<void> _clearPendingUpload() async {
+    try {
+      await _storage.delete(key: _pendingUploadKey);
+    } catch (_) {}
+  }
+
+  /// Reconcile any unfinished uploads on app startup or restart.
+  Future<void> reconcilePendingUpload(ApiClient apiClient) async {
+    try {
+      final jsonStr = await _storage.read(key: _pendingUploadKey);
+      if (jsonStr == null || jsonStr.isEmpty) return;
+      final data = jsonDecode(jsonStr) as Map<String, dynamic>;
+      final postId = data['postId'] as int?;
+      final kind = data['kind'] as String? ?? 'post';
+      if (postId == null) return;
+
+      final res = await apiClient.getJson('/api/mobile/v2/posts/$postId/processing-status');
+      if (res['ok'] == true) {
+        final status = (res['status'] as String? ?? '').toUpperCase();
+        final stage = (res['stage'] as String? ?? '').toUpperCase();
+        final kindName = switch (kind.toLowerCase()) {
+          'reel' => 'Reel',
+          'story' => 'Story',
+          _ => 'Post',
+        };
+
+        if (status == 'ALLOWED' || stage == 'ALLOWED') {
+          await _clearPendingUpload();
+          _setState(_state.copyWith(
+            stage: UploadStage.allowed,
+            postId: postId,
+            kind: kind,
+            progress: 1.0,
+            message: '$kindName published! ✓',
+          ));
+          _scheduleAutoDismiss();
+        } else if (status == 'REVIEW' || stage == 'REVIEW') {
+          await _clearPendingUpload();
+          _setState(_state.copyWith(
+            stage: UploadStage.review,
+            postId: postId,
+            kind: kind,
+            progress: 1.0,
+            message: 'Sent for Parent Safety Review',
+          ));
+          _scheduleAutoDismiss(seconds: 5);
+        } else if (status == 'BLOCKED' || stage == 'BLOCKED') {
+          await _clearPendingUpload();
+          final reason = res['moderation_reason']?.toString() ?? 'Content does not follow child safety standards.';
+          _setState(_state.copyWith(
+            stage: UploadStage.blocked,
+            postId: postId,
+            kind: kind,
+            error: reason,
+            message: 'Blocked: $reason',
+          ));
+        } else if (status == 'PROCESSING' || stage == 'PROCESSING' || status == 'PENDING') {
+          _setState(_state.copyWith(
+            stage: UploadStage.processing,
+            postId: postId,
+            kind: kind,
+            progress: 0.9,
+            message: 'Still checking your $kindName. You can keep using LittleNet.',
+          ));
+          _startStatusPolling(apiClient, postId, kindName);
+        }
+      }
+    } catch (e) {
+      debugPrint('[UploadManager] Reconcile error: $e');
+    }
   }
 
   void dismiss() {
@@ -252,6 +350,9 @@ class UploadManager extends ChangeNotifier {
           'tags': params.tags,
           if (params.locationName != null && params.locationName!.isNotEmpty)
             'location_name': params.locationName,
+          if (params.musicId != null) 'music_id': params.musicId,
+          if (params.musicStart != null) 'music_start': params.musicStart,
+          if (params.musicDuration != null) 'music_duration': params.musicDuration,
         },
       );
 
@@ -339,10 +440,10 @@ class UploadManager extends ChangeNotifier {
       if (attempts > maxAttempts) {
         timer.cancel();
         _setState(_state.copyWith(
-          stage: UploadStage.allowed,
-          message: '$kindName published! Processing checks continuing.',
+          stage: UploadStage.processing,
+          message: 'Still checking your $kindName. You can keep using LittleNet.',
         ));
-        _scheduleAutoDismiss();
+        _persistPendingUpload();
         return;
       }
 
@@ -358,6 +459,7 @@ class UploadManager extends ChangeNotifier {
 
         if (status == 'ALLOWED' || stage == 'ALLOWED') {
           timer.cancel();
+          await _clearPendingUpload();
           _setState(_state.copyWith(
             stage: UploadStage.allowed,
             progress: 1.0,
@@ -366,6 +468,7 @@ class UploadManager extends ChangeNotifier {
           _scheduleAutoDismiss();
         } else if (status == 'REVIEW' || stage == 'REVIEW') {
           timer.cancel();
+          await _clearPendingUpload();
           _setState(_state.copyWith(
             stage: UploadStage.review,
             progress: 1.0,
@@ -374,6 +477,7 @@ class UploadManager extends ChangeNotifier {
           _scheduleAutoDismiss(seconds: 5);
         } else if (status == 'BLOCKED' || stage == 'BLOCKED') {
           timer.cancel();
+          await _clearPendingUpload();
           final reason = res['moderation_reason']?.toString() ??
               'Content does not follow child safety standards.';
           _setState(_state.copyWith(
@@ -383,6 +487,7 @@ class UploadManager extends ChangeNotifier {
           ));
         } else if (stage == 'FAILED') {
           timer.cancel();
+          await _clearPendingUpload();
           final err = res['error']?.toString() ?? 'Media processing failed.';
           _setState(_state.copyWith(
             stage: UploadStage.failed,
@@ -391,6 +496,7 @@ class UploadManager extends ChangeNotifier {
           ));
         } else {
           // Still PROCESSING / UPLOADED
+          _persistPendingUpload();
           _setState(_state.copyWith(
             stage: UploadStage.processing,
             message: 'Checking child safety...',
@@ -507,6 +613,9 @@ class UploadManager extends ChangeNotifier {
           if (params.tags.isNotEmpty) 'tags': params.tags,
           if (params.locationName != null && params.locationName!.isNotEmpty)
             'location_name': params.locationName,
+          if (params.musicId != null) 'music_id': params.musicId,
+          if (params.musicStart != null) 'music_start': params.musicStart,
+          if (params.musicDuration != null) 'music_duration': params.musicDuration,
         },
       );
 

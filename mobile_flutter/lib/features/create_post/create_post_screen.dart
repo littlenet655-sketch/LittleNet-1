@@ -248,6 +248,13 @@ class _CreatePostScreenState extends State<CreatePostScreen> {
       audience: _audience,
       tags: List.unmodifiable(_tags),
       locationName: _selectedLocation,
+      musicId: (_kind == PostKind.story && _selectedMusic != null)
+          ? (_selectedMusic!['music_id'] as int?)
+          : null,
+      musicStart: _kind == PostKind.story ? 0 : null,
+      musicDuration: (_kind == PostKind.story && _selectedMusic != null)
+          ? (_selectedMusic!['duration_seconds'] as int? ?? 30)
+          : null,
       authState: widget.authState,
     ));
 

@@ -8,6 +8,7 @@ class User {
     this.age,
     this.profilePicture,
     this.accountStatus = 'ACTIVE',
+    this.quizRequired = false,
   });
 
   final int userId;
@@ -18,6 +19,7 @@ class User {
   final int? age;
   final String? profilePicture;
   final String accountStatus;
+  final bool quizRequired;
 
   bool get isChild => role.toUpperCase() == 'CHILD';
   bool get isParent => role.toUpperCase() == 'PARENT';
@@ -41,6 +43,9 @@ class User {
           json['profile_picture']?.toString(),
       accountStatus:
           json['account_status']?.toString().toUpperCase() ?? 'ACTIVE',
+      quizRequired: json['quiz_required'] == true ||
+          (json['onboarding'] is Map &&
+              (json['onboarding'] as Map)['quiz_required'] == true),
     );
   }
 

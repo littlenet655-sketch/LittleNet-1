@@ -485,6 +485,7 @@ class _StoriesRow extends StatelessWidget {
                     'avatar_url': avatarUrl,
                     'media_url': s['media_url'],
                     'caption': s['caption'] ?? 'Classroom STEM update! 🚀',
+                    'story_music': s['story_music'],
                   },
                 );
               },

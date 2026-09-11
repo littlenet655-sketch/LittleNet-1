@@ -1,11 +1,14 @@
 import 'dart:convert';
-import 'dart:typed_data';
+import 'dart:io';
 import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image_picker/image_picker.dart';
 import '../../api.dart';
 import '../../brand_logo.dart';
 import '../../core/auth/auth_state.dart';
+import '../../core/biometrics/face_biometrics.dart';
 import '../../core/models/user.dart';
 import '../../core/theme/colors.dart';
 import '../../core/theme/spacing.dart';
@@ -46,12 +49,28 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen>
   String? _statusMessage;
   String _livenessPhase = 'CALIBRATING'; // CALIBRATING -> BLINK_NOW -> VERIFIED
 
+  late FaceLivenessStateMachine _stateMachine;
+  final FaceDetector _faceDetector = FaceDetector(
+    options: FaceDetectorOptions(
+      enableClassification: true,
+      enableTracking: true,
+      enableLandmarks: true,
+      performanceMode: FaceDetectorMode.fast,
+    ),
+  );
+  bool _isDetecting = false;
+  double _currentLeftEye = 0.0;
+  double _currentRightEye = 0.0;
+  double _currentEulerY = 0.0;
+  List<double>? _enrolledFeatureVector;
+
   late AnimationController _pulseController;
   late Animation<double> _pulseAnimation;
 
   @override
   void initState() {
     super.initState();
+    _stateMachine = FaceLivenessStateMachine(targetAction: FaceLivenessAction.blink);
     _pulseController = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 1000),
@@ -65,6 +84,7 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen>
   @override
   void dispose() {
     _pulseController.dispose();
+    _faceDetector.close();
     _cameraController?.dispose();
     super.dispose();
   }
@@ -113,16 +133,7 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen>
             'Center your face in the oval. Keeping eyes open for calibration...';
       });
 
-      // Progress to BLINK_NOW prompt after eye calibration period
-      Future.delayed(const Duration(milliseconds: 1600), () {
-        if (mounted && _capturedPhotoBytes == null) {
-          setState(() {
-            _livenessPhase = 'BLINK_NOW';
-            _statusMessage =
-                '👁️ Face aligned! Now blink your eyes naturally once.';
-          });
-        }
-      });
+      _startMLKitLoop();
     } catch (_) {
       if (mounted) {
         setState(() {
@@ -135,43 +146,101 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen>
     }
   }
 
-  Future<void> _captureBlink() async {
-    if (_cameraController == null || !_cameraController!.value.isInitialized) {
-      await _takeSelfieFallback();
-      return;
-    }
+  void _startMLKitLoop() {
+    Future.doWhile(() async {
+      if (!mounted || _blinkPassed || _capturedPhotoBytes != null) return false;
+      if (_cameraController == null || !_cameraController!.value.isInitialized) {
+        await Future.delayed(const Duration(milliseconds: 150));
+        return true;
+      }
 
-    setState(() {
-      _isCapturing = true;
-      _error = null;
-      _statusMessage = 'Blink registered! Capturing adult verification frame...';
+      if (_isDetecting) {
+        await Future.delayed(const Duration(milliseconds: 60));
+        return true;
+      }
+
+      _isDetecting = true;
+      try {
+        final photo = await _cameraController!.takePicture();
+        final inputImage = InputImage.fromFilePath(photo.path);
+        final faces = await _faceDetector.processImage(inputImage);
+
+        if (mounted) {
+          if (faces.isEmpty) {
+            setState(() {
+              _currentLeftEye = 0.0;
+              _currentRightEye = 0.0;
+              _currentEulerY = 0.0;
+              _stateMachine.processObservation(const FaceObservation(
+                faceCount: 0,
+                leftEyeOpen: 0.0,
+                rightEyeOpen: 0.0,
+                headEulerY: 0.0,
+                headEulerZ: 0.0,
+                featureVector: [],
+              ));
+              _statusMessage = _stateMachine.statusMessage;
+            });
+          } else {
+            final face = faces.first;
+            final lEye = face.leftEyeOpenProbability ?? 0.0;
+            final rEye = face.rightEyeOpenProbability ?? 0.0;
+            final eulerY = face.headEulerAngleY ?? 0.0;
+            final eulerZ = face.headEulerAngleZ ?? 0.0;
+            final vec = LocalFaceBiometrics.extractFeatureVector(face);
+
+            final obs = FaceObservation(
+              faceCount: faces.length,
+              leftEyeOpen: lEye,
+              rightEyeOpen: rEye,
+              headEulerY: eulerY,
+              headEulerZ: eulerZ,
+              featureVector: vec,
+            );
+
+            setState(() {
+              _currentLeftEye = lEye;
+              _currentRightEye = rEye;
+              _currentEulerY = eulerY;
+              _stateMachine.processObservation(obs);
+              _statusMessage = _stateMachine.statusMessage;
+
+              if (_stateMachine.state == LivenessState.actionPrompted ||
+                  _stateMachine.state == LivenessState.actionTransitioned) {
+                _livenessPhase = 'BLINK_NOW';
+              } else if (_stateMachine.state == LivenessState.calibratingCenter) {
+                _livenessPhase = 'CALIBRATING';
+              }
+            });
+
+            if (_stateMachine.isCompleted) {
+              final bytes = await File(photo.path).readAsBytes();
+              HapticFeedback.heavyImpact();
+              final neuralEmbedding = await LocalFaceBiometrics.extractNeuralEmbedding(bytes, face);
+              setState(() {
+                _capturedPhotoBytes = bytes;
+                _enrolledFeatureVector = neuralEmbedding;
+                _blinkPassed = true;
+                _livenessPhase = 'VERIFIED';
+                _statusMessage =
+                    '✓ Eye blink test passed! Tap "Verify & Activate Account" below.';
+              });
+              return false;
+            }
+          }
+        }
+
+        try {
+          File(photo.path).deleteSync();
+        } catch (_) {}
+      } catch (_) {
+      } finally {
+        _isDetecting = false;
+      }
+
+      await Future.delayed(const Duration(milliseconds: 120));
+      return true;
     });
-
-    try {
-      final file = await _cameraController!.takePicture();
-      final bytes = await file.readAsBytes();
-      if (!mounted) return;
-
-      setState(() {
-        _capturedPhotoBytes = bytes;
-        _blinkPassed = true;
-        _livenessPhase = 'VERIFIED';
-        _statusMessage =
-            '✓ Eye blink test passed! Tap "Verify & Activate Account" to complete.';
-      });
-    } catch (_) {
-      if (mounted) {
-        setState(() {
-          _error = 'Failed to capture camera frame. Please try again.';
-        });
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isCapturing = false;
-        });
-      }
-    }
   }
 
   Future<void> _takeSelfieFallback() async {
@@ -244,13 +313,19 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen>
         body: {
           'pending_token': widget.pendingToken,
           'photo_b64': photoB64,
-          'blink_passed': true,
         },
       );
 
       if (res['ok'] == true && res['token'] != null && res['user'] != null) {
         final user = User.fromJson(res['user'] as Map<String, dynamic>);
         widget.authState.setAuthenticated(user, res['token'].toString());
+
+        if (_enrolledFeatureVector != null) {
+          await LocalFaceBiometrics.saveTemplate(user.userId, _enrolledFeatureVector!);
+          if (res['biometric_key'] != null) {
+            await LocalFaceBiometrics.saveBiometricKey(user.userId, res['biometric_key'].toString());
+          }
+        }
 
         if (!mounted) return;
         Navigator.of(context).pushNamedAndRemoveUntil(
@@ -504,19 +579,85 @@ class _ParentLivenessScreenState extends State<ParentLivenessScreen>
                           if (_cameraAvailable &&
                               _cameraController != null &&
                               _cameraController!.value.isInitialized) ...[
-                            AppButton(
-                              text: _livenessPhase == 'BLINK_NOW'
-                                  ? 'I Blinked — Capture & Verify'
-                                  : 'Blink Eyes & Capture',
-                              icon: Icons.remove_red_eye,
-                              isLoading: _isCapturing,
-                              onPressed: _captureBlink,
+                            // Live ML Kit HUD stats bar
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade900,
+                                borderRadius: BorderRadius.circular(12),
+                                border: Border.all(color: Colors.white12),
+                              ),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                children: [
+                                  Expanded(
+                                    child: Text(
+                                      'Left: ${(_currentLeftEye * 100).toInt()}%',
+                                      textAlign: TextAlign.center,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: _currentLeftEye > 0.65 ? Colors.greenAccent : Colors.orangeAccent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      'Right: ${(_currentRightEye * 100).toInt()}%',
+                                      textAlign: TextAlign.center,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: TextStyle(
+                                        color: _currentRightEye > 0.65 ? Colors.greenAccent : Colors.orangeAccent,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                  ),
+                                  Expanded(
+                                    child: Text(
+                                      'Angle: ${_currentEulerY.toStringAsFixed(1)}°',
+                                      textAlign: TextAlign.center,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: AppSpacing.md),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                              decoration: BoxDecoration(
+                                color: AppColors.primary.withValues(alpha: 0.1),
+                                borderRadius: AppRadius.roundedSm,
+                                border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                              ),
+                              child: const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  SizedBox(
+                                    width: 16,
+                                    height: 16,
+                                    child: CircularProgressIndicator(strokeWidth: 2, color: AppColors.primary),
+                                  ),
+                                  SizedBox(width: 10),
+                                  Text(
+                                    'AI Vision: Tracking natural eye blink...',
+                                    style: TextStyle(
+                                      color: AppColors.primary,
+                                      fontWeight: FontWeight.w600,
+                                      fontSize: 13,
+                                    ),
+                                  ),
+                                ],
+                              ),
                             ),
                             const SizedBox(height: AppSpacing.sm),
                             TextButton.icon(
                               onPressed: _isCapturing ? null : _takeSelfieFallback,
                               icon: const Icon(Icons.camera_alt, size: 18),
-                              label: const Text('Open Camera & Take Selfie'),
+                              label: const Text('Open System Camera (Fallback)'),
                             ),
                           ] else ...[
                             AppButton(

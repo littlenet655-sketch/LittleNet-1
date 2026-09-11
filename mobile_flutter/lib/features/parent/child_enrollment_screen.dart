@@ -9,6 +9,8 @@ import '../../core/theme/typography.dart';
 import '../../core/widgets/app_button.dart';
 import '../../core/widgets/app_text_field.dart';
 import '../../core/widgets/gradient_scaffold.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import '../../core/biometrics/face_biometrics.dart';
 
 class ChildEnrollmentScreen extends StatefulWidget {
   const ChildEnrollmentScreen({super.key, required this.authState});
@@ -123,6 +125,22 @@ class _ChildEnrollmentScreenState extends State<ChildEnrollmentScreen> {
         '/api/mobile/v1/parent/children/$_createdChildId/face/enroll',
         body: {'photo_b64': photoB64},
       );
+
+      if (res['ok'] == true && _createdChildId != null) {
+        try {
+          final inputImage = InputImage.fromFilePath(photo.path);
+          final detector = FaceDetector(options: FaceDetectorOptions(enableLandmarks: true));
+          final faces = await detector.processImage(inputImage);
+          if (faces.isNotEmpty) {
+            final neural = await LocalFaceBiometrics.extractNeuralEmbedding(bytes, faces.first);
+            await LocalFaceBiometrics.saveTemplate(_createdChildId!, neural);
+          }
+          detector.close();
+          if (res['biometric_key'] != null) {
+            await LocalFaceBiometrics.saveBiometricKey(_createdChildId!, res['biometric_key'].toString());
+          }
+        } catch (_) {}
+      }
 
       final quizRequired = res['quiz_required'] == true;
       setState(() {

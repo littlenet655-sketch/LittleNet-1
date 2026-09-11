@@ -108,6 +108,10 @@ class _ReelsScreenState extends State<ReelsScreen> with WidgetsBindingObserver {
         }
       }
     } on ApiException catch (e) {
+      if (e.isQuizGate && mounted) {
+        _openQuizGate();
+        return;
+      }
       setState(() {
         if (e.statusCode == 403) {
           _gate = 'disabled_by_parent';
@@ -126,6 +130,13 @@ class _ReelsScreenState extends State<ReelsScreen> with WidgetsBindingObserver {
     }
   }
 
+  Future<void> _openQuizGate() async {
+    final res = await Navigator.of(context).pushNamed('/kids/quiz');
+    if (res == true && mounted) {
+      _loadInitialReels();
+    }
+  }
+
   Future<void> _loadNextPage() async {
     if (_isLoadingMore || !_hasMore) return;
     setState(() => _isLoadingMore = true);
@@ -135,21 +146,29 @@ class _ReelsScreenState extends State<ReelsScreen> with WidgetsBindingObserver {
         '/api/mobile/v2/kids/reels',
         query: {
           'cursor': '$_cursor',
-          'limit': '6',
+          'limit': '5',
           if (_sessionId != null) 'session_id': _sessionId!,
         },
       );
 
       if (res['ok'] == true) {
-        final newItems = (res['items'] as List<dynamic>? ?? [])
+        final items = (res['items'] as List<dynamic>? ?? [])
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList();
 
         setState(() {
-          _cursor = res['next_cursor'] as int? ?? (_cursor + newItems.length);
+          _cursor = res['next_cursor'] as int? ?? (_cursor + items.length);
           _hasMore = res['has_more'] as bool? ?? false;
-          _reels.addAll(newItems);
+          _reels.addAll(items);
         });
+
+        if (items.isNotEmpty && mounted) {
+          _pool.preload(items, context);
+        }
+      }
+    } on ApiException catch (e) {
+      if (e.isQuizGate && mounted) {
+        _openQuizGate();
       }
     } catch (_) {
     } finally {
@@ -182,7 +201,12 @@ class _ReelsScreenState extends State<ReelsScreen> with WidgetsBindingObserver {
           'source_id': item['source_id'],
           'surface': 'REELS',
         },
-      ).catchError((_) => <String, dynamic>{});
+      ).catchError((err) {
+        if (err is ApiException && err.isQuizGate && mounted) {
+          _openQuizGate();
+        }
+        return <String, dynamic>{};
+      });
     }
   }
 
