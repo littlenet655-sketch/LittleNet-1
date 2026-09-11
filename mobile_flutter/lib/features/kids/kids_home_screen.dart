@@ -1,7 +1,11 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
+import 'package:image_picker/image_picker.dart';
 import '../../api.dart';
 import '../../core/auth/auth_state.dart';
+import '../../core/biometrics/face_biometrics.dart';
 import '../../core/theme/colors.dart';
 import '../../core/widgets/ln_components.dart';
 import '../discovery/discovery_screen.dart';
@@ -86,6 +90,95 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
       setState(() => _error = 'Network connection lost.');
     } finally {
       if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  bool _isSettingUpFace = false;
+
+  Future<void> _handleSetupChildFace() async {
+    setState(() => _isSettingUpFace = true);
+    try {
+      final picker = ImagePicker();
+      final photo = await picker.pickImage(
+        source: ImageSource.camera,
+        preferredCameraDevice: CameraDevice.front,
+        maxWidth: 720,
+        maxHeight: 720,
+        imageQuality: 85,
+      );
+      if (photo == null) {
+        setState(() => _isSettingUpFace = false);
+        return;
+      }
+
+      final bytes = await photo.readAsBytes();
+      final photoB64 = base64Encode(bytes);
+
+      final res = await widget.authState.apiClient.post(
+        '/api/mobile/v1/kids/face/enroll',
+        body: {'photo_b64': photoB64},
+      );
+
+      if (res['ok'] == true) {
+        final uid = widget.authState.currentUser?.userId;
+        if (uid != null) {
+          try {
+            final inputImage = InputImage.fromFilePath(photo.path);
+            final detector =
+                FaceDetector(options: FaceDetectorOptions(enableLandmarks: true));
+            final faces = await detector.processImage(inputImage);
+            if (faces.isNotEmpty) {
+              final neural =
+                  await LocalFaceBiometrics.extractNeuralEmbedding(bytes, faces.first);
+              await LocalFaceBiometrics.saveTemplate(uid, neural);
+            }
+            detector.close();
+            if (res['biometric_key'] != null) {
+              await LocalFaceBiometrics.saveBiometricKey(
+                  uid, res['biometric_key'].toString());
+            }
+          } catch (_) {}
+        }
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('✓ Facial security setup complete! Unlocking Kids Mode...'),
+              backgroundColor: AppColors.success,
+            ),
+          );
+        }
+        await _fetchHomeData();
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(res['error']?.toString() ?? 'Face setup failed.'),
+              backgroundColor: AppColors.error,
+            ),
+          );
+        }
+      }
+    } on ApiException catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Setup failed: ${e.message}'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Camera or setup error: $e'),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSettingUpFace = false);
     }
   }
 
@@ -207,21 +300,56 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
   }
 
   Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+    if (_isLoading || _isSettingUpFace) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const CircularProgressIndicator(),
+            if (_isSettingUpFace) ...[
+              const SizedBox(height: 16),
+              const Text('Enrolling facial security...',
+                  style: TextStyle(color: Color(0xFF8E8E8E))),
+            ],
+          ],
+        ),
+      );
     }
 
     if (_error != null) {
+      VoidCallback? action;
+      String? actionLabel;
+      String? subtitle;
+
+      if (_gate == 'face') {
+        action = _handleSetupChildFace;
+        actionLabel = 'Set Up Face Security Now';
+        subtitle =
+            'A quick face photo is required to ensure safe, verified access to Kids Mode.';
+      } else if (_gate == 'quiz') {
+        action = () => Navigator.of(context)
+            .pushNamed('/kids/quiz')
+            .then((_) => _fetchHomeData());
+        actionLabel = 'Take Safety Quiz';
+        subtitle = 'Complete your quick welcome quiz to unlock your feed!';
+      } else if (_gate == null) {
+        action = _fetchHomeData;
+        actionLabel = 'Try Again';
+        subtitle = 'Pull down or tap to retry.';
+      }
+
       return LnEmptyState(
         emoji: _gate == 'quiet_hours'
             ? '🌙'
             : _gate == 'screen_time'
                 ? '⏳'
-                : '⚠️',
+                : _gate == 'face'
+                    ? '🛡️'
+                    : '⚠️',
         title: _error!,
-        subtitle: _gate == null ? 'Pull down to try again.' : null,
-        action: _gate == null ? _fetchHomeData : null,
-        actionLabel: 'Try Again',
+        subtitle: subtitle,
+        action: action,
+        actionLabel: actionLabel ?? 'Try Again',
       );
     }
 

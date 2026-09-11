@@ -1933,17 +1933,19 @@ def register_mobile_api(bp):
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            enroll(child_id, path)
-            b_key = secrets.token_hex(32)
             try:
-                execute(
-                    """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
-                       VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
-                       ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
-                    (child_id, b_key),
-                )
-            except Exception:
-                pass
+                enroll(child_id, path)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Face enroll embedding skipped: %s", exc)
+
+            b_key = secrets.token_hex(32)
+            execute(
+                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key), updated_at=NOW()""",
+                (child_id, b_key),
+            )
             return jsonify(
                 ok=True,
                 child_id=child_id,
@@ -1951,8 +1953,10 @@ def register_mobile_api(bp):
                 biometric_key=b_key,
                 quiz_required=bool(needs_onboarding_quiz(child_id)),
             )
-        except Exception:
-            return jsonify(error="face_enrollment_failed"), 400
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception("face_enrollment_failed: %s", exc)
+            return jsonify(error="face_enrollment_failed", message=str(exc)), 400
         finally:
             try:
                 os.remove(path)

@@ -145,18 +145,18 @@ class _ChildEnrollmentScreenState extends State<ChildEnrollmentScreen> {
       final quizRequired = res['quiz_required'] == true;
       setState(() {
         _faceStatus = quizRequired
-            ? 'Face enrolled successfully! Onboarding quiz will welcome your child on their first sign in.'
-            : 'Face enrolled successfully! Your child is ready to sign in.';
+            ? '✓ Face security enrolled successfully! Onboarding quiz will welcome your child on their first sign in.'
+            : '✓ Face security enrolled successfully! Child profile is ready for Kids Mode.';
       });
     } on ApiException catch (e) {
       setState(() {
         _faceStatus =
-            'Face enrollment failed: ${e.message}. You can retry or complete it later.';
+            'Face enrollment incomplete: ${e.message}. You can retry above or complete it when signing into Kids Mode.';
       });
     } catch (_) {
       setState(() {
         _faceStatus =
-            'Child profile created! Facial setup can also be completed when the child signs in.';
+            'Face enrollment could not be saved right now. You can retry above or complete it when signing into Kids Mode.';
       });
     } finally {
       if (mounted) setState(() => _isFaceEnrolling = false);
@@ -286,6 +286,12 @@ class _ChildEnrollmentScreenState extends State<ChildEnrollmentScreen> {
                                 icon: Icons.face_rounded,
                                 isLoading: _isFaceEnrolling,
                                 onPressed: _handleEnrollChildFace,
+                              ),
+                              const SizedBox(height: 4),
+                              Text(
+                                'Note: Face enrollment is required before entering Kids Mode.',
+                                style: AppTypography.caption
+                                    .copyWith(color: AppColors.textSecondary),
                               ),
                               if (_faceStatus != null) ...[
                                 const SizedBox(height: AppSpacing.sm),
