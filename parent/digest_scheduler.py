@@ -83,11 +83,11 @@ def run_weekly_digest_job(max_retries: int = 2) -> Dict[str, Any]:
                     # Notify parent via parent notification table if table exists
                     try:
                         execute("""
-                            INSERT INTO parent_notifications(parent_id, child_id, notification_type, message, link_url)
+                            INSERT INTO parent_notifications(parent_id, child_id, notification_type, notification_message, target_url)
                             VALUES(%s, %s, 'WEEKLY_DIGEST', %s, '/parent/dashboard/')
                         """, (p_id, c_id, f"Your weekly safety & learning digest for {c_name} is ready."))
-                    except Exception:
-                        pass
+                    except Exception as notif_err:
+                        logger.error("Failed to insert weekly digest notification for parent %s: %s", p_id, notif_err)
                     break
             except Exception as exc:
                 last_err = str(exc)

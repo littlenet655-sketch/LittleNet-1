@@ -22,6 +22,42 @@ from services.media_sanitizer import strip_video_audio_in_place
 from services.social import parent_notify
 
 
+def _notify_approved_followers(post_id: int, child_id: int, kind: str) -> None:
+    """Idempotently notify eligible approved followers when content reaches ALLOWED."""
+    try:
+        user = fetch_one("SELECT full_name, username FROM users WHERE user_id=%s", (child_id,))
+        author_name = (user.get("full_name") or user.get("username") or "A friend") if user else "A friend"
+
+        k_lower = str(kind or "post").lower()
+        if k_lower == "reel":
+            msg = f"{author_name} posted a new Reel"
+            notif_type = "NEW_REEL"
+            target_url = f"/kids/reels?id={post_id}"
+        elif k_lower == "story":
+            msg = f"{author_name} added to their Story"
+            notif_type = "NEW_STORY"
+            target_url = f"/kids/story-viewer?id={post_id}"
+        else:
+            msg = f"{author_name} shared a new post"
+            notif_type = "NEW_POST"
+            target_url = f"/kids/home?post_id={post_id}"
+
+        execute(
+            """INSERT INTO notifications(user_id, actor_id, notification_type, message, target_url)
+               SELECT f.child_id, %s, %s, %s, %s
+               FROM followers f
+               WHERE f.following_child_id = %s AND f.approved = TRUE AND f.approval_stage = 'ACTIVE'
+               AND NOT EXISTS (
+                   SELECT 1 FROM notifications n
+                   WHERE n.user_id = f.child_id AND n.actor_id = %s
+                     AND n.notification_type = %s AND n.target_url = %s
+               )""",
+            (child_id, notif_type, msg, target_url, child_id, child_id, notif_type, target_url),
+        )
+    except Exception:
+        pass
+
+
 def _make_video_derivatives(source_path: Path, temp_dir: Path) -> tuple[Path, Path | None]:
     """Generate +faststart video and poster thumbnail using ffmpeg if available."""
     clean_video = temp_dir / f"clean_{source_path.name}"
@@ -66,12 +102,21 @@ def _make_video_derivatives(source_path: Path, temp_dir: Path) -> tuple[Path, Pa
 def _merge_signals(text_signals: dict | None, media_signals: dict | None) -> dict:
     t = text_signals or {}
     m = media_signals or {}
+    merged_models = {}
+    if isinstance(t.get("model_signals"), dict):
+        merged_models.update(t["model_signals"])
+    if isinstance(m.get("model_signals"), dict):
+        merged_models.update(m["model_signals"])
+
     return {
         "adult_score": max(float(t.get("adult_score") or 0.0), float(m.get("adult_score") or 0.0)),
         "violence_score": max(float(t.get("violence_score") or 0.0), float(m.get("violence_score") or 0.0)),
         "weapon_score": max(float(t.get("weapon_score") or 0.0), float(m.get("weapon_score") or 0.0)),
         "toxicity_score": max(float(t.get("toxicity_score") or 0.0), float(m.get("toxicity_score") or 0.0)),
         "risk_score": max(float(t.get("risk_score") or 0.0), float(m.get("risk_score") or 0.0)),
+        "partial_safety_failure": bool(t.get("partial_safety_failure") or m.get("partial_safety_failure")),
+        "total_safety_failure": bool(t.get("total_safety_failure") or m.get("total_safety_failure")),
+        "model_signals": merged_models,
         "details": {
             "text": t,
             "media": m,
@@ -93,6 +138,26 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
     # Idempotent skip if already terminal
     if post["processing_status"] in ("ALLOWED", "BLOCKED", "REVIEW"):
         return {"ok": True, "status": post["processing_status"], "idempotent": True}
+
+    # Check quarantine object size via head_object if storage enabled
+    if object_storage.enabled():
+        try:
+            head = object_storage.head_object(object_key)
+            if head and head.get("ContentLength", 0) > Config.MAX_CONTENT_LENGTH:
+                try:
+                    object_storage.delete_reference(object_key)
+                except Exception:
+                    pass
+                execute(
+                    """UPDATE posts
+                       SET processing_status='FAILED', processing_error='upload_size_exceeded',
+                           processing_completed_at=NOW()
+                       WHERE post_id=%s""",
+                    (post_id,),
+                )
+                return {"ok": False, "error": "upload_size_exceeded"}
+        except Exception:
+            pass
 
     # Mark PROCESSING
     execute(
@@ -122,6 +187,16 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                 # Create a placeholder if running in offline test environment
                 source_local.write_bytes(b"dummy_test_media_content")
 
+        if source_local.is_file() and source_local.stat().st_size > Config.MAX_CONTENT_LENGTH:
+            execute(
+                """UPDATE posts
+                   SET processing_status='FAILED', processing_error='upload_size_exceeded',
+                       processing_completed_at=NOW()
+                   WHERE post_id=%s""",
+                (post_id,),
+            )
+            return {"ok": False, "error": "upload_size_exceeded"}
+
         final_media_local = source_local
         final_poster_local = None
 
@@ -147,6 +222,18 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                 return {"ok": False, "error": "video_duration_exceeded"}
 
             final_media_local, final_poster_local = _make_video_derivatives(source_local, temp_dir)
+        elif media_type == "IMAGE":
+            try:
+                from PIL import Image, ImageOps
+                with Image.open(source_local) as img:
+                    img = ImageOps.exif_transpose(img)
+                    clean_img_path = temp_dir / "clean_image.jpg"
+                    # Strip EXIF/GPS by saving a fresh clean JPEG RGB image
+                    img.convert("RGB").save(clean_img_path, format="JPEG", quality=92, optimize=True)
+                    if clean_img_path.is_file() and clean_img_path.stat().st_size > 0:
+                        final_media_local = clean_img_path
+            except Exception:
+                pass
 
         # AI Moderation
         text_signals, _ = evaluate(child_id, "TEXT", combined_text) if combined_text else ({}, None)
@@ -249,6 +336,8 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                     post_id,
                 ),
             )
+            # Idempotently notify approved followers
+            _notify_approved_followers(post_id, child_id, kind)
             return {
                 "ok": True,
                 "status": "ALLOWED",
