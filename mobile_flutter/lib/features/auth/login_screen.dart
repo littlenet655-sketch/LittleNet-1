@@ -10,6 +10,7 @@ import '../../core/widgets/app_button.dart';
 import '../../core/widgets/app_text_field.dart';
 import '../../core/widgets/gradient_scaffold.dart';
 import '../../core/biometrics/face_biometrics.dart';
+import 'forgot_password_sheet.dart';
 import 'live_face_auth_modal.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -227,6 +228,14 @@ class _LoginScreenState extends State<LoginScreen>
     }
   }
 
+  void _showForgotPasswordSheet() {
+    ForgotPasswordSheet.show(
+      context,
+      authState: widget.authState,
+      initialIdentifier: _identifierController.text.trim(),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return GradientScaffold(
@@ -371,7 +380,27 @@ class _LoginScreenState extends State<LoginScreen>
                               return null;
                             },
                           ),
-                          const SizedBox(height: AppSpacing.lg),
+                          const SizedBox(height: AppSpacing.xs),
+
+                          // Forgot Password Action
+                          Align(
+                            alignment: Alignment.centerRight,
+                            child: TextButton(
+                              onPressed: _showForgotPasswordSheet,
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                                padding: EdgeInsets.zero,
+                              ),
+                              child: Text(
+                                'Forgot Password?',
+                                style: AppTypography.bodySmall.copyWith(
+                                  color: AppColors.primary,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
 
                           // Submit Button
                           AppButton(

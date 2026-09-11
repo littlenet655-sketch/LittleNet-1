@@ -104,13 +104,18 @@ def report_action(report_id):
 @admin_required
 def user_action(user_id):
     action=request.form.get('action','').upper()
-    if action not in {'SUSPEND','ACTIVATE'}: return ('Invalid',400)
+    if action not in {'SUSPEND','ACTIVATE','DELETE'}: return ('Invalid',400)
     row=fetch_one("SELECT role,account_status FROM users WHERE user_id=%s AND role<>'ADMIN'",(user_id,))
     if not row: return ('Not found',404)
-    new='SUSPENDED' if action=='SUSPEND' else 'ACTIVE'
-    execute('UPDATE users SET account_status=%s WHERE user_id=%s',(new,user_id))
-    _admin_audit('USER_'+action,'USER',user_id,{'from':row['account_status'],'to':new})
+    if action == 'DELETE':
+        execute('DELETE FROM users WHERE user_id=%s',(user_id,))
+        _admin_audit('USER_DELETE','USER',user_id,{'role':row['role'],'status':row['account_status']})
+    else:
+        new='SUSPENDED' if action=='SUSPEND' else 'ACTIVE'
+        execute('UPDATE users SET account_status=%s WHERE user_id=%s',(new,user_id))
+        _admin_audit('USER_'+action,'USER',user_id,{'from':row['account_status'],'to':new})
     return redirect(request.referrer or '/admin/users/')
+
 
 
 @admin_bp.route('/admin/moderation/<int:event_id>/block/', methods=['POST'])

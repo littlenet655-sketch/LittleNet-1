@@ -21,6 +21,11 @@ from auth.parent_email_otp import (
     resend_parent_email_otp,
     verify_parent_email_otp,
 )
+from auth.password_reset import (
+    parent_reset_child_password,
+    request_password_reset,
+    verify_and_reset_password,
+)
 from auth.service import login_user
 from child.service import (
     can_discover_child,
@@ -692,6 +697,40 @@ def register_mobile_api(bp):
             return jsonify(error="pending_verification_expired"), 401
         ok, error = resend_parent_email_otp(int(pending["uid"]))
         return jsonify(ok=bool(ok), error=None if ok else error), (200 if ok else 503)
+
+    @bp.route("/api/mobile/v1/auth/forgot-password", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("10 per 15 minutes")
+    def mobile_forgot_password():
+        data = request.get_json(silent=True) or {}
+        identifier = str(data.get("identifier") or "").strip()
+        ok, error, details = request_password_reset(identifier)
+        if not ok:
+            return jsonify(ok=False, error=error), 400
+        return jsonify(
+            ok=True,
+            user_id=details["user_id"],
+            masked_email=details["masked_email"],
+            is_parent_proxy=details["is_parent_proxy"],
+            message=f"Verification code sent to {details['masked_email']}.",
+        )
+
+    @bp.route("/api/mobile/v1/auth/reset-password", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("10 per 15 minutes")
+    def mobile_reset_password():
+        data = request.get_json(silent=True) or {}
+        try:
+            user_id = int(data.get("user_id"))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="Invalid user identifier."), 400
+        code = str(data.get("code") or "").strip()
+        new_password = str(data.get("new_password") or "")
+        ok, msg = verify_and_reset_password(user_id, code, new_password)
+        if not ok:
+            return jsonify(ok=False, error=msg), 400
+        return jsonify(ok=True, message=msg)
+
 
     @bp.route("/api/mobile/v1/auth/parent/verify-liveness", methods=["POST"])
     @csrf.exempt
@@ -2046,6 +2085,19 @@ def register_mobile_api(bp):
         execute("DELETE FROM parent_child_map WHERE child_id=%s AND (parent_id=%s OR verified_parent_id=%s)", (child_id, pid, pid))
         execute("UPDATE users SET account_status='DEACTIVATED' WHERE user_id=%s AND role='CHILD'", (child_id,))
         return jsonify(ok=True, message="child_unlinked")
+
+    @bp.route("/api/mobile/v1/parent/child/<int:child_id>/reset-password", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("PARENT")
+    def mobile_parent_reset_child_password(child_id):
+        pid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        new_password = str(data.get("new_password") or "")
+        ok, msg = parent_reset_child_password(pid, child_id, new_password)
+        if not ok:
+            return jsonify(ok=False, error=msg), 400
+        return jsonify(ok=True, message=msg)
+
 
     @bp.route("/api/mobile/v1/parent/time-limit/<int:child_id>", methods=["PUT"])
     @csrf.exempt

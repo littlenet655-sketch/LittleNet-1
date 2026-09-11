@@ -480,7 +480,21 @@ class _ParentControlsScreenState extends State<ParentControlsScreen> {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
-                const SizedBox(height: AppSpacing.lg),
+                const SizedBox(height: AppSpacing.md),
+                OutlinedButton.icon(
+                  onPressed: _isSaving ? null : _showResetChildPasswordDialog,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary,
+                    side: const BorderSide(color: AppColors.primary),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: const Icon(Icons.lock_reset_rounded),
+                  label: const Text(
+                    'Change / Reset Child Password',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
                 OutlinedButton.icon(
                   onPressed: _isSaving ? null : _unlinkChild,
                   style: OutlinedButton.styleFrom(
@@ -551,6 +565,131 @@ class _ParentControlsScreenState extends State<ParentControlsScreen> {
       activeThumbColor: AppColors.primary,
       contentPadding: EdgeInsets.zero,
       onChanged: onChanged,
+    );
+  }
+
+  Future<void> _showResetChildPasswordDialog() async {
+    final passwordController = TextEditingController();
+    final confirmController = TextEditingController();
+    String? dialogError;
+    bool isUpdating = false;
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          return AlertDialog(
+            title: const Row(
+              children: [
+                Icon(Icons.lock_reset_rounded, color: AppColors.primary),
+                SizedBox(width: 8),
+                Text('Reset Child Password'),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Set a new password for this child account. The child can immediately use this new password to sign in.',
+                    style: TextStyle(fontSize: 13, color: AppColors.textSecondary),
+                  ),
+                  const SizedBox(height: 14),
+                  if (dialogError != null) ...[
+                    Text(
+                      dialogError!,
+                      style: const TextStyle(color: AppColors.error, fontSize: 12),
+                    ),
+                    const SizedBox(height: 8),
+                  ],
+                  TextField(
+                    controller: passwordController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'New Password',
+                      hintText: 'At least 8 characters',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: confirmController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Confirm Password',
+                      hintText: 'Re-enter new password',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: isUpdating ? null : () => Navigator.pop(ctx),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: isUpdating
+                    ? null
+                    : () async {
+                        final pwd = passwordController.text.trim();
+                        final confirm = confirmController.text.trim();
+                        if (pwd.length < 8) {
+                          setDialogState(() => dialogError = 'Password must be at least 8 characters.');
+                          return;
+                        }
+                        if (pwd != confirm) {
+                          setDialogState(() => dialogError = 'Passwords do not match.');
+                          return;
+                        }
+
+                        setDialogState(() {
+                          isUpdating = true;
+                          dialogError = null;
+                        });
+
+                        final messenger = ScaffoldMessenger.of(context);
+                        try {
+                          final res = await widget.authState.apiClient.post(
+                            '/api/mobile/v1/parent/child/${widget.childId}/reset-password',
+                            body: {'new_password': pwd},
+                          );
+                          if (res['ok'] == true) {
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            messenger.showSnackBar(
+                              const SnackBar(content: Text('Child password has been reset successfully.')),
+                            );
+                          } else {
+                            setDialogState(() {
+                              isUpdating = false;
+                              dialogError = res['error']?.toString() ?? 'Failed to update password.';
+                            });
+                          }
+                        } catch (e) {
+                          setDialogState(() {
+                            isUpdating = false;
+                            dialogError = 'Failed to reset password. Check connection.';
+                          });
+                        }
+                      },
+                child: isUpdating
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Text('Update Password'),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
