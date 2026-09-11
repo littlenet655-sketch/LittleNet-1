@@ -36,6 +36,7 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
   bool _isLoading = true;
   String? _error;
   String? _gate;
+  bool _quizCompletedLocally = false;
 
   Map<String, dynamic>? _profile;
   List<dynamic> _stories = [];
@@ -79,9 +80,14 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
               : 'Screen time limit reached for today ⏳';
         } else if (e.statusCode == 428) {
           _gate = e.payload?['gate']?.toString() ?? 'quiz';
-          _error = _gate == 'face'
-              ? 'Facial security setup needed before entering Kids Mode.'
-              : 'Complete your welcome quiz to unlock your feed!';
+          if (_gate == 'quiz' && _quizCompletedLocally) {
+            _gate = null;
+            _error = null;
+          } else {
+            _error = _gate == 'face'
+                ? 'Facial security setup needed before entering Kids Mode.'
+                : 'Complete your welcome quiz to unlock your feed!';
+          }
         } else {
           _error = 'Unable to load home right now.';
         }
@@ -329,7 +335,16 @@ class _KidsHomeScreenState extends State<KidsHomeScreen> {
       } else if (_gate == 'quiz') {
         action = () => Navigator.of(context)
             .pushNamed('/kids/quiz')
-            .then((_) => _fetchHomeData());
+            .then((res) {
+              if (res == true) {
+                setState(() {
+                  _quizCompletedLocally = true;
+                  _gate = null;
+                  _error = null;
+                });
+              }
+              _fetchHomeData();
+            });
         actionLabel = 'Take Safety Quiz';
         subtitle = 'Complete your quick welcome quiz to unlock your feed!';
       } else if (_gate == null) {

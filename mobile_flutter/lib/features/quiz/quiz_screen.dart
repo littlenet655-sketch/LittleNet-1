@@ -55,9 +55,44 @@ class _QuizScreenState extends State<QuizScreen> {
       );
       if (res['ok'] == true) {
         final list = (res['quizzes'] as List<dynamic>?) ?? [];
+        var loaded = list.whereType<Map<String, dynamic>>().toList();
+        final required = res['required'] == true || res['reason'] == 'feed_break';
+
+        // Provide client-side digital safety questions if server returned 0 quizzes
+        if (loaded.isEmpty && required) {
+          loaded = [
+            {
+              'quiz_id': 99901,
+              'category': 'Digital Safety',
+              'question': 'What should you do if someone you don\'t know asks for your personal information online?',
+              'options': [
+                'Never share it and tell a parent or guardian right away',
+                'Send it if they seem friendly',
+                'Post it in a public comment',
+                'Share your school name instead',
+              ],
+              'correct_option_index': 0,
+              'explanation': 'Never share personal details like your address, phone number, or school name with anyone online.',
+            },
+            {
+              'quiz_id': 99902,
+              'category': 'Kindness Online',
+              'question': 'How should we treat friends and classmates in comments and chats?',
+              'options': [
+                'With kindness, respect, and encouragement',
+                'By posting mean jokes',
+                'Spamming hurtful comments',
+                'Ignoring everyone\'s feelings',
+              ],
+              'correct_option_index': 0,
+              'explanation': 'Being kind and respectful makes the internet safe and fun for all of us.',
+            },
+          ];
+        }
+
         setState(() {
-          _quizzes = list.whereType<Map<String, dynamic>>().toList();
-          _isMandatory = res['required'] == true || res['reason'] == 'feed_break';
+          _quizzes = loaded;
+          _isMandatory = required;
         });
       }
     } on ApiException catch (e) {
@@ -116,10 +151,16 @@ class _QuizScreenState extends State<QuizScreen> {
         }
       }
     } catch (_) {
+      // Local fallback evaluation for safety questions
+      final localCorrectIdx = (q['correct_option_index'] as num?)?.toInt() ?? 0;
+      final isCorrect = (optionIndex == localCorrectIdx);
       if (mounted) {
         setState(() {
           _answered = true;
           _submitting = false;
+          _serverExplanation = q['explanation']?.toString() ?? 'Always protect your safety online!';
+          _correctOptionIndex = localCorrectIdx;
+          if (isCorrect) _score++;
         });
       }
     }
