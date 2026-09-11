@@ -144,17 +144,34 @@ class _QuizScreenState extends State<QuizScreen> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _completed || !_isMandatory,
+      canPop: _completed || !_isMandatory || _quizzes.isEmpty,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (_completed || !_isMandatory || _quizzes.isEmpty) {
+          Navigator.of(context).pop();
+        }
+      },
       child: GradientScaffold(
         appBar: AppBar(
-          automaticallyImplyLeading: !_isMandatory || _completed,
+          automaticallyImplyLeading: true,
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back_ios_new_rounded),
+            tooltip: 'Back to Feed',
+            onPressed: () {
+              if (Navigator.of(context).canPop()) {
+                Navigator.of(context).pop();
+              } else {
+                Navigator.of(context).pushReplacementNamed('/kids/home');
+              }
+            },
+          ),
           title: Text(_isMandatory ? 'Brain Break Quiz 🧠' : 'Brain Quiz 🧠'),
           actions: [
-            if (!_isMandatory || _completed)
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded),
-                onPressed: _loadQuiz,
-              ),
+            IconButton(
+              icon: const Icon(Icons.refresh_rounded),
+              tooltip: 'Reload',
+              onPressed: _loadQuiz,
+            ),
           ],
         ),
         body: _buildBody(),
@@ -204,6 +221,18 @@ class _QuizScreenState extends State<QuizScreen> {
                 style: AppTypography.bodyMedium
                     .copyWith(color: AppColors.textMutedDark),
                 textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: AppSpacing.xl),
+              ElevatedButton.icon(
+                onPressed: () {
+                  if (Navigator.of(context).canPop()) {
+                    Navigator.of(context).pop();
+                  } else {
+                    Navigator.of(context).pushReplacementNamed('/kids/home');
+                  }
+                },
+                icon: const Icon(Icons.arrow_back_rounded),
+                label: const Text('Back to Home Feed'),
               ),
             ],
           ),

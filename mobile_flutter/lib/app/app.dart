@@ -30,10 +30,14 @@ class _LittleNetAppV2State extends State<LittleNetAppV2> {
     _authState = AuthState(apiClient: _apiClient);
     _router = AppRouter(authState: _authState);
 
+    int lastQuizPush = 0;
     ApiClient.onQuizRequired = () {
+      final now = DateTime.now().millisecondsSinceEpoch;
+      if (now - lastQuizPush < 4000) return;
       if (!_isQuizScreenOpen &&
           _authState.isAuthenticated &&
           (_authState.currentUser?.isChild ?? false)) {
+        lastQuizPush = now;
         _isQuizScreenOpen = true;
         navigatorKey.currentState?.pushNamed('/kids/quiz').then((_) {
           _isQuizScreenOpen = false;
