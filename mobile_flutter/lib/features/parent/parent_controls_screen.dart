@@ -86,6 +86,17 @@ class _ParentControlsScreenState extends State<ParentControlsScreen> {
           if (_selectedCategories.isEmpty && _availableCategories.isNotEmpty) {
             _selectedCategories = _availableCategories.toSet();
           }
+
+          if (res['time_limit'] != null) {
+            final t = res['time_limit'] as Map<String, dynamic>;
+            final m = t['daily_limit_minutes'] as int?;
+            if (m != null && m >= 15 && m <= 300) {
+              _dailyLimitMinutes = m;
+            }
+            if (t['strict_mode'] != null) {
+              _strictMode = t['strict_mode'] == true;
+            }
+          }
         });
       }
     } on ApiException catch (e) {
@@ -469,6 +480,20 @@ class _ParentControlsScreenState extends State<ParentControlsScreen> {
                     style: const TextStyle(fontWeight: FontWeight.bold),
                   ),
                 ),
+                const SizedBox(height: AppSpacing.lg),
+                OutlinedButton.icon(
+                  onPressed: _isSaving ? null : _unlinkChild,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.error,
+                    side: const BorderSide(color: AppColors.error),
+                    padding: const EdgeInsets.symmetric(vertical: 14),
+                  ),
+                  icon: const Icon(Icons.person_remove_outlined),
+                  label: const Text(
+                    'Remove / Unlink Child Account',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
                 const SizedBox(height: AppSpacing.xl),
               ],
             ),
@@ -527,5 +552,52 @@ class _ParentControlsScreenState extends State<ParentControlsScreen> {
       contentPadding: EdgeInsets.zero,
       onChanged: onChanged,
     );
+  }
+
+  Future<void> _unlinkChild() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Unlink Child Account?'),
+        content: const Text(
+          'Are you sure you want to remove this child from your parent dashboard? Their account access will be deactivated.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.error,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Remove Child'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    setState(() => _isSaving = true);
+    try {
+      final res = await widget.authState.apiClient.delete(
+        '/api/mobile/v1/parent/child/${widget.childId}',
+      );
+      if (res['ok'] == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Child account successfully unlinked.')),
+        );
+        Navigator.pop(context, true);
+      }
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } catch (_) {
+      if (mounted) setState(() => _error = 'Failed to unlink child account.');
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
+    }
   }
 }

@@ -72,6 +72,7 @@ def test_parent_child_face_enroll_success_and_cleanup(client):
     with patch("mobile.api.fetch_one", return_value={"user_id": 101, "role": "PARENT", "account_status": "ACTIVE"}), \
          patch("mobile.api.owns", return_value=True), \
          patch("mobile.api.enroll", side_effect=mock_enroll), \
+         patch("mobile.api.execute", return_value=None), \
          patch("mobile.api.needs_onboarding_quiz", return_value=True):
 
         data = {"photo": _dummy_image_file()}
@@ -99,6 +100,7 @@ def test_parent_child_face_enroll_quiz_not_required(client):
     with patch("mobile.api.fetch_one", return_value={"user_id": 101, "role": "PARENT", "account_status": "ACTIVE"}), \
          patch("mobile.api.owns", return_value=True), \
          patch("mobile.api.enroll", return_value=True), \
+         patch("mobile.api.execute", return_value=None), \
          patch("mobile.api.needs_onboarding_quiz", return_value=False):
 
         data = {"photo": _dummy_image_file()}

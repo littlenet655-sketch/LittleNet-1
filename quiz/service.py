@@ -69,10 +69,11 @@ def needs_onboarding_quiz(cid, required_questions=2):
 # ─── Classic quiz bank (used by quiz page) ────────────────────────────────────
 
 def quizzes(cid, limit=5):
-    """Return random unseen age-matched questions; repeat only after exhaustion."""
+    """Return randomized unseen age-matched questions; guarantee non-repeating until pool is exhausted, then cycle from least-recently attempted."""
     g = age_group(cid)
     if not g:
         return []
+    limit = max(1, int(limit))
     rows = fetch_all(
         '''SELECT * FROM quizzes
            WHERE age_group=%s
@@ -82,17 +83,50 @@ def quizzes(cid, limit=5):
            ORDER BY RANDOM() LIMIT %s''',
         (g, cid, limit)
     )
-    if not rows:
-        rows = fetch_all(
-            'SELECT * FROM quizzes WHERE age_group=%s ORDER BY RANDOM() LIMIT %s',
-            (g, limit)
-        )
+    if len(rows) < limit:
+        needed = limit - len(rows)
+        existing_ids = [r['quiz_id'] for r in rows]
+        if existing_ids:
+            backfill = fetch_all(
+                '''SELECT q.* FROM quizzes q
+                   JOIN (
+                       SELECT quiz_id, MAX(attempted_at) as last_attempted
+                       FROM child_quiz_attempts
+                       WHERE child_id = %s
+                       GROUP BY quiz_id
+                   ) a ON q.quiz_id = a.quiz_id
+                   WHERE q.age_group = %s
+                     AND q.quiz_id NOT IN %s
+                   ORDER BY a.last_attempted ASC, RANDOM()
+                   LIMIT %s''',
+                (cid, g, tuple(existing_ids), needed)
+            )
+        else:
+            backfill = fetch_all(
+                '''SELECT q.* FROM quizzes q
+                   JOIN (
+                       SELECT quiz_id, MAX(attempted_at) as last_attempted
+                       FROM child_quiz_attempts
+                       WHERE child_id = %s
+                       GROUP BY quiz_id
+                   ) a ON q.quiz_id = a.quiz_id
+                   WHERE q.age_group = %s
+                   ORDER BY a.last_attempted ASC, RANDOM()
+                   LIMIT %s''',
+                (cid, g, needed)
+            )
+        if not backfill and not rows:
+            backfill = fetch_all(
+                'SELECT * FROM quizzes WHERE age_group=%s ORDER BY RANDOM() LIMIT %s',
+                (g, needed)
+            )
+        rows.extend(backfill)
     return rows
 
 # ─── Feed quiz — single unseen question injected between reels ────────────────
 
 def next_feed_quiz(cid):
-    """Return ONE unseen question, preferring personalized/adaptive material."""
+    """Return ONE unseen question, preferring personalized/adaptive material, cycling least-recently attempted when bank is exhausted."""
     g = age_group(cid)
     if not g:
         return None
@@ -135,8 +169,21 @@ def next_feed_quiz(cid):
             (g, cid)
         )
     if not row:
-        # Exhausted children still receive a compulsory age-matched question;
-        # repeats are safer than silently unlocking an overdue intervention.
+        # Exhausted children receive the single least-recently attempted question (strict LRU)
+        row = fetch_one(
+            '''SELECT q.* FROM quizzes q
+               JOIN (
+                   SELECT quiz_id, MAX(attempted_at) as last_attempted
+                   FROM child_quiz_attempts
+                   WHERE child_id = %s
+                   GROUP BY quiz_id
+               ) a ON q.quiz_id = a.quiz_id
+               WHERE q.age_group = %s
+               ORDER BY a.last_attempted ASC, RANDOM()
+               LIMIT 1''',
+            (cid, g)
+        )
+    if not row:
         row = fetch_one('SELECT * FROM quizzes WHERE age_group=%s ORDER BY RANDOM() LIMIT 1', (g,))
 
     try:

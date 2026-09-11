@@ -91,6 +91,12 @@ class ApiClient {
   }) =>
       putJson(path, body ?? const {});
 
+  Future<Map<String, dynamic>> delete(
+    String path, {
+    Map<String, dynamic>? query,
+  }) =>
+      deleteJson(path, query: query);
+
   Map<String, String> get authHeaders => {
         'Accept': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',
@@ -136,6 +142,14 @@ class ApiClient {
       headers: {...authHeaders, 'Content-Type': 'application/json'},
       body: jsonEncode(body),
     );
+    return _decode(response);
+  }
+
+  Future<Map<String, dynamic>> deleteJson(
+    String path, {
+    Map<String, dynamic>? query,
+  }) async {
+    final response = await _client.delete(uri(path, query), headers: authHeaders);
     return _decode(response);
   }
 

@@ -68,6 +68,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
         title: const Text('Messages 💬'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.add_comment_rounded),
+            tooltip: 'New Chat',
+            onPressed: _openNewChatPicker,
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh_rounded),
             tooltip: 'Refresh',
             onPressed: _loadConversations,
@@ -159,6 +164,18 @@ class _ChatListScreenState extends State<ChatListScreen> {
                   ],
                 ),
               ),
+              const SizedBox(height: AppSpacing.lg),
+              ElevatedButton.icon(
+                icon: const Icon(Icons.chat_bubble_outline),
+                label: const Text('Start a Chat'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.kidsAccent,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+                ),
+                onPressed: _openNewChatPicker,
+              ),
             ],
           ),
         ),
@@ -226,6 +243,134 @@ class _ChatListScreenState extends State<ChatListScreen> {
           );
         },
       ),
+    );
+  }
+
+  Future<void> _openNewChatPicker() async {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (ctx) {
+        return Container(
+          decoration: const BoxDecoration(
+            color: Color(0xFF1E293B),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          padding: const EdgeInsets.all(20),
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(context).size.height * 0.7,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 40,
+                  height: 4,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white24,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+              ),
+              const Text(
+                'Start a Chat 💬',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.white),
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Pick an approved friend to message safely.',
+                style: TextStyle(fontSize: 13, color: Colors.white70),
+              ),
+              const SizedBox(height: 16),
+              Expanded(
+                child: FutureBuilder<Map<String, dynamic>>(
+                  future: widget.authState.apiClient.get('/api/mobile/v1/kids/connections'),
+                  builder: (context, snapshot) {
+                    if (snapshot.connectionState == ConnectionState.waiting) {
+                      return const Center(child: CircularProgressIndicator());
+                    }
+                    if (snapshot.hasError) {
+                      return Center(
+                        child: Text(
+                          'Error loading friends: ${snapshot.error}',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                      );
+                    }
+                    final data = snapshot.data ?? {};
+                    final following = ((data['following'] as List<dynamic>?) ?? [])
+                        .whereType<Map<String, dynamic>>()
+                        .toList();
+                    final followers = ((data['followers'] as List<dynamic>?) ?? [])
+                        .whereType<Map<String, dynamic>>()
+                        .toList();
+
+                    final Map<int, Map<String, dynamic>> combined = {};
+                    for (final u in [...following, ...followers]) {
+                      final uid = u['user_id'] as int?;
+                      if (uid != null) combined[uid] = u;
+                    }
+
+                    final friends = combined.values.toList();
+                    if (friends.isEmpty) {
+                      return const Center(
+                        child: Text(
+                          'No approved friends yet.\nConnect with classmates first!',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.white60),
+                        ),
+                      );
+                    }
+
+                    return ListView.separated(
+                      itemCount: friends.length,
+                      separatorBuilder: (_, __) => const Divider(color: Colors.white12),
+                      itemBuilder: (context, idx) {
+                        final f = friends[idx];
+                        final name = f['full_name']?.toString() ?? 'Friend';
+                        final username = f['username']?.toString() ?? '';
+                        final avatar = f['avatar_url'] as String?;
+                        final fid = f['user_id'] as int;
+
+                        return ListTile(
+                          leading: CircleAvatar(
+                            backgroundColor: AppColors.kidsAccent.withValues(alpha: 0.2),
+                            backgroundImage: avatar != null ? NetworkImage(avatar) : null,
+                            child: avatar == null
+                                ? Text(name.isNotEmpty ? name[0].toUpperCase() : '?',
+                                    style: const TextStyle(color: AppColors.kidsAccent, fontWeight: FontWeight.bold))
+                                : null,
+                          ),
+                          title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                          subtitle: username.isNotEmpty ? Text('@$username', style: const TextStyle(color: Colors.white54, fontSize: 12)) : null,
+                          trailing: const Icon(Icons.send_rounded, color: AppColors.kidsAccent, size: 20),
+                          onTap: () {
+                            Navigator.pop(ctx);
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => ChatConversationScreen(
+                                  authState: widget.authState,
+                                  peerId: fid,
+                                  peerName: name,
+                                  peerAvatarUrl: avatar,
+                                ),
+                              ),
+                            ).then((_) => _loadConversations());
+                          },
+                        );
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }

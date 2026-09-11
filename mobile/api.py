@@ -1722,7 +1722,10 @@ def register_mobile_api(bp):
             rows = [row] if row else []
             reason = "feed_break"
         else:
-            rows = quizzes(uid, 2)
+            limit_arg = request.args.get("limit", type=int)
+            default_limit = 2 if needs_onboarding_quiz(uid) else 5
+            n = limit_arg if (limit_arg and 1 <= limit_arg <= 20) else default_limit
+            rows = quizzes(uid, n)
             reason = "onboarding" if needs_onboarding_quiz(uid) else "practice"
 
         if not rows:
@@ -2025,7 +2028,24 @@ def register_mobile_api(bp):
                 save_controls(pid, child_id, form)
             except ValueError:
                 return jsonify(error="invalid_quiet_hours"), 400
-        return jsonify(ok=True, controls=_clean(controls_for_child(child_id)), categories=SAFE_CATEGORIES)
+        limit_row = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))
+        return jsonify(
+            ok=True,
+            controls=_clean(controls_for_child(child_id)),
+            time_limit=_clean(limit_row) if limit_row else None,
+            categories=SAFE_CATEGORIES,
+        )
+
+    @bp.route("/api/mobile/v1/parent/child/<int:child_id>", methods=["DELETE"])
+    @csrf.exempt
+    @_require_mobile("PARENT")
+    def mobile_parent_unlink_child(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        execute("DELETE FROM parent_child_map WHERE child_id=%s AND (parent_id=%s OR verified_parent_id=%s)", (child_id, pid, pid))
+        execute("UPDATE users SET account_status='DEACTIVATED' WHERE user_id=%s AND role='CHILD'", (child_id,))
+        return jsonify(ok=True, message="child_unlinked")
 
     @bp.route("/api/mobile/v1/parent/time-limit/<int:child_id>", methods=["PUT"])
     @csrf.exempt
