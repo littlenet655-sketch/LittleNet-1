@@ -164,14 +164,17 @@ class _ChildEnrollmentScreenState extends State<ChildEnrollmentScreen> {
   }
 
   String _formatError(String code) {
-    if (code.contains('already exists') || code.contains('duplicate')) {
+    if (code.contains('already exists') ||
+        code.contains('duplicate') ||
+        code.contains('already taken') ||
+        code.contains('username_taken')) {
       return 'This username is already taken. Please choose another.';
     }
     if (code.contains('safe characters')) {
       return 'Username must be 3-30 safe letters, numbers, or underscores.';
     }
     if (code.contains('valid child name')) {
-      return 'Please enter a valid full name for your child.';
+      return 'Please enter a valid full name for your child (letters only).';
     }
     if (code.contains('between 4 and 18')) {
       return 'LittleNet is designed for children aged 4 to 18.';
@@ -181,6 +184,12 @@ class _ChildEnrollmentScreenState extends State<ChildEnrollmentScreen> {
     }
     if (code.contains('safety rules')) {
       return 'Profile text could not be accepted under child-safety rules.';
+    }
+    if (code.contains('verified active Parent')) {
+      return 'Parent verification is required before creating a child account.';
+    }
+    if (code.contains('child_creation_failed')) {
+      return 'Unable to create child account. The username may already be taken, or required fields are invalid.';
     }
     return code;
   }

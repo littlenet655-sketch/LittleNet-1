@@ -1912,8 +1912,13 @@ def register_mobile_api(bp):
             child_id = create_child_for_verified_parent(int(g.mobile_user["user_id"]), data)
         except ValueError as exc:
             return jsonify(error=str(exc)), 400
-        except Exception:
-            return jsonify(error="child_creation_failed"), 400
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception("Failed to create child for parent %s: %s", g.mobile_user.get("user_id"), exc)
+            err_msg = str(exc).lower()
+            if "unique constraint" in err_msg or "duplicate key" in err_msg or "uniqueviolation" in err_msg:
+                return jsonify(error="This username is already taken. Please choose another."), 400
+            return jsonify(error="child_creation_failed", message=str(exc)), 400
         return jsonify(ok=True, child_id=child_id, next_steps=["child_face_enrollment", "age_quiz"]), 201
 
     @bp.route("/api/mobile/v1/parent/children/<int:child_id>/face/enroll", methods=["POST"])

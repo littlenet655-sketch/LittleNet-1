@@ -25,6 +25,14 @@ def create_child_for_verified_parent(parent_id, form):
     if not validate_username(username):
         raise ValueError('Child username must be 3-30 safe characters.')
 
+    child_email = f"{username.lower()}@kids.littlenet.internal"
+    existing_user = fetch_one(
+        "SELECT user_id, username, email FROM users WHERE LOWER(username)=%s OR LOWER(email)=%s",
+        (username.lower(), child_email.lower()),
+    )
+    if existing_user:
+        raise ValueError('This username is already taken. Please choose another.')
+
     full_name = (form.get('full_name') or '').strip() or username.capitalize()
     if not validate_name(full_name):
         raise ValueError('Please enter a valid child name.')
@@ -66,7 +74,6 @@ def create_child_for_verified_parent(parent_id, form):
     allow_discover = form.get('allow_discover', '1') in ('1', 'on', 'true', True)
     educational_only = form.get('educational_only_feed', '0') in ('1', 'on', 'true', True)
 
-    child_email = f"{username.lower()}@kids.littlenet.internal"
     token = str(uuid.uuid4())
     conn = get_db_connection()
     try:
@@ -127,8 +134,11 @@ def create_child_for_verified_parent(parent_id, form):
             (child_id, '{"verified_parent":true,"face_enrollment_required":true,"onboarding_quiz_required":true}'),
         )
         conn.commit()
-    except Exception:
+    except Exception as exc:
         conn.rollback()
+        err_msg = str(exc).lower()
+        if "unique constraint" in err_msg or "duplicate key" in err_msg or "uniqueviolation" in err_msg:
+            raise ValueError('This username is already taken. Please choose another.') from exc
         raise
     finally:
         conn.close()
