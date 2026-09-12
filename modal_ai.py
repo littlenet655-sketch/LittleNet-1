@@ -70,7 +70,7 @@ image = (
             "LITTLENET_FALCONSAI_BLOCK_THRESHOLD": "0.70",
             "LITTLENET_CLIP_REVIEW_THRESHOLD": "0.40",
             "LITTLENET_CLIP_BLOCK_THRESHOLD": "0.65",
-            "LITTLENET_DEPLOY_VERSION": "12",
+            "LITTLENET_DEPLOY_VERSION": "13",
         }
     )
     .add_local_dir(
@@ -114,6 +114,35 @@ def ai_web():
 
 @app.function(
     image=image,
+    cpu=2.0,
+    memory=4096,
+    secrets=[ai_secret],
+    volumes={"/cache": model_cache},
+    timeout=900,
+    min_containers=0,
+    max_containers=1,
+)
+def prepare_face_cache():
+    """Prepare FaceNet512 on CPU so model caching does not consume GPU credit."""
+    os.chdir("/root/littlenet")
+    Path("/cache/models").mkdir(parents=True, exist_ok=True)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ["LITTLENET_DEVICE"] = "cpu"
+    import importlib
+
+    # DeepFace's public `from deepface import DeepFace` import can resolve the
+    # DeepFace submodule even when it is not a direct package attribute. Import
+    # the submodule explicitly so this helper works across supported versions.
+    deepface_module = importlib.import_module("deepface.DeepFace")
+    model = deepface_module.build_model("Facenet512")
+    if model is None:
+        raise RuntimeError("Facenet512 model did not initialize")
+    model_cache.commit()
+    return {"ok": True, "model": "Facenet512", "device": "cpu", "cached": True}
+
+
+@app.function(
+    image=image,
     gpu="T4",
     cpu=4.0,
     memory=8192,
@@ -124,7 +153,7 @@ def ai_web():
     max_containers=1,
 )
 def warm_models():
-    """Warm every model/dependency in the locked moderation/face stack."""
+    """Explicit full GPU validation gate. Do not use for routine deployment."""
     os.chdir("/root/littlenet")
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     os.environ["LITTLENET_AI_SERVER"] = "1"
@@ -183,8 +212,11 @@ def warm_models():
     run("yolo_oiv7", yolo)
 
     def face():
-        DeepFace = importlib.import_module("deepface").DeepFace
-        DeepFace.build_model("Facenet512")
+        deepface_module = importlib.import_module("deepface.DeepFace")
+        model = deepface_module.build_model("Facenet512")
+        if model is None:
+            raise RuntimeError("Facenet512 model did not initialize")
+        return {"loaded": True}
     run("deepface_facenet512", face)
 
     def scene_detect():
@@ -197,6 +229,8 @@ def warm_models():
         return {"available": callable(open_video)}
     run("pyscenedetect", scene_detect)
 
+    # Persist successful downloads even when a later validation fails. This
+    # prevents a retry from downloading gigabytes again.
     model_cache.commit()
     failed = {name: value for name, value in results.items() if not value.get("ok")}
     if failed:
@@ -205,11 +239,16 @@ def warm_models():
 
 
 @app.local_entrypoint()
-def main(confirm_gpu_warmup: bool = False):
-    """Warm models only after an explicit opt-in to avoid accidental GPU spend."""
+def main(confirm_gpu_warmup: bool = False, prepare_face_cache_only: bool = False):
+    """Cost-guarded maintenance entrypoint."""
+    if prepare_face_cache_only:
+        report = prepare_face_cache.remote()
+        print(f"OK   face-cache: {report}")
+        return
     if not confirm_gpu_warmup:
         print("GPU warmup skipped. This command is intentionally cost-guarded.")
-        print("To warm once on purpose, run: modal run modal_ai.py --confirm-gpu-warmup")
+        print("Cheap face-cache preparation: modal run modal_ai.py --prepare-face-cache-only")
+        print("Full GPU validation only when intentional: modal run modal_ai.py --confirm-gpu-warmup")
         return
     report = warm_models.remote()
     for name, result in report.items():
