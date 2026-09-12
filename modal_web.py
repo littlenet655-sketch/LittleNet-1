@@ -1,7 +1,7 @@
-"""Optional Modal deployment for LittleNet's Flask/Jinja web application.
+"""Modal deployment for LittleNet's Flask/Jinja web application.
 
-PostgreSQL remains external (Neon/etc.). Private media is stored in R2; the
-legacy uploads volume remains only for compatibility with local/demo assets.
+PostgreSQL remains external (Neon/etc.). Private media is stored in R2. Heavy
+AI stays in littlenet-ai and is invoked only for real moderation/face work.
 """
 from pathlib import Path
 import json
@@ -21,14 +21,8 @@ web_secret = modal.Secret.from_name(
 email_secret = modal.Secret.from_name("littlenet-email")
 r2_secret = modal.Secret.from_name(
     "littlenet-r2",
-    required_keys=[
-        "R2_ACCOUNT_ID",
-        "R2_ACCESS_KEY_ID",
-        "R2_SECRET_ACCESS_KEY",
-        "R2_BUCKET",
-    ],
+    required_keys=["R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET"],
 )
-
 
 web_image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -51,10 +45,11 @@ web_image = (
             "LITTLENET_RESEND_FROM_EMAIL": "no-reply@littlenet.in",
             "LITTLENET_RESEND_DOMAIN_VERIFIED": "1",
             "STRICT_PRODUCTION_PREFLIGHT": "1",
+            "LITTLENET_USE_MODAL_QUEUE": "1",
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
-            "LITTLENET_DEPLOY_VERSION": "13",
+            "LITTLENET_DEPLOY_VERSION": "14",
         }
     )
     .add_local_dir(
@@ -80,7 +75,7 @@ web_image = (
     volumes={"/root/littlenet/uploads": uploads},
     timeout=300,
     startup_timeout=120,
-    scaledown_window=600,
+    scaledown_window=120,
     min_containers=0,
     max_containers=1,
 )
@@ -96,7 +91,6 @@ def web():
 
     try:
         from services.media_outbox import reconcile_pending_deletes
-
         cleanup = reconcile_pending_deletes(100)
         if cleanup.get("failed"):
             flask_app.logger.warning("Pending R2 delete reconciliation: %s", cleanup)
@@ -115,9 +109,29 @@ def web():
     return flask_app
 
 
+@app.function(
+    image=web_image,
+    cpu=2.0,
+    memory=4096,
+    secrets=[web_secret, email_secret, r2_secret],
+    timeout=900,
+    min_containers=0,
+    max_containers=1,
+)
+def process_media_job_background(post_id: int, child_id: int, object_key: str, kind: str = "post"):
+    """CPU orchestration worker for asynchronous media processing.
+
+    The worker downloads/sanitizes media and updates Neon/R2. Actual image/video
+    inference is delegated through AI_SERVICE_URL, so the T4 wakes only when the
+    moderation step is reached and scales back to zero afterward.
+    """
+    os.chdir("/root/littlenet")
+    from services.media_processor import process_media_job
+    return process_media_job(int(post_id), int(child_id), str(object_key), str(kind))
+
+
 @app.function(image=web_image, secrets=[web_secret], timeout=300)
 def init_database():
-    """Bootstrap legacy schema safely, then apply all new dbmate migrations."""
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/init_db.py"], check=True)
     subprocess.run(
@@ -130,7 +144,6 @@ def init_database():
 
 @app.function(image=web_image, secrets=[web_secret], timeout=120)
 def seed_quizzes():
-    """Populate the idempotent age-banded quiz bank required by Kids Mode."""
     os.chdir("/root/littlenet")
     subprocess.run(["python", "tools/seed_quizzes.py"], check=True)
     return {"ok": True}
@@ -153,12 +166,7 @@ def _mail_healthcheck():
         smtp_res["mail_mode"] = "smtp"
         smtp_res["is_production_ready"] = smtp_res.get("ok", False)
         return smtp_res
-    return {
-        "ok": False,
-        "configured": False,
-        "mail_mode": "not_configured",
-        "is_production_ready": False,
-    }
+    return {"ok": False, "configured": False, "mail_mode": "not_configured", "is_production_ready": False}
 
 
 def _smtp_healthcheck():
@@ -179,25 +187,19 @@ def _smtp_healthcheck():
             server.login(user, password)
         return {"ok": True, "configured": True, "host": host, "port": port}
     except Exception as exc:
-        return {
-            "ok": False,
-            "configured": True,
-            "host": host,
-            "port": port,
-            "error": f"{type(exc).__name__}: {exc}",
-        }
+        return {"ok": False, "configured": True, "host": host, "port": port, "error": f"{type(exc).__name__}: {exc}"}
 
 
 @app.function(image=web_image, secrets=[web_secret, email_secret, r2_secret], timeout=180)
-def web_preflight():
-    """Fail closed unless the complete live LittleNet dependency chain is usable."""
+def web_preflight(deep_ai_probe: bool = False):
+    """Validate live dependencies without waking the GPU unless explicitly requested."""
     os.chdir("/root/littlenet")
     from config import Config
     from database.connection import fetch_one
-    from safety.remote_client import health
     from safety.presidio_adapter import analyze_pii
     from services.object_storage import healthcheck as r2_healthcheck
     from services.media_outbox import reconcile_pending_deletes
+    from services.job_queue import validate_job_queue_config
 
     db = fetch_one("SELECT 1 ok")
     schema = dict(fetch_one("""
@@ -210,17 +212,26 @@ def web_preflight():
           to_regclass('public.quizzes')::text AS quizzes,
           to_regclass('public.media_delete_outbox')::text AS media_delete_outbox
     """) or {})
-    required_tables = (
-        "users", "child_profiles", "posts", "comments", "followers", "quizzes",
-        "media_delete_outbox",
-    )
+    required_tables = ("users", "child_profiles", "posts", "comments", "followers", "quizzes", "media_delete_outbox")
     schema_ok = all(schema.get(name) for name in required_tables)
     quiz_count = 0
     if schema_ok:
         quiz_row = fetch_one("SELECT COUNT(*)::int n FROM quizzes") or {}
         quiz_count = int(quiz_row.get("n") or 0)
 
-    ai = health()
+    ai_configured = bool(str(Config.AI_SERVICE_URL or "").startswith("https://") and str(Config.AI_SHARED_SECRET or ""))
+    ai = {"ok": ai_configured, "mode": "configured_not_probed"}
+    if deep_ai_probe and ai_configured:
+        from safety.remote_client import health
+        ai = health()
+        ai["mode"] = "deep_probe"
+
+    try:
+        queue_provider = validate_job_queue_config(is_production=True)
+        queue = {"ok": queue_provider == "modal", "provider": queue_provider}
+    except Exception as exc:
+        queue = {"ok": False, "provider": None, "error": f"{type(exc).__name__}: {exc}"}
+
     pii = analyze_pii("test@example.com")
     pii_ok = bool(pii.get("available") and "EMAIL_ADDRESS" in pii.get("categories", []))
     vendor = Path("static/vendor/mediapipe")
@@ -234,6 +245,7 @@ def web_preflight():
         and "127.0.0.1" not in base_url
         and "localhost" not in base_url
         and "YOUR-LITTLENET-BACKEND" not in base_url
+        and "placeholder.invalid" not in base_url
     )
     mail = _mail_healthcheck()
     r2 = r2_healthcheck()
@@ -250,6 +262,7 @@ def web_preflight():
         "database": bool(db and db["ok"] == 1),
         "database_schema": {"ok": schema_ok, "tables": schema, "quiz_count": quiz_count},
         "ai": ai,
+        "job_queue": queue,
         "presidio": pii_ok,
         "mediapipe_liveness_assets": liveness_assets,
         "base_url": {"ok": public_base_url, "value": base_url},
@@ -261,16 +274,9 @@ def web_preflight():
     mail_passes = mail.get("is_production_ready") if strict_mail else mail.get("ok")
 
     report["ok"] = bool(
-        report["database"]
-        and schema_ok
-        and quiz_count > 0
-        and ai.get("ok")
-        and pii_ok
-        and liveness_assets
-        and public_base_url
-        and mail_passes
-        and r2.get("ok")
-        and media_outbox.get("ok")
+        report["database"] and schema_ok and quiz_count > 0 and ai.get("ok")
+        and queue.get("ok") and pii_ok and liveness_assets and public_base_url
+        and mail_passes and r2.get("ok") and media_outbox.get("ok")
     )
     return json.loads(json.dumps(report, default=str))
 
@@ -281,19 +287,20 @@ def main(
     seed: bool = False,
     preflight: bool = False,
     reconcile_media: bool = False,
+    deep_ai_probe: bool = False,
 ):
-    """Release helper: migrate, seed, reconcile private media, then validate dependencies."""
+    """Release helper. Deep AI probing is opt-in because it wakes the T4."""
     if init_db:
         print("database", init_database.remote())
     if seed:
         print("quizzes", seed_quizzes.remote())
     if reconcile_media:
-        report = web_preflight.remote()
+        report = web_preflight.remote(deep_ai_probe=False)
         print("media reconciliation", report.get("media_delete_outbox"))
         if not report.get("media_delete_outbox", {}).get("ok"):
             raise RuntimeError(f"LittleNet media reconciliation failed: {report}")
     if preflight:
-        report = web_preflight.remote()
+        report = web_preflight.remote(deep_ai_probe=deep_ai_probe)
         print("preflight", report)
         if not report.get("ok"):
             raise RuntimeError(f"LittleNet web preflight failed: {report}")
