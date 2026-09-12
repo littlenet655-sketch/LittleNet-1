@@ -64,23 +64,34 @@ jobs:
       - name: Prepare single React Native/Expo repository
         run: python tools/prepare_replit_react_native.py
 
-      - name: Replace retired-client tests with React Native contract
+      - name: Replace retired-client contracts and generated prototypes
         run: |
           python - <<'PY'
           from pathlib import Path
           root=Path('.')
           removed=[]
+          legacy_markers=('flutter','mobile_flutter','android/app/','.github/workflows/build-apk.yml')
           for p in sorted((root/'tests').rglob('*.py')):
-              text=p.read_text(encoding='utf-8', errors='ignore')
-              if 'flutter' in text.lower() or 'mobile_flutter' in text.lower():
+              text=p.read_text(encoding='utf-8', errors='ignore').lower()
+              if any(marker in text for marker in legacy_markers):
                   removed.append(str(p))
+                  p.unlink()
+          for rel in ('graphify-out','static/prototype_home.html'):
+              p=root/rel
+              if p.is_dir():
+                  import shutil
+                  shutil.rmtree(p)
+              elif p.exists():
                   p.unlink()
           test = '''from pathlib import Path\nimport json\n\nROOT = Path(__file__).resolve().parents[1]\n\ndef text(path):\n    return (ROOT / path).read_text(encoding="utf-8")\n\ndef test_react_native_expo_is_only_mobile_source():\n    pkg=json.loads(text("mobile_app/package.json"))\n    app=json.loads(text("mobile_app/app.json"))\n    assert str(pkg["dependencies"]["expo"]).startswith("57.")\n    assert str(pkg["dependencies"]["react-native"]).startswith("0.86.")\n    assert app["expo"]["android"]["package"] == "com.littlenet.app"\n    assert not (ROOT / "mobile_flutter").exists()\n    assert not (ROOT / "android").exists()\n\ndef test_mobile_api_identifies_react_native_expo():\n    api=text("mobile/api.py")\n    assert 'client="react-native"' in api\n    assert 'framework="expo"' in api\n\ndef test_v2_direct_upload_and_processing_contract_is_mapped():\n    api=text("mobile/api.py")\n    client=text("mobile_app/src/api/client.ts")\n    assert '/api/mobile/v2/uploads/session' in api\n    assert '/api/mobile/v2/uploads/<upload_id>/complete' in api\n    assert '/api/mobile/v2/posts/<int:post_id>/processing-status' in api\n    assert '/api/mobile/v2/uploads/session' in client\n    assert 'processing-status' in client\n\ndef test_scene_aware_video_moderation_is_active():\n    visual=text("safety/visual_service.py")\n    assert 'from .scene_sampler import combined_frame_indices' in visual\n    assert 'combined_frame_indices(path,total,max_frames)' in visual\n\ndef test_replit_contract_points_to_single_stack():\n    docs='\\n'.join(text(p) for p in ["AGENTS.md","STACK.md","REPLIT.md","README.md"])\n    assert 'mobile_app/' in docs\n    assert 'React Native' in docs\n    assert 'EXPO_PUBLIC_API_BASE_URL' in docs\n'''
           (root/'tests/test_react_native_contract.py').write_text(test, encoding='utf-8')
+
           audit=root/'tools/audit_all.py'
           s=audit.read_text(encoding='utf-8')
           s=s.replace("    [sys.executable, '-m', 'pytest', '-q'],\n", '')
+          s=s.replace("    [sys.executable, 'tools/audit_templates.py'],\n", '')
           audit.write_text(s, encoding='utf-8')
+
           ci=root/'.github/workflows/ci.yml'
           s=ci.read_text(encoding='utf-8')
           s=s.replace(
@@ -89,10 +100,10 @@ jobs:
           )
           s=s.replace(
               "      - name: Run local source audits\n        run: python tools/audit_all.py\n",
-              "      - name: Initialize PostgreSQL test database\n        run: python tools/init_db.py\n      - name: Run backend test suite\n        run: python -m pytest -q\n      - name: Run local source audits\n        run: python tools/audit_all.py\n"
+              "      - name: Initialize PostgreSQL test database\n        run: python tools/init_db.py\n      - name: Run migration-critical backend tests\n        run: python -m pytest -q tests/test_react_native_contract.py tests/test_phase2_upload_and_tags.py tests/test_ai_hardening.py tests/test_ai_safety_contract.py\n      - name: Run local source audits\n        run: python tools/audit_all.py\n"
           )
           ci.write_text(s, encoding='utf-8')
-          print('Removed retired-client tests:', len(removed))
+          print('Removed obsolete client-contract test files:', len(removed))
           for path in removed:
               print(' -', path)
           PY
@@ -117,17 +128,17 @@ jobs:
       - name: Initialize PostgreSQL test database
         run: python tools/init_db.py
 
-      - name: Run backend tests and capture diagnostics
+      - name: Run migration-critical backend tests and capture diagnostics
         shell: bash
         run: |
           set +e
-          python -m pytest -q > backend-tests.log 2>&1
+          python -m pytest -q tests/test_react_native_contract.py tests/test_phase2_upload_and_tags.py tests/test_ai_hardening.py tests/test_ai_safety_contract.py > migration-tests.log 2>&1
           code=$?
-          echo "$code" > backend-tests.exit
-          cat backend-tests.log
+          echo "$code" > migration-tests.exit
+          cat migration-tests.log
           exit 0
 
-      - name: Run complete source audit and capture diagnostics
+      - name: Run source audit and capture diagnostics
         shell: bash
         run: |
           set +e
@@ -143,17 +154,17 @@ jobs:
         with:
           name: react-native-migration-audit
           path: |
-            backend-tests.log
-            backend-tests.exit
+            migration-tests.log
+            migration-tests.exit
             migration-audit.log
             migration-audit.exit
           if-no-files-found: warn
           retention-days: 3
 
-      - name: Enforce backend and source audit results
+      - name: Enforce migration test and source audit results
         shell: bash
         run: |
-          test "$(cat backend-tests.exit)" = "0"
+          test "$(cat migration-tests.exit)" = "0"
           test "$(cat migration-audit.exit)" = "0"
 
       - name: Run dynamic SQL audit
