@@ -37,12 +37,28 @@ def _timeout() -> int:
 
 
 def _health_timeout() -> int:
-    """Health probes must tolerate a Modal cold start but remain bounded."""
+    """Deep AI probes may tolerate a Modal cold start but remain bounded."""
     try:
         configured = int(os.getenv("AI_HEALTH_TIMEOUT", "30"))
     except (TypeError, ValueError):
         configured = 30
     return max(10, min(configured, 90))
+
+
+def _deep_health_enabled() -> bool:
+    """Return whether a readiness call is allowed to wake the GPU-backed AI app.
+
+    Infrastructure probes hit `/readyz` frequently. Waking a scaled-to-zero T4
+    for each probe is both unnecessary and expensive, so the default readiness
+    check validates configuration only. Explicit release diagnostics can opt in
+    with `AI_DEEP_HEALTH_PROBE=1` or by calling `health(deep=True)`.
+    """
+    return os.getenv("AI_DEEP_HEALTH_PROBE", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
 
 
 def _json_object(response, name: str) -> dict:
@@ -174,14 +190,25 @@ def face_adult_verify(path: str) -> dict:
     return result
 
 
-def health() -> dict:
-    """Return AI health without allowing a cold-start timeout to crash callers.
+def health(*, deep: bool | None = None) -> dict:
+    """Return cheap readiness by default and deep remote health on explicit opt-in.
 
-    Modal may need more than ten seconds to start a scaled-to-zero AI container.
-    A release preflight should retry that bounded cold start, then return an
-    explicit unhealthy result if the service still cannot answer. Runtime safety
-    callers remain fail-closed because `ok` is never synthesized as true.
+    Modal's AI endpoint is GPU-backed. Frequent infrastructure `/readyz` probes
+    must not cold-start or keep a T4 alive, so the default call reports that the
+    remote service is configured without making a network request. Release gates,
+    diagnostics, or one-off operator checks can call `health(deep=True)` or set
+    `AI_DEEP_HEALTH_PROBE=1` to perform the real protected `/healthz` request.
     """
+    if deep is None:
+        deep = _deep_health_enabled()
+    if not deep:
+        return {
+            "ok": bool(enabled()),
+            "status": "configured" if enabled() else "disabled",
+            "probe": "skipped",
+            "reason": "gpu_probe_disabled_for_runtime_readiness",
+        }
+
     attempts = 3
     try:
         attempts = max(1, min(int(os.getenv("AI_HEALTH_ATTEMPTS", "3")), 5))
@@ -197,6 +224,7 @@ def health() -> dict:
             r.raise_for_status()
             data = _json_object(r, "health")
             if data.get("ok") is True:
+                data.setdefault("probe", "deep")
                 return data
             last_error = str(data.get("error") or data.get("status") or "ai_not_ready")
         except (requests.RequestException, ValueError) as exc:
@@ -209,6 +237,7 @@ def health() -> dict:
         "detail": last_error[:300],
         "attempts": attempts,
         "timeout_seconds": timeout,
+        "probe": "deep",
     }
 
 
