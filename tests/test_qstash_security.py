@@ -233,59 +233,40 @@ def test_job_queue_dev_allows_local():
         assert isinstance(q, LocalJobQueue)
 
 
-def test_job_queue_dev_allows_qstash():
+def test_job_queue_dev_rejects_retired_qstash():
     env = {
         "JOB_QUEUE_PROVIDER": "qstash",
         "QSTASH_TOKEN": "token_123",
         "QSTASH_MODAL_ENDPOINT": "https://modal.run/test",
     }
     with patch.dict(os.environ, env, clear=False):
-        assert validate_job_queue_config(is_production=False) == "qstash"
-
-
-def test_job_queue_prod_fails_closed_when_provider_missing():
-    with patch.dict(os.environ, {}, clear=True):
-        with pytest.raises(RuntimeError, match="JOB_QUEUE_PROVIDER is required and must be 'qstash'"):
-            validate_job_queue_config(is_production=True)
+        with pytest.raises(RuntimeError, match="must be 'local' or 'modal'"):
+            validate_job_queue_config(is_production=False)
 
 
 def test_job_queue_prod_fails_closed_when_local():
     with patch.dict(os.environ, {"JOB_QUEUE_PROVIDER": "local"}, clear=True):
-        with pytest.raises(RuntimeError, match="LocalJobQueue is forbidden in production"):
+        with pytest.raises(RuntimeError, match="must be 'modal'"):
             validate_job_queue_config(is_production=True)
 
 
-def test_job_queue_prod_fails_closed_when_token_missing():
+def test_job_queue_prod_fails_closed_when_qstash():
     env = {
         "JOB_QUEUE_PROVIDER": "qstash",
         "QSTASH_MODAL_ENDPOINT": "https://modal.run/test",
     }
     with patch.dict(os.environ, env, clear=True):
-        with pytest.raises(RuntimeError, match="QSTASH_TOKEN is required"):
+        with pytest.raises(RuntimeError, match="must be 'modal'"):
             validate_job_queue_config(is_production=True)
 
 
-def test_job_queue_prod_fails_closed_when_endpoint_missing():
+def test_job_queue_prod_succeeds_when_modal():
     env = {
-        "JOB_QUEUE_PROVIDER": "qstash",
-        "QSTASH_TOKEN": "tok_abc",
-    }
-    with patch.dict(os.environ, env, clear=True):
-        with pytest.raises(RuntimeError, match="QSTASH_MODAL_ENDPOINT is required"):
-            validate_job_queue_config(is_production=True)
-
-
-def test_job_queue_prod_succeeds_when_fully_configured():
-    env = {
-        "JOB_QUEUE_PROVIDER": "qstash",
-        "QSTASH_TOKEN": "tok_valid",
-        "QSTASH_MODAL_ENDPOINT": "https://modal.run/test",
+        "JOB_QUEUE_PROVIDER": "modal",
     }
     with patch.dict(os.environ, env, clear=True):
         provider = validate_job_queue_config(is_production=True)
-        assert provider == "qstash"
-        q = get_job_queue()
-        assert isinstance(q, QStashJobQueue)
+        assert provider == "modal"
 
 
 def test_qstash_job_queue_uses_configured_regional_url():

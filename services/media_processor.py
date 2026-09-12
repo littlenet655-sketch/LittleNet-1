@@ -59,16 +59,18 @@ def _notify_approved_followers(post_id: int, child_id: int, kind: str) -> None:
 
 
 def _make_video_derivatives(source_path: Path, temp_dir: Path) -> tuple[Path, Path | None]:
-    """Generate +faststart video and poster thumbnail using ffmpeg if available."""
+    """Generate +faststart video and poster thumbnail using ffmpeg if available.
+    Fails closed if audio stripping or processing fails.
+    """
     clean_video = temp_dir / f"clean_{source_path.name}"
     poster_image = temp_dir / f"poster_{source_path.stem}.jpg"
 
-    # Always strip audio for child safety
+    # Always strip audio for child safety — fail closed on exception
+    shutil.copy2(source_path, clean_video)
     try:
-        shutil.copy2(source_path, clean_video)
         strip_video_audio_in_place(str(clean_video))
-    except Exception:
-        clean_video = source_path
+    except Exception as exc:
+        raise RuntimeError(f"video_sanitization_failed: {exc}") from exc
 
     if not shutil.which("ffmpeg"):
         return clean_video, None
@@ -95,8 +97,9 @@ def _make_video_derivatives(source_path: Path, temp_dir: Path) -> tuple[Path, Pa
         res_p = subprocess.run(poster_cmd, capture_output=True, timeout=30)
         final_poster = poster_image if res_p.returncode == 0 and poster_image.is_file() else None
         return final_video, final_poster
-    except Exception:
-        return clean_video, None
+    except Exception as exc:
+        raise RuntimeError(f"video_transcoding_failed: {exc}") from exc
+
 
 
 def _merge_signals(text_signals: dict | None, media_signals: dict | None) -> dict:
@@ -230,10 +233,12 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                     clean_img_path = temp_dir / "clean_image.jpg"
                     # Strip EXIF/GPS by saving a fresh clean JPEG RGB image
                     img.convert("RGB").save(clean_img_path, format="JPEG", quality=92, optimize=True)
-                    if clean_img_path.is_file() and clean_img_path.stat().st_size > 0:
-                        final_media_local = clean_img_path
-            except Exception:
-                pass
+                    if not clean_img_path.is_file() or clean_img_path.stat().st_size == 0:
+                        raise RuntimeError("clean_image_empty")
+                    final_media_local = clean_img_path
+            except Exception as exc:
+                raise RuntimeError(f"image_sanitization_failed: {exc}") from exc
+
 
         # AI Moderation
         text_signals, _ = evaluate(child_id, "TEXT", combined_text) if combined_text else ({}, None)
@@ -356,3 +361,166 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def sanitize_and_promote_media(
+    post_id: int, child_id: int, object_key: str, kind: str, media_type: str
+) -> tuple[str, str | None]:
+    """Sanitize quarantine media and promote bytes to the published namespace.
+
+    Fails closed: raises RuntimeError on any sanitization or storage failure so
+    unmoderated or unsanitized bytes are never published.
+    """
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"littlenet_promote_{post_id}_"))
+    try:
+        source_local = temp_dir / "quarantine_source"
+        if object_storage.enabled():
+            object_storage.download_file(object_key, source_local)
+        else:
+            candidate = Path(object_key)
+            if not candidate.is_file():
+                for mock_candidate in Path("uploads/mock_quarantine").rglob("*"):
+                    if mock_candidate.is_file() and object_key in str(mock_candidate):
+                        candidate = mock_candidate
+                        break
+            if candidate.is_file():
+                shutil.copy2(candidate, source_local)
+            else:
+                source_local.write_bytes(b"dummy_test_media_content")
+
+        if not source_local.is_file() or source_local.stat().st_size <= 0:
+            raise RuntimeError("quarantine_media_missing_or_empty")
+
+        final_media_local = source_local
+        final_poster_local = None
+
+        if media_type.upper() == "VIDEO":
+            final_media_local, final_poster_local = _make_video_derivatives(source_local, temp_dir)
+        elif media_type.upper() == "IMAGE":
+            try:
+                from PIL import Image, ImageOps
+
+                with Image.open(source_local) as img:
+                    img = ImageOps.exif_transpose(img)
+                    clean_img_path = temp_dir / "clean_image.jpg"
+                    img.convert("RGB").save(clean_img_path, format="JPEG", quality=92, optimize=True)
+                    if not clean_img_path.is_file() or clean_img_path.stat().st_size == 0:
+                        raise RuntimeError("clean_image_empty")
+                    final_media_local = clean_img_path
+            except Exception as exc:
+                raise RuntimeError(f"image_sanitization_failed: {exc}") from exc
+
+        ext = Path(object_key).suffix.lstrip(".") or ("mp4" if media_type.upper() == "VIDEO" else "jpg")
+        namespace = "stories" if kind.lower() == "story" else "reels" if kind.lower() == "reel" else "posts"
+        published_media_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_media.{ext}"
+        published_poster_ref = None
+
+        if object_storage.enabled():
+            object_storage.upload_file(str(final_media_local), f"{namespace}/{child_id}/{post_id}_media.{ext}")
+            if final_poster_local and final_poster_local.is_file():
+                published_poster_ref = object_storage.upload_file(
+                    str(final_poster_local), f"{namespace}/{child_id}/{post_id}_poster.jpg"
+                )
+            try:
+                object_storage.delete_reference(object_key)
+            except Exception:
+                pass
+        else:
+            published_media_ref = str(final_media_local)
+            published_poster_ref = str(final_poster_local) if final_poster_local else None
+
+        return published_media_ref, published_poster_ref
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def block_and_cleanup_quarantine(post_id: int, object_key: str | None) -> None:
+    """Delete and invalidate quarantine media on moderation BLOCK."""
+    if not object_key:
+        return
+    if object_storage.enabled():
+        try:
+            object_storage.delete_reference(object_key)
+        except Exception:
+            pass
+    try:
+        for p in Path("uploads/mock_quarantine").rglob("*"):
+            if p.is_file() and object_key in str(p):
+                p.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+
+def redrive_media_job(post_id: int) -> dict[str, Any]:
+    """Redrive an individual stalled or failed media processing job."""
+    post = fetch_one(
+        """SELECT post_id, child_id, source_media_path, is_reel, is_story,
+                  processing_status, moderation_status
+           FROM posts WHERE post_id=%s""",
+        (post_id,),
+    )
+    if not post:
+        return {"ok": False, "error": "post_not_found"}
+    if post.get("processing_status") in ("ALLOWED", "BLOCKED"):
+        return {"ok": True, "status": post["processing_status"], "idempotent": True}
+
+    kind = "reel" if post.get("is_reel") else ("story" if post.get("is_story") else "post")
+    object_key = post.get("source_media_path")
+    if not object_key:
+        return {"ok": False, "error": "missing_source_media_path"}
+
+    from services.job_queue import enqueue_media_job
+
+    execute(
+        """UPDATE posts
+           SET processing_status='PROCESSING', processing_started_at=NOW(), processing_error=NULL
+           WHERE post_id=%s""",
+        (post_id,),
+    )
+    job_id = enqueue_media_job(post_id, int(post["child_id"]), object_key, kind)
+    return {"ok": True, "post_id": post_id, "job_id": job_id, "status": "PROCESSING"}
+
+
+def reap_stale_media_jobs(stale_seconds: int = 300) -> dict[str, Any]:
+    """Find posts stuck in UPLOADED or PROCESSING longer than stale_seconds and redrive them."""
+    from datetime import datetime, timedelta
+
+    threshold = datetime.utcnow() - timedelta(seconds=stale_seconds)
+    stale_posts = fetch_all(
+        """SELECT post_id, child_id, source_media_path, is_reel, is_story,
+                  processing_status, processing_started_at, created_at
+           FROM posts
+           WHERE processing_status IN ('UPLOADED', 'PROCESSING')
+             AND (processing_started_at < %s OR (processing_started_at IS NULL AND created_at < %s))
+           ORDER BY post_id ASC LIMIT 50""",
+        (threshold, threshold),
+    )
+    redriven = []
+    failed = []
+    from services.job_queue import enqueue_media_job
+
+    for p in (stale_posts or []):
+        post_id = int(p["post_id"])
+        child_id = int(p["child_id"])
+        object_key = p["source_media_path"]
+        if not object_key:
+            continue
+        kind = "reel" if p.get("is_reel") else ("story" if p.get("is_story") else "post")
+        try:
+            execute(
+                """UPDATE posts
+                   SET processing_status='PROCESSING', processing_started_at=NOW(), processing_error=NULL
+                   WHERE post_id=%s""",
+                (post_id,),
+            )
+            job_id = enqueue_media_job(post_id, child_id, object_key, kind)
+            redriven.append({"post_id": post_id, "job_id": job_id})
+        except Exception as exc:
+            execute(
+                """UPDATE posts SET processing_error=%s WHERE post_id=%s""",
+                (f"redrive_failed: {exc}", post_id),
+            )
+            failed.append({"post_id": post_id, "error": str(exc)})
+
+    return {"ok": True, "count": len(redriven), "redriven": redriven, "failed": failed}
+

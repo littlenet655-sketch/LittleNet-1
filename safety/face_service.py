@@ -5,14 +5,19 @@ from database.connection import fetch_one, execute
 
 def _validated_embedding(values):
     if not isinstance(values,(list,tuple)) or not values:raise ValueError('embedding_missing')
+    if len(values) < 128: raise ValueError('insufficient_dimensions')
     out=[]
     for value in values:
         if isinstance(value,bool):raise ValueError('embedding_invalid')
-        value=float(value)
+        try:
+            value=float(value)
+        except (TypeError, ValueError):
+            raise ValueError('embedding_invalid')
         if not math.isfinite(value):raise ValueError('embedding_invalid')
         out.append(value)
     if not any(abs(x)>1e-12 for x in out):raise ValueError('embedding_invalid')
     return out
+
 
 
 def _embedding(img_path):
@@ -31,17 +36,27 @@ def _embedding(img_path):
 
 def enroll(child_id,path):
     emb=_embedding(path)
-    execute('''INSERT INTO face_profiles(child_id,embedding,reference_path) VALUES(%s,%s::jsonb,%s) ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding,reference_path=EXCLUDED.reference_path,updated_at=NOW()''',(child_id,json.dumps(emb),None))
+    emb=_validated_embedding(emb)
+    execute('''INSERT INTO face_profiles(child_id,embedding,model_name,reference_path)
+               VALUES(%s,%s::jsonb,'Facenet512',%s)
+               ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding,model_name=EXCLUDED.model_name,reference_path=EXCLUDED.reference_path,updated_at=NOW()''',
+            (child_id,json.dumps(emb),None))
     return True
 
 
 def verify(child_id,path):
     row=fetch_one('SELECT embedding FROM face_profiles WHERE child_id=%s',(child_id,))
     if not row: return False,'not_enrolled',None
+    ref=row.get('embedding')
+    if ref is None: return False,'not_enrolled',None
+    try:
+        ref=json.loads(ref) if isinstance(ref,str) else ref
+        ref=_validated_embedding(ref)
+    except Exception:
+        execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,reason) VALUES(%s,FALSE,NULL,%s)',(child_id,'invalid_enrolled_embedding'))
+        return False,'invalid_enrolled_embedding',None
     try:
         from .remote_client import enabled, face_verify
-        ref=row['embedding']; ref=json.loads(ref) if isinstance(ref,str) else ref
-        ref=_validated_embedding(ref)
         if enabled():
             remote=face_verify(ref,path)
             if remote.get('ok') is not True:
@@ -54,7 +69,8 @@ def verify(child_id,path):
         test=_embedding(path)
     except Exception as e:
         reason='liveness_failed' if 'liveness' in str(e).lower() or 'spoof' in str(e).lower() or 'single_face' in str(e).lower() else 'face_error'
-        execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,reason) VALUES(%s,FALSE,%s,%s)',(child_id,False if reason=='liveness_failed' else None,reason)); return False,reason,None
+        execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,reason) VALUES(%s,FALSE,%s,%s)',(child_id,False if reason=='liveness_failed' else None,reason))
+        return False,reason,None
     if len(ref)!=len(test):
         execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,reason) VALUES(%s,FALSE,TRUE,%s)',(child_id,'embedding_mismatch'))
         return False,'face_error',None

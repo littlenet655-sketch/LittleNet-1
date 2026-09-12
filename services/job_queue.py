@@ -62,6 +62,39 @@ class LocalJobQueue(JobQueue):
         return job_id
 
 
+class QStashJobQueue(JobQueue):
+    """Optional compatibility provider for older deployments using Upstash QStash."""
+
+    def __init__(self, token: str, endpoint_url: str, base_url: str | None = None):
+        self.token = token
+        self.endpoint_url = endpoint_url
+        self.base_url = (base_url or os.getenv("QSTASH_URL") or "https://qstash.upstash.io").rstrip("/")
+
+    def enqueue(self, job_type: str, payload: dict[str, Any], deduplication_id: str | None = None) -> str:
+        import json
+        import requests
+
+        headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+        if deduplication_id:
+            headers["Upstash-Deduplication-Id"] = deduplication_id
+        ai_secret = (os.getenv("AI_SHARED_SECRET") or "").strip()
+        if ai_secret:
+            headers["Upstash-Forward-X-LittleNet-AI-Key"] = ai_secret
+
+        qstash_url = f"{self.base_url}/v2/publish/{self.endpoint_url}"
+        data = {"job_type": job_type, "payload": payload}
+        try:
+            resp = requests.post(qstash_url, headers=headers, data=json.dumps(data), timeout=10)
+            resp.raise_for_status()
+            return resp.json().get("messageId", deduplication_id or "qstash_dispatched")
+        except Exception as exc:
+            err_msg = str(exc).replace(self.token, "[REDACTED]")
+            if ai_secret:
+                err_msg = err_msg.replace(ai_secret, "[REDACTED]")
+            logger.error("Failed to publish job to QStash at %s: %s", qstash_url, err_msg)
+            raise RuntimeError(f"QStash publish failed: {err_msg}") from None
+
+
 class ModalJobQueue(JobQueue):
     """Production provider: asynchronously spawn the deployed Modal media worker."""
 

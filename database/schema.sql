@@ -229,7 +229,8 @@ CREATE TABLE IF NOT EXISTS learning_challenge_attempts (
 
 CREATE TABLE IF NOT EXISTS face_profiles (
  face_profile_id BIGSERIAL PRIMARY KEY, child_id INTEGER UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
- embedding JSONB NOT NULL, model_name VARCHAR(50) NOT NULL DEFAULT 'Facenet512', reference_path VARCHAR(500), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+ embedding JSONB NOT NULL CHECK (jsonb_typeof(embedding) = 'array' AND jsonb_array_length(embedding) >= 128),
+ model_name VARCHAR(50) NOT NULL DEFAULT 'Facenet512', reference_path VARCHAR(500), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS face_login_attempts (
  attempt_id BIGSERIAL PRIMARY KEY, child_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
@@ -256,6 +257,7 @@ ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_error TEXT;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_completed_at TIMESTAMP;
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_source_media_path_uniq ON posts(source_media_path) WHERE source_media_path IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_feed ON posts(moderation_status,is_story,is_reel,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_child ON posts(child_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_processing ON posts(processing_status,created_at DESC);
