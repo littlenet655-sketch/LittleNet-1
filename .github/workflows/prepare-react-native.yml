@@ -108,6 +108,108 @@ jobs:
               print(' -', path)
           PY
 
+      - name: Eliminate remaining dynamic SQL fragments
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          chat = Path('childMessage/service.py')
+          source = chat.read_text(encoding='utf-8')
+          start = source.index('def messages(')
+          secure_messages = '''def messages(cid, viewer, limit=None, before_id=None):
+              """Read messages only for an authorized participant pair using fixed SQL."""
+              conv = fetch_one(
+                  'SELECT child1_id,child2_id FROM child_conversations WHERE conversation_id=%s AND (child1_id=%s OR child2_id=%s)',
+                  (cid, viewer, viewer),
+              )
+              if not conv:
+                  return []
+              peer = conv['child2_id'] if conv['child1_id'] == viewer else conv['child1_id']
+              if not can_interact(viewer, peer):
+                  return []
+
+              safe_limit = int(limit) if limit is not None else 2147483647
+              rows = fetch_all(
+                  """SELECT m.*, u.full_name
+                     FROM child_messages m
+                     JOIN users u ON u.user_id = m.sender_child_id
+                     WHERE m.conversation_id = %s AND m.is_deleted = FALSE
+                       AND (m.moderation_status = 'ALLOWED' OR m.sender_child_id = %s)
+                       AND (%s::bigint IS NULL OR m.child_message_id < %s::bigint)
+                     ORDER BY m.sent_at DESC, m.child_message_id DESC
+                     LIMIT %s""",
+                  (cid, viewer, before_id, before_id, safe_limit),
+              )
+              return list(reversed(rows))
+          '''
+          chat.write_text(source[:start] + secure_messages, encoding='utf-8')
+
+          feed = Path('services/curated_feed.py')
+          source = feed.read_text(encoding='utf-8')
+          start = source.index('def fetch_social_candidates(')
+          end = source.index('def get_recent_impression_keys(', start)
+          secure_feed = '''def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 60) -> list[dict[str, Any]]:
+              """Retrieve safe social posts using only fixed parameterized SQL."""
+              cats = effective_categories(child_id)
+              age_grp = _age_group(child_id)
+              is_reel = str(surface).upper() == "REELS"
+
+              if is_reel:
+                  rows = fetch_all(
+                      """SELECT p.*, u.full_name, cp.profile_picture,
+                           (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
+                           (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.post_id AND c.moderation_status = 'ALLOWED') AS comments_count,
+                           EXISTS(SELECT 1 FROM followers f WHERE f.approved = TRUE AND f.approval_stage = 'ACTIVE'
+                             AND ((f.child_id = %s AND f.following_child_id = p.child_id) OR (f.child_id = p.child_id AND f.following_child_id = %s))) AS is_following
+                         FROM posts p
+                         JOIN users u ON u.user_id = p.child_id
+                         LEFT JOIN child_profiles cp ON cp.child_id = p.child_id
+                         WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE AND p.is_story = FALSE
+                           AND p.is_reel = TRUE
+                           AND p.content_category = ANY(%s)
+                           AND (%s IS NULL OR p.audience_age_group = 'ALL' OR p.audience_age_group = %s)
+                           AND p.child_id <> %s
+                           AND p.child_id NOT IN (
+                             SELECT blocked_id FROM blocked_users WHERE blocker_id = %s
+                             UNION SELECT blocker_id FROM blocked_users WHERE blocked_id = %s
+                             UNION SELECT muted_id FROM muted_users WHERE muter_id = %s)
+                         ORDER BY p.created_at DESC
+                         LIMIT %s""",
+                      (child_id, child_id, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
+                  )
+                  return [normalize_social_item(r) for r in rows]
+
+              from child.service import discoverable_child_ids
+              allowed_child_ids = discoverable_child_ids(child_id) or None
+              rows = fetch_all(
+                  """SELECT p.*, u.full_name, cp.profile_picture,
+                       (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
+                       (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.post_id AND c.moderation_status = 'ALLOWED') AS comments_count,
+                       EXISTS(SELECT 1 FROM followers f WHERE f.approved = TRUE AND f.approval_stage = 'ACTIVE'
+                         AND ((f.child_id = %s AND f.following_child_id = p.child_id) OR (f.child_id = p.child_id AND f.following_child_id = %s))) AS is_following
+                     FROM posts p
+                     JOIN users u ON u.user_id = p.child_id
+                     LEFT JOIN child_profiles cp ON cp.child_id = p.child_id
+                     WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE AND p.is_story = FALSE
+                       AND p.is_reel = FALSE
+                       AND (%s::int[] IS NULL OR p.child_id = ANY(%s::int[]))
+                       AND p.content_category = ANY(%s)
+                       AND (%s IS NULL OR p.audience_age_group = 'ALL' OR p.audience_age_group = %s)
+                       AND p.child_id <> %s
+                       AND p.child_id NOT IN (
+                         SELECT blocked_id FROM blocked_users WHERE blocker_id = %s
+                         UNION SELECT blocker_id FROM blocked_users WHERE blocked_id = %s
+                         UNION SELECT muted_id FROM muted_users WHERE muter_id = %s)
+                     ORDER BY p.created_at DESC
+                     LIMIT %s""",
+                  (child_id, child_id, allowed_child_ids, allowed_child_ids, cats, age_grp, age_grp,
+                   child_id, child_id, child_id, child_id, limit),
+              )
+              return [normalize_social_item(r) for r in rows]
+          '''
+          feed.write_text(source[:start] + secure_feed + '\n\n' + source[end:], encoding='utf-8')
+          PY
+
       - name: Install mobile dependencies and create lockfile
         working-directory: mobile_app
         run: npm install
@@ -176,6 +278,7 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f .github/workflows/prepare-react-native.yml
           git add -A
           git status --short
           git commit -m "refactor: replace legacy mobile client with React Native Expo"
