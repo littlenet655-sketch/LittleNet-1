@@ -64,8 +64,31 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-core.txt "pydantic>=2,<3" pytest
 
-      - name: Run complete source audit
-        run: python tools/audit_all.py
+      - name: Run complete source audit and capture diagnostics
+        shell: bash
+        run: |
+          set +e
+          python tools/audit_all.py > migration-audit.log 2>&1
+          code=$?
+          echo "$code" > migration-audit.exit
+          cat migration-audit.log
+          exit 0
+
+      - name: Upload migration audit diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: react-native-migration-audit
+          path: |
+            migration-audit.log
+            migration-audit.exit
+          if-no-files-found: warn
+          retention-days: 3
+
+      - name: Enforce source audit result
+        shell: bash
+        run: |
+          test "$(cat migration-audit.exit)" = "0"
 
       - name: Run dynamic SQL audit
         run: python tools/audit_dynamic_sql.py
