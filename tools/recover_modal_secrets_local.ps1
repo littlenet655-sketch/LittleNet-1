@@ -55,8 +55,6 @@ function Run-Modal {
 Write-Host "LittleNet local secret recovery" -ForegroundColor Cyan
 Write-Host "No secret values will be printed." -ForegroundColor Yellow
 
-# Remove plaintext leftovers from failed cloud-export attempts. Those runs failed
-# before any secret export completed, but cleaning them removes ambiguity.
 Get-ChildItem $env:TEMP -Directory -Filter 'LittleNet-Modal-Secret-Migrate-*' -ErrorAction SilentlyContinue |
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
 
@@ -66,6 +64,7 @@ $candidates = @(
     (Join-Path $projectParent 'LittleNet-env-backup.txt'),
     (Join-Path $projectParent 'LittleNet-1-OLD\.env'),
     (Join-Path $repoRoot '.env'),
+    (Join-Path $secureDir 'recovered.env'),
     (Join-Path $secureDir 'web.env'),
     (Join-Path $secureDir 'r2.env'),
     (Join-Path $secureDir 'email.env'),
@@ -84,8 +83,6 @@ foreach ($candidate in $candidates) {
     }
 }
 
-# Keep the newly generated internal AI secret if ai.env exists. Generate internal
-# keys locally when absent; no provider dashboard is needed for these.
 if (Test-Path $generatedAiFile -PathType Leaf) {
     $aiLocal = Read-DotEnvFile $generatedAiFile
     if ($aiLocal.ContainsKey('AI_SHARED_SECRET')) { $values['AI_SHARED_SECRET'] = $aiLocal['AI_SHARED_SECRET'] }
@@ -97,8 +94,6 @@ if (-not $values.ContainsKey('SECRET_KEY')) {
     $values['SECRET_KEY'] = py -c "import secrets; print(secrets.token_urlsafe(48))"
 }
 
-# Safe defaults/non-secret placeholders. Endpoint values are intentionally
-# replaced after the new Modal AI/web deployments produce their URLs.
 $defaults = @{
     'COOKIE_SECURE' = '1'
     'APP_TIMEZONE' = 'Asia/Kolkata'
@@ -135,7 +130,7 @@ if ($missingCore.Count -gt 0) {
         foreach ($k in $missingQstash) { Write-Host "  - $k" -ForegroundColor Yellow }
     }
     if (-not $mailReady) { Write-Host "  - RESEND_API_KEY (or SMTP_USER + SMTP_PASSWORD)" -ForegroundColor Yellow }
-    Write-Host "No secret values were printed. Give this missing-key list to AntiGravity and let it search your local machine/provider CLIs only." -ForegroundColor Yellow
+    Write-Host "No secret values were printed. Run tools/find_missing_secrets_local.ps1 or use AntiGravity for the remaining key names only." -ForegroundColor Yellow
     exit 2
 }
 
@@ -169,7 +164,6 @@ Run-Modal @('secret','create','littlenet-r2','--from-dotenv',$r2Out,'--force')
 if ($mailReady) {
     Run-Modal @('secret','create','littlenet-email','--from-dotenv',$emailOut,'--force')
 } else {
-    # Keep object existence predictable; mail can be added later without blocking AI deployment.
     'LITTLENET_MAIL_PENDING="1"' | Set-Content -LiteralPath $emailOut -Encoding utf8
     Run-Modal @('secret','create','littlenet-email','--from-dotenv',$emailOut,'--force')
 }
