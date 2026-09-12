@@ -34,7 +34,8 @@ VALUES
   ('Sunshine Whistle', 'LittleNet Studio', 'Happy', 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3?filename=sunshine-113069.mp3', 30),
   ('Playful Ukulele', 'FunKids Media', 'Acoustic', 'https://cdn.pixabay.com/download/audio/2022/03/15/audio_c8c8a73467.mp3?filename=ukulele-trip-version-60s-9893.mp3', 30),
   ('Lofi Study Beats', 'SafeChill', 'Learning', 'https://cdn.pixabay.com/download/audio/2022/01/18/audio_d0a13f69d2.mp3?filename=lofi-study-112191.mp3', 45),
-  ('Silly Cartoon Bounce', 'ComedyKids', 'Comedy', 'https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f77c30.mp3?filename=funny-kids-123495.mp3', 25),
+  ('Silly Cartoon Bounce', 'ComedyKids', 'Comedy', 'https://cdn.pixabay.com/download/audio/2022/10/14/audio_9939f77c30.mp3?filename=funny-kids-123495.mp3', 25);
+
 -- 4. Biometric Secret Key for Local Challenge Authentication
 ALTER TABLE face_profiles ADD COLUMN IF NOT EXISTS biometric_key VARCHAR(64);
 
