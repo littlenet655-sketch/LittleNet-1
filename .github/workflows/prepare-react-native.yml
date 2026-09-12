@@ -68,3 +68,5 @@ jobs:
           git status --short
           git commit -m "refactor: replace legacy mobile client with React Native Expo"
           git push origin HEAD:react-native-migration
+
+# git-data-trigger
