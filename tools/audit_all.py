@@ -5,7 +5,10 @@ from pathlib import Path
 
 R = Path(__file__).parents[1]
 steps = [
-    [sys.executable, 'tools/preflight.py'],
+    # audit_all.py is intentionally run from a normal Git working tree during
+    # local development and CI. Keep preflight.py strict for actual exports,
+    # but explicitly allow repository metadata for this source-tree audit.
+    [sys.executable, 'tools/preflight.py', '--allow-git'],
     [sys.executable, 'tools/audit_routes.py'],
     [sys.executable, 'tools/readiness.py', '--source-only'],
     [sys.executable, 'tools/scope_check.py'],
