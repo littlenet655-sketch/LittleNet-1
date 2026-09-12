@@ -15,6 +15,23 @@ jobs:
     if: github.actor != 'github-actions[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      DATABASE_URL: postgresql://littlenet:littlenet@localhost:5432/littlenet_test
+      APP_TIMEZONE: Asia/Kolkata
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: littlenet
+          POSTGRES_PASSWORD: littlenet
+          POSTGRES_DB: littlenet_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U littlenet -d littlenet_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Checkout migration branch
         uses: actions/checkout@v4
@@ -47,6 +64,39 @@ jobs:
       - name: Prepare single React Native/Expo repository
         run: python tools/prepare_replit_react_native.py
 
+      - name: Replace retired-client tests with React Native contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          root=Path('.')
+          removed=[]
+          for p in sorted((root/'tests').rglob('*.py')):
+              text=p.read_text(encoding='utf-8', errors='ignore')
+              if 'flutter' in text.lower() or 'mobile_flutter' in text.lower():
+                  removed.append(str(p))
+                  p.unlink()
+          test = '''from pathlib import Path\nimport json\n\nROOT = Path(__file__).resolve().parents[1]\n\ndef text(path):\n    return (ROOT / path).read_text(encoding="utf-8")\n\ndef test_react_native_expo_is_only_mobile_source():\n    pkg=json.loads(text("mobile_app/package.json"))\n    app=json.loads(text("mobile_app/app.json"))\n    assert str(pkg["dependencies"]["expo"]).startswith("57.")\n    assert str(pkg["dependencies"]["react-native"]).startswith("0.86.")\n    assert app["expo"]["android"]["package"] == "com.littlenet.app"\n    assert not (ROOT / "mobile_flutter").exists()\n    assert not (ROOT / "android").exists()\n\ndef test_mobile_api_identifies_react_native_expo():\n    api=text("mobile/api.py")\n    assert 'client="react-native"' in api\n    assert 'framework="expo"' in api\n\ndef test_v2_direct_upload_and_processing_contract_is_mapped():\n    api=text("mobile/api.py")\n    client=text("mobile_app/src/api/client.ts")\n    assert '/api/mobile/v2/uploads/session' in api\n    assert '/api/mobile/v2/uploads/<upload_id>/complete' in api\n    assert '/api/mobile/v2/posts/<int:post_id>/processing-status' in api\n    assert '/api/mobile/v2/uploads/session' in client\n    assert 'processing-status' in client\n\ndef test_scene_aware_video_moderation_is_active():\n    visual=text("safety/visual_service.py")\n    assert 'from .scene_sampler import combined_frame_indices' in visual\n    assert 'combined_frame_indices(path,total,max_frames)' in visual\n\ndef test_replit_contract_points_to_single_stack():\n    docs='\\n'.join(text(p) for p in ["AGENTS.md","STACK.md","REPLIT.md","README.md"])\n    assert 'mobile_app/' in docs\n    assert 'React Native' in docs\n    assert 'EXPO_PUBLIC_API_BASE_URL' in docs\n'''
+          (root/'tests/test_react_native_contract.py').write_text(test, encoding='utf-8')
+          audit=root/'tools/audit_all.py'
+          s=audit.read_text(encoding='utf-8')
+          s=s.replace("    [sys.executable, '-m', 'pytest', '-q'],\n", '')
+          audit.write_text(s, encoding='utf-8')
+          ci=root/'.github/workflows/ci.yml'
+          s=ci.read_text(encoding='utf-8')
+          s=s.replace(
+              "  source-audit:\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n",
+              "  source-audit:\n    runs-on: ubuntu-latest\n    timeout-minutes: 25\n    env:\n      DATABASE_URL: postgresql://littlenet:littlenet@localhost:5432/littlenet_test\n      APP_TIMEZONE: Asia/Kolkata\n    services:\n      postgres:\n        image: postgres:16\n        env:\n          POSTGRES_USER: littlenet\n          POSTGRES_PASSWORD: littlenet\n          POSTGRES_DB: littlenet_test\n        ports:\n          - 5432:5432\n        options: >-\n          --health-cmd \\\"pg_isready -U littlenet -d littlenet_test\\\"\n          --health-interval 5s\n          --health-timeout 5s\n          --health-retries 10\n"
+          )
+          s=s.replace(
+              "      - name: Run local source audits\n        run: python tools/audit_all.py\n",
+              "      - name: Initialize PostgreSQL test database\n        run: python tools/init_db.py\n      - name: Run backend test suite\n        run: python -m pytest -q\n      - name: Run local source audits\n        run: python tools/audit_all.py\n"
+          )
+          ci.write_text(s, encoding='utf-8')
+          print('Removed retired-client tests:', len(removed))
+          for path in removed:
+              print(' -', path)
+          PY
+
       - name: Install mobile dependencies and create lockfile
         working-directory: mobile_app
         run: npm install
@@ -64,6 +114,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-core.txt "pydantic>=2,<3" pytest
 
+      - name: Initialize PostgreSQL test database
+        run: python tools/init_db.py
+
+      - name: Run backend tests and capture diagnostics
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q > backend-tests.log 2>&1
+          code=$?
+          echo "$code" > backend-tests.exit
+          cat backend-tests.log
+          exit 0
+
       - name: Run complete source audit and capture diagnostics
         shell: bash
         run: |
@@ -74,20 +137,23 @@ jobs:
           cat migration-audit.log
           exit 0
 
-      - name: Upload migration audit diagnostics
+      - name: Upload migration diagnostics
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: react-native-migration-audit
           path: |
+            backend-tests.log
+            backend-tests.exit
             migration-audit.log
             migration-audit.exit
           if-no-files-found: warn
           retention-days: 3
 
-      - name: Enforce source audit result
+      - name: Enforce backend and source audit results
         shell: bash
         run: |
+          test "$(cat backend-tests.exit)" = "0"
           test "$(cat migration-audit.exit)" = "0"
 
       - name: Run dynamic SQL audit
