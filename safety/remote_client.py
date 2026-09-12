@@ -45,6 +45,13 @@ def _health_timeout() -> int:
     return max(10, min(configured, 90))
 
 
+def _flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 def _json_object(response, name: str) -> dict:
     data = response.json()
     if not isinstance(data, dict):
@@ -175,13 +182,25 @@ def face_adult_verify(path: str) -> dict:
 
 
 def health() -> dict:
-    """Return AI health without allowing a cold-start timeout to crash callers.
+    """Cheap readiness check by default; deep probe only when explicitly enabled.
 
-    Modal may need more than ten seconds to start a scaled-to-zero AI container.
-    A release preflight should retry that bounded cold start, then return an
-    explicit unhealthy result if the service still cannot answer. Runtime safety
-    callers remain fail-closed because `ok` is never synthesized as true.
+    A normal /readyz request must never wake the T4 just to prove that the AI URL
+    is configured. Set AI_DEEP_HEALTH=1 only for an intentional release/debug
+    probe, or configure AI_HEALTH_URL to a future CPU-only health endpoint.
     """
+    configured = bool(os.getenv("AI_SERVICE_URL", "").strip())
+    health_url = os.getenv("AI_HEALTH_URL", "").strip()
+    if not configured:
+        return {"ok": False, "error": "ai_service_url_missing", "mode": "passive"}
+
+    if not health_url and not _flag("AI_DEEP_HEALTH", False):
+        return {
+            "ok": True,
+            "service": "littlenet-ai",
+            "mode": "passive_configured",
+            "gpu_woken": False,
+        }
+
     attempts = 3
     try:
         attempts = max(1, min(int(os.getenv("AI_HEALTH_ATTEMPTS", "3")), 5))
@@ -189,14 +208,16 @@ def health() -> dict:
         attempts = 3
     timeout = _health_timeout()
     last_error = "ai_health_unavailable"
+    url = health_url or (_base() + "/healthz")
     for attempt in range(1, attempts + 1):
         try:
             r = requests.get(  # nosec B113 - timeout is explicitly bounded above
-                _base() + "/healthz", headers=_headers(), timeout=timeout
+                url, headers=_headers(), timeout=timeout
             )
             r.raise_for_status()
             data = _json_object(r, "health")
             if data.get("ok") is True:
+                data.setdefault("mode", "deep")
                 return data
             last_error = str(data.get("error") or data.get("status") or "ai_not_ready")
         except (requests.RequestException, ValueError) as exc:
@@ -209,10 +230,18 @@ def health() -> dict:
         "detail": last_error[:300],
         "attempts": attempts,
         "timeout_seconds": timeout,
+        "mode": "deep",
     }
 
 
 def rank_texts(profile_text: str, items: list[dict]) -> list[dict]:
+    """Remote semantic ranking is opt-in because it otherwise wakes the T4 on feeds.
+
+    Returning [] is intentional: the caller already has a deterministic ranking
+    fallback for safe/allowed candidate posts.
+    """
+    if not _flag("AI_ENABLE_REMOTE_RANKING", False):
+        return []
     payload={
         "profile_text": (profile_text or "")[:500],
         "items": [{"id": int(x["id"]), "text": str(x.get("text", ""))[:500]} for x in items[:60]],
