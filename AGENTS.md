@@ -1,61 +1,28 @@
-# AGENTS.md
+# LittleNet Agent Contract
 
-## Role
-You build. The human describes the product in one paragraph. You select stack, UI kit, skills, and components. No per-widget questions.
+## Goal
+LittleNet is a child-safe social and learning application. Preserve the working Python backend and build the mobile client in `mobile_app/` only.
 
-## Always
-1. Read this file.
-2. Use Context7 before coding against a library.
-3. Use 21st or shadcn CLI before inventing a component.
-4. Use Playwright to verify a UI path you just created.
-5. Use find-skills when you lack a procedure.
+## Source of truth
+- Mobile: React Native + Expo + TypeScript in `mobile_app/`.
+- Backend/API: existing Flask/Python modules. Do not rewrite the backend into another framework.
+- Database: PostgreSQL/Neon through the existing `database/` layer.
+- AI/moderation: existing `safety/`, `services/`, `modal_ai.py`, and async media worker paths.
+- Media: private R2 storage. New mobile image/video posting must use `/api/mobile/v2/uploads/*` and processing status APIs.
 
-## Stack
-- **Web app**: Next.js App Router + TypeScript + Tailwind CSS v4 + shadcn/ui
-- **Dashboard chrome**: shadcn-admin patterns (sidebar, topbar, table, drawer, settings)
-- **Marketing motion**: Magic UI / Aceternity-style via shadcn CLI or 21st search — never a second design system
-- **App blocks**: ReUI / Kibo / Origin / 21st catalog when a block already exists
-- **Chat / agent UI**: assistant-ui or CopilotKit (controlled generative UI = OUR components)
-- **Python / multi-agent backends**: FastAPI
-- **SaaS auth + billing**: Better Auth or Auth.js + Stripe or Polar from a known starter. Do not hand-roll auth.
-- **VS Code extension**: official VS Code contribution model + webview. Webview UI still uses the same tokens as the web app if a companion dashboard exists.
-- **CLI**: one command surface, JSON + human output.
-- **Forbidden**: MUI, Chakra, Ant, Bootstrap, random CSS frameworks, a second icon set, a second color system.
-- **Install UI with**: `npx shadcn@latest add <name>` or 21st search + install. Never hand-roll Button, Input, Table, Dialog, Form, Sidebar, Tabs, Chart.
+## Non-negotiable rules
+1. Do not create a second mobile app root.
+2. Do not generate a WebView wrapper.
+3. Do not move business rules into the client. Parent controls, moderation, screen time, relationship approval and safety remain server-enforced.
+4. Do not replace working backend modules unless a concrete bug requires it.
+5. Never put backend secrets in Expo. The only expected mobile environment variable is `EXPO_PUBLIC_API_BASE_URL` unless a new public value is explicitly required.
+6. Prefer `/api/mobile/v2` where a v2 route exists. Keep v1 only for endpoints that have no v2 equivalent.
+7. Direct media upload goes to R2 quarantine, then background moderation, then status polling. Do not reintroduce synchronous upload-through-AI behavior.
+8. Keep package identity `com.littlenet.app`.
+9. Before finishing a change, run `npm run typecheck` and `npm run export:android` in `mobile_app/`, plus the relevant Python tests for backend changes.
 
-## How You Research (Agent Search — Mandatory)
-Before writing code that touches a library you are not 100% sure about:
-1. Context7 / ctx7 docs for that library + current version.
-2. If the question is "does a component already exist?": 21st search, then shadcn registry, then ReUI.
-3. If the question is "how does this repo / API / issue actually work?": Firecrawl developer search or GitHub search. Read the README and the last relevant issue/PR.
-4. If the question is "is the UI I just built real?": Playwright — open it, click the primary path, fix what broke.
-5. If you lack a workflow: find-skills, install one skill, follow it.
-Do not invent APIs from memory when Context7 is available.
-
-## UI kit by idea
-- **A. Landing / waitlist / launch**: shadcn + Magic UI / Aceternity / 21st marketing blocks. Sections: nav, hero + one CTA, proof, 3-feature bento, pricing, FAQ, footer. Dark, sparse, high contrast. No dashboard shell on a marketing page.
-- **B. B2B SaaS dashboard (security, cost, compliance, admin)**: shadcn-admin + ReUI / Kibo / 21st app blocks. Sidebar app, KPI row, filterable table, detail drawer, settings, billing. Look: Linear / Vercel / Stripe. Dense and quiet. Trust > decoration.
-- **C. Conversational / WhatsApp / voice console**: assistant-ui or CopilotKit. Transcript, tool-call cards, citations, approve/reject for side effects. Mobile-first empty states. English first; Kannada-ready copy structure.
-- **D. VS Code extension + optional companion CLI / web**:
-  - Extension: package.json contributes, commands, views, webview or TreeView.
-  - Webview: same shadcn tokens as the SaaS dashboard if both exist.
-  - Marketing site for the extension uses kit A only. Never wrap a fake Next.js dashboard inside the webview.
-- **E. India ops tools (GST, clinic, school, RTO, forms)**: shadcn forms + tables + stepper + printable/PDF output. Large tap targets, obvious primary button, bilingual-ready strings.
-
-### RAKSHEX / DEVPULSE (when the idea is this product)
-- **Product**: AI cybersecurity SaaS + VS Code extension.
-- **Jobs**: real-time secrets/token/password detection in code, Postman, repos; OWASP/compliance scanning; LLM API cost intelligence.
-- **Surfaces that may exist together**:
-  1. VS Code extension (kit D) — scan current file / workspace, inline diagnostics, panel of findings
-  2. CLI `npx rakshex scan` — CI and local
-  3. SaaS dashboard (kit B) — org, repos, findings inbox, policy, cost of LLM calls, billing
-  4. Marketing site (kit A) — rakshex.in style launch page only
-- **First vertical slice unless specified otherwise**: Extension or CLI that scans a folder for high-confidence secrets and prints / shows a findings list. Dashboard and billing come AFTER that slice works.
-- **Visual**: kit B. Security product. No neon hacker aesthetic, no particle heroes.
-- **Search, don't guess**: VS Code Extension API via Context7, secret-pattern prior art via GitHub/Firecrawl, shadcn table/drawer via 21st or shadcn CLI.
+## UI direction
+Use the provided LittleNet/Stitch visual references when they exist, with a polished Instagram-familiar layout adapted for children. Reuse a small set of shared primitives and tokens; do not add multiple UI systems.
 
 ## Definition of done
-One user path works end-to-end with real kit UI, current docs, and no placeholder buttons.
-
-## Stop rule
-After a working slice, name the next 3 files. Do not expand scope.
+A changed user path is wired to the real API, has loading/error/empty states, passes type checking, and does not weaken server-side safety controls.

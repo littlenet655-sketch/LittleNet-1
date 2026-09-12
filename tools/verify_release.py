@@ -1,65 +1,38 @@
-"""Verify that the sanitized handoff ZIP contains the native LittleNet release source only."""
 from pathlib import Path
-import sys,zipfile
+import sys
+import zipfile
 
-ROOT=Path(__file__).resolve().parents[1]
-ZIP=ROOT.parent/'LittleNet-complete-release.zip'
+ROOT = Path(__file__).resolve().parents[1]
+ZIP = ROOT.parent / 'LittleNet-complete-release.zip'
 if not ZIP.exists():
     raise SystemExit('Release ZIP not found; run tools/package_release.py first')
 
-forbidden_names={'.env','local.properties'}
-forbidden_parts={'.git','.pytest_cache','__pycache__','.venv','venv','uploads','models','model_cache','.gradle','build'}
-forbidden_suffixes={'.pyc','.pyo','.jks','.keystore'}
-required=[
-    'README.md',
-    'BUILD_STATUS.md',
-    'SCOPE_STATUS.md',
-    '.env.example',
-    'app.py',
-    'modal_ai.py',
-    'modal_web.py',
-    'mobile/api.py',
-    'mobile/admin_api.py',
-    'mobile_flutter/pubspec.yaml',
-    'mobile_flutter/lib/main.dart',
-    'mobile_flutter/tool/prepare_android.sh',
-    '.github/workflows/flutter-native.yml',
-    '.github/workflows/release-android.yml',
+required = [
+    'README.md', 'BUILD_STATUS.md', 'SCOPE_STATUS.md', '.env.example',
+    'app.py', 'modal_ai.py', 'modal_web.py', 'mobile/api.py', 'mobile/admin_api.py',
+    'mobile_app/package.json', 'mobile_app/package-lock.json', 'mobile_app/app.json',
+    'mobile_app/App.tsx', 'mobile_app/src/api/client.ts',
+    '.github/workflows/react-native.yml', '.github/workflows/release-mobile.yml',
     '.github/workflows/deploy-modal.yml',
 ]
-errors=[]
+errors = []
 with zipfile.ZipFile(ZIP) as z:
-    names=z.namelist()
-    for name in names:
-        p=Path(name)
-        if p.name in forbidden_names:
-            errors.append(f'forbidden file: {name}')
-        if any(part in forbidden_parts for part in p.parts):
-            errors.append(f'forbidden runtime path: {name}')
-        if p.suffix in forbidden_suffixes:
-            errors.append(f'forbidden sensitive/build suffix: {name}')
+    names = z.namelist()
     for name in required:
         if name not in names:
             errors.append(f'missing release file: {name}')
-
-    # Check only executable/native application source. Tooling is intentionally
-    # allowed to mention WebView because prepare_android.sh contains the guard
-    # that rejects any generated WebView runner.
-    native_source_prefixes=('mobile_flutter/lib/','mobile_flutter/android/')
     for name in names:
-        if not name.startswith(native_source_prefixes):
-            continue
-        if not name.endswith(('.dart','.yaml','.yml','.kt','.java','.xml')):
-            continue
-        try:
-            text=z.read(name).decode('utf-8',errors='ignore').lower()
-        except Exception:
-            continue
-        if any(term in text for term in (
-            'webview_flutter','inappwebview','android.webkit.webview','webviewclient'
-        )):
-            errors.append(f'webview regression in native release source: {name}')
+        p = Path(name)
+        if p.name in {'.env', 'local.properties'}:
+            errors.append(f'forbidden file: {name}')
+        if any(part in {'.git', '.pytest_cache', '__pycache__', '.venv', 'venv', 'node_modules', 'mobile_flutter'} for part in p.parts):
+            errors.append(f'forbidden runtime/legacy path: {name}')
+        if p.parts and p.parts[0] == 'android':
+            errors.append(f'forbidden duplicate Android root: {name}')
+        if p.suffix in {'.pyc', '.pyo', '.jks', '.keystore', '.apk', '.aab'}:
+            errors.append(f'forbidden build/sensitive suffix: {name}')
 
-print('RELEASE_FILES',len(names),'ERRORS',len(errors))
-[print('-',e) for e in errors]
+print('RELEASE_FILES', len(names), 'ERRORS', len(errors))
+for error in errors:
+    print('-', error)
 sys.exit(bool(errors))

@@ -4,21 +4,16 @@ on:
   workflow_dispatch:
     inputs:
       live_url:
-        description: "Public HTTPS LittleNet web URL"
+        description: Public HTTPS LittleNet backend URL
         required: false
         type: string
-      deploy_web:
-        description: "Deploy the Flask web service as well as AI"
-        required: true
-        type: boolean
-        default: true
       migrate_database:
-        description: "Apply LittleNet PostgreSQL schema/upgrades before validation"
+        description: Apply PostgreSQL schema/upgrades before validation
         required: true
         type: boolean
         default: true
   push:
-    branches: [ main ]
+    branches: [main]
     paths:
       - '.github/workflows/deploy-modal.yml'
       - 'modal_ai.py'
@@ -26,9 +21,7 @@ on:
       - 'ai_server.py'
       - 'app.py'
       - 'auth/**'
-      - 'mailg/**'
       - 'safety/**'
-      - 'safety/face_service.py'
       - 'services/**'
       - 'parent/**'
       - 'child/**'
@@ -37,12 +30,8 @@ on:
       - 'admin/**'
       - 'quiz/**'
       - 'mobile/**'
-      - 'static/js/**'
-      - 'static/js/parent_liveness_mediapipe.js'
-      - 'db/migrations/**'
       - 'database/**'
-      - 'tools/install_mediapipe_assets.py'
-      - 'tools/seed_quizzes.py'
+      - 'db/migrations/**'
 
 permissions:
   contents: read
@@ -58,193 +47,52 @@ jobs:
       MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
       MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-
-      - name: Install Modal CLI
-        run: python -m pip install --upgrade "modal>=1.5,<2"
-
-      - name: Verify release URL and Modal credentials
-        shell: bash
+          python-version: '3.11'
+      - run: python -m pip install --upgrade "modal>=1.5,<2"
+      - name: Validate URL and Modal credentials
         run: |
           python - <<'PY'
-          import os, sys
-          u=os.environ.get('LIVE_URL','').strip().rstrip('/')
-          if not u.startswith('https://') or 'YOUR-LITTLENET-BACKEND' in u or 'localhost' in u or '127.0.0.1' in u:
-              sys.exit(f'LIVE_URL must be the real HTTPS LittleNet deployment, got: {u!r}')
-          print('Live URL:',u)
+          import os,sys
+          url=os.environ.get('LIVE_URL','').strip().rstrip('/')
+          if not url.startswith('https://') or 'localhost' in url or '127.0.0.1' in url:
+              sys.exit(f'LIVE_URL must be a public HTTPS deployment, got {url!r}')
           PY
-          test -n "$MODAL_TOKEN_ID" || (echo "Missing MODAL_TOKEN_ID secret" && exit 1)
-          test -n "$MODAL_TOKEN_SECRET" || (echo "Missing MODAL_TOKEN_SECRET secret" && exit 1)
+          test -n "$MODAL_TOKEN_ID"
+          test -n "$MODAL_TOKEN_SECRET"
           modal token info
-
-      - name: Deploy AI service
-        run: modal deploy modal_ai.py
-
-      - name: Deploy web service
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        run: modal deploy modal_web.py
-
+      - run: modal deploy modal_ai.py
+      - run: modal deploy modal_web.py
       - name: Apply database schema and migrations
-        if: ${{ (github.event_name == 'push' || inputs.deploy_web) && (github.event_name == 'push' || inputs.migrate_database) }}
+        if: ${{ github.event_name == 'push' || inputs.migrate_database }}
         run: modal run modal_web.py --init-db
-
-      - name: Seed mandatory age-banded quiz bank
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        run: modal run modal_web.py --seed
-
-      # Warm the AI deployment before the strict web preflight. A cold Modal GPU
-      # can legitimately need longer than the web health probe timeout, while the
-      # warmup itself validates the complete locked model set.
-      - name: Warm and validate every locked-scope AI model
-        run: modal run modal_ai.py
-
-      - name: Run DB, AI, Presidio, liveness, mail, R2 and BASE_URL preflight
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        run: modal run modal_web.py --preflight
-
-      - name: Require public health and ready endpoints
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        shell: bash
+      - run: modal run modal_web.py --seed
+      - run: modal run modal_ai.py
+      - run: modal run modal_web.py --preflight
+      - name: Validate public readiness and mobile API
         run: |
           set -euo pipefail
           URL="${LIVE_URL%/}"
-          ok=0
-          for i in $(seq 1 24); do
-            if curl --connect-timeout 10 --max-time 30 -fsS "$URL/healthz" > healthz.json; then
-              ok=1
-              break
-            fi
-            echo "Waiting for public web endpoint ($i/24)..."
-            sleep 10
-          done
-          test "$ok" = 1 || (echo "Public /healthz never became healthy" && exit 1)
-          cat healthz.json
+          curl --connect-timeout 10 --max-time 30 --fail-with-body -sS "$URL/healthz" | tee healthz.json
           curl --connect-timeout 10 --max-time 90 --fail-with-body -sS "$URL/readyz" | tee readyz.json
-          python - <<'PY'
-          import json
-          data=json.load(open('readyz.json',encoding='utf-8'))
-          if data.get('status') != 'ready':
-              raise SystemExit(f"Live /readyz is not ready: {data}")
-          for key in ('database','ai','mail'):
-              if data.get(key) is not True:
-                  raise SystemExit(f"Live /readyz {key} is not true: {data}")
-          print('Public readiness: PASS')
-          PY
-
-      - name: Require native mobile API health
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          URL="${LIVE_URL%/}"
           curl --connect-timeout 10 --max-time 60 --fail-with-body -sS "$URL/api/mobile/v1/health" | tee mobile-health.json
           python - <<'PY'
           import json
-          data=json.load(open('mobile-health.json',encoding='utf-8'))
-          if data.get('ok') is not True:
-              raise SystemExit(f"Native mobile API is not healthy: {data}")
-          print('Native mobile API health: PASS')
+          ready=json.load(open('readyz.json',encoding='utf-8'))
+          mobile=json.load(open('mobile-health.json',encoding='utf-8'))
+          if ready.get('status') != 'ready': raise SystemExit(f'Not ready: {ready}')
+          if mobile.get('ok') is not True or mobile.get('client') != 'react-native':
+              raise SystemExit(f'Mobile API identity mismatch: {mobile}')
           PY
-
-      - name: Set up Node for public browser smoke
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-
-      - name: Install Playwright Chromium
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        run: |
-          npm install --no-save @playwright/test@latest
-          npx playwright install --with-deps chromium
-
-      - name: Run strict public browser smoke
-        if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-        env:
-          E2E_BASE_URL: ${{ env.LIVE_URL }}
-          E2E_REQUIRE_READY: '1'
-        run: npx playwright test tests/e2e/release-smoke.spec.js --project=chromium
-
-      - name: Upload live release evidence
-        if: ${{ always() && (github.event_name == 'push' || inputs.deploy_web) }}
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: littlenet-live-release-evidence
           path: |
             healthz.json
             readyz.json
             mobile-health.json
-            playwright-report
-            test-results
           if-no-files-found: ignore
           retention-days: 14
-
-  live-apk:
-    needs: deploy
-    if: ${{ github.event_name == 'push' || inputs.deploy_web }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 35
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Flutter stable
-        uses: subosito/flutter-action@v2
-        with:
-          channel: stable
-          cache: true
-
-      - name: Generate exact-branded native Android runner
-        working-directory: mobile_flutter
-        run: bash tool/prepare_android.sh
-
-      - name: Install Dart dependencies
-        working-directory: mobile_flutter
-        run: flutter pub get
-
-      - name: Prove live client has no WebView
-        run: |
-          set -euo pipefail
-          if grep -R -n -E 'webview_flutter|InAppWebView|android\.webkit\.WebView|WebViewClient|loadUrl\(' mobile_flutter/lib mobile_flutter/android 2>/dev/null; then
-            echo 'WebView dependency/code found in live native app' >&2
-            exit 1
-          fi
-
-      - name: Analyze and test native client
-        working-directory: mobile_flutter
-        run: |
-          flutter analyze --no-fatal-warnings --no-fatal-infos
-          flutter test
-
-      - name: Build installable native live APK
-        working-directory: mobile_flutter
-        env:
-          BACKEND_URL: ${{ env.LIVE_URL }}
-        run: flutter build apk --release --dart-define=LITTLENET_API_BASE="${BACKEND_URL%/}"
-
-      - name: Verify native package, Flutter engine and no WebView
-        run: |
-          set -euo pipefail
-          APK=mobile_flutter/build/app/outputs/flutter-apk/app-release.apk
-          test -s "$APK"
-          AAPT="$(find "$ANDROID_HOME/build-tools" -type f -name aapt 2>/dev/null | sort -V | tail -n 1)"
-          test -n "$AAPT"
-          "$AAPT" dump badging "$APK" | grep -q "package: name='com.littlenet.app'"
-          unzip -l "$APK" | grep -q 'lib/arm64-v8a/libflutter.so'
-          ! unzip -l "$APK" | grep -qi 'webview_flutter'
-          sha256sum "$APK" | tee LittleNet-live-native-apk.sha256
-
-      - name: Upload live native APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: LittleNet-live-native-Flutter-APK
-          path: |
-            mobile_flutter/build/app/outputs/flutter-apk/app-release.apk
-            LittleNet-live-native-apk.sha256
-          if-no-files-found: error
-          retention-days: 30

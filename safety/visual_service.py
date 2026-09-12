@@ -1,5 +1,6 @@
 import math,os,tempfile,subprocess
 from .common import env_flag,normalize_signals,timed_call,timeout_seconds
+from .scene_sampler import combined_frame_indices
 
 CLIP_MODEL_ID='openai/clip-vit-base-patch32'
 CLIP_MODEL_REVISION='3d74acf'
@@ -176,7 +177,7 @@ def _video_frames(path,max_frames):
     import cv2
     from .policy import decide
     cap=cv2.VideoCapture(path);total=int(cap.get(cv2.CAP_PROP_FRAME_COUNT) or 0)
-    idxs=[int(i*max(total-1,0)/max(max_frames-1,1)) for i in range(min(max_frames,max(total,1)))];outs=[]
+    idxs=combined_frame_indices(path,total,max_frames);outs=[]
     for idx in idxs:
         cap.set(cv2.CAP_PROP_POS_FRAMES,idx);good,frame=cap.read()
         if not good:continue
@@ -201,7 +202,7 @@ def check_video(path,max_frames=None):
         if not outs:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['no_video_frames']},category='VIDEO')
         keys=['adult_score','sexual_score','weapon_score','violence_score','general_score'];out={k:max(float(x.get(k,0)) for x in outs) for k in keys};out['toxicity_score']=0
         out['partial_safety_failure']=any(x.get('partial_safety_failure') for x in outs);out['total_safety_failure']=all(x.get('total_safety_failure') for x in outs);out['errors']=[err for x in outs for err in x.get('errors',[])]
-        out['model_signals']={'sampled_frames':len(outs),'requested_frames':requested,'frames':[x.get('model_signals',{}) for x in outs]}
+        out['model_signals']={'sampled_frames':len(outs),'requested_frames':requested,'sampling':'scene+uniform','frames':[x.get('model_signals',{}) for x in outs]}
         out['category']='ADULT' if max(out['adult_score'],out['sexual_score'])>=.4 else ('WEAPON' if out['weapon_score']>=.45 else 'VIDEO')
         return normalize_signals(out,category='VIDEO')
     except Exception as exc:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['video_timeout' if 'timeout' in str(exc) else 'video_processing']},category='VIDEO')

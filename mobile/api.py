@@ -466,7 +466,7 @@ def _resolve_parent_review(parent_id: int, event_id: int, requested: str):
 def register_mobile_api(bp):
     @bp.route("/api/mobile/v1/health")
     def mobile_health():
-        return jsonify(ok=True, client="flutter", webview=False, api_version=1)
+        return jsonify(ok=True, client="react-native", framework="expo", webview=False, api_versions=[1, 2])
 
     @bp.route("/api/mobile/v1/auth/login", methods=["POST"])
     @csrf.exempt
