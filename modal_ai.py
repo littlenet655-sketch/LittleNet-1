@@ -55,8 +55,11 @@ image = (
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
             "LITTLENET_DETOXIFY_MODEL": "multilingual",
-            "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "3",
-            "LITTLENET_VIDEO_MAX_FRAMES": "60",
+            # Scene-aware sampling already protects short scene changes. A 4 s
+            # uniform backup interval plus a 24-frame cap keeps long reels from
+            # multiplying GPU work while retaining scene-selected evidence.
+            "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "4",
+            "LITTLENET_VIDEO_MAX_FRAMES": "24",
             "LITTLENET_ENABLE_SCENEDETECT": "1",
             "LITTLENET_SCENEDETECT_THRESHOLD": "27",
             "LITTLENET_YOLO_WEIGHTS": "/root/littlenet/yolov8n-oiv7.pt",
@@ -68,7 +71,7 @@ image = (
             "LITTLENET_FALCONSAI_BLOCK_THRESHOLD": "0.70",
             "LITTLENET_CLIP_REVIEW_THRESHOLD": "0.40",
             "LITTLENET_CLIP_BLOCK_THRESHOLD": "0.65",
-            "LITTLENET_DEPLOY_VERSION": "10",
+            "LITTLENET_DEPLOY_VERSION": "11",
         }
     )
     .add_local_dir(
@@ -95,11 +98,18 @@ image = (
     volumes={"/cache": model_cache},
     timeout=900,
     startup_timeout=900,
-    scaledown_window=300,
+    # Keep scale-to-zero, but release an idle T4 much sooner than the old
+    # five-minute window. 120 s is a compromise between demo responsiveness
+    # and credit usage after bursts of uploads.
+    scaledown_window=120,
     min_containers=0,
-    max_containers=2,
+    # One GPU worker is enough for the current college/demo load and prevents
+    # short bursts from doubling GPU spend.
+    max_containers=1,
 )
-@modal.concurrent(max_inputs=2, target_inputs=1)
+# These models execute synchronously and compete for GPU/CPU memory. One heavy
+# request per container gives more predictable latency than overlapping two.
+@modal.concurrent(max_inputs=1, target_inputs=1)
 @modal.wsgi_app()
 def ai_web():
     os.chdir("/root/littlenet")

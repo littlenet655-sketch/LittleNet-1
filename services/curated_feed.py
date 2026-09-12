@@ -165,15 +165,11 @@ def fetch_curated_candidates(child_id: int, surface: str = "FEED", limit: int = 
 
 
 def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 60) -> list[dict[str, Any]]:
-    """Retrieve social posts for the child from their approved connections or open discovery reels."""
+    """Retrieve safe social posts using only fixed parameterized SQL."""
     cats = effective_categories(child_id)
     age_grp = _age_group(child_id)
     is_reel = str(surface).upper() == "REELS"
-
     if is_reel:
-        # Per LittleNet Frozen Spec Section 6 & 23:
-        # Reels is a child-safe vertical video discovery surface across eligible community
-        # and educational reels. It is not restricted to existing friends.
         rows = fetch_all(
             """SELECT p.*, u.full_name, cp.profile_picture,
                  (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
@@ -197,19 +193,10 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
             (child_id, child_id, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
         )
         return [normalize_social_item(r) for r in rows]
-
     from child.service import discoverable_child_ids
-    allowed_child_ids = discoverable_child_ids(child_id)
-    # If the child has friends, prioritize their posts; if not, show safe community posts
-    if allowed_child_ids:
-        child_filter_clause = "p.child_id = ANY(%s)"
-        child_filter_param = allowed_child_ids
-    else:
-        child_filter_clause = "%s::int[] IS NULL"
-        child_filter_param = None
-
+    allowed_child_ids = discoverable_child_ids(child_id) or None
     rows = fetch_all(
-        f"""SELECT p.*, u.full_name, cp.profile_picture,
+        """SELECT p.*, u.full_name, cp.profile_picture,
              (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
              (SELECT COUNT(*) FROM comments c WHERE c.post_id = p.post_id AND c.moderation_status = 'ALLOWED') AS comments_count,
              EXISTS(SELECT 1 FROM followers f WHERE f.approved = TRUE AND f.approval_stage = 'ACTIVE'
@@ -219,7 +206,7 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
            LEFT JOIN child_profiles cp ON cp.child_id = p.child_id
            WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE AND p.is_story = FALSE
              AND p.is_reel = FALSE
-             AND {child_filter_clause}
+             AND (%s::int[] IS NULL OR p.child_id = ANY(%s::int[]))
              AND p.content_category = ANY(%s)
              AND (%s IS NULL OR p.audience_age_group = 'ALL' OR p.audience_age_group = %s)
              AND p.child_id <> %s
@@ -229,7 +216,8 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
                UNION SELECT muted_id FROM muted_users WHERE muter_id = %s)
            ORDER BY p.created_at DESC
            LIMIT %s""",
-        (child_id, child_id, child_filter_param, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
+        (child_id, child_id, allowed_child_ids, allowed_child_ids, cats, age_grp, age_grp,
+         child_id, child_id, child_id, child_id, limit),
     )
     return [normalize_social_item(r) for r in rows]
 

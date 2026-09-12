@@ -1,0 +1,42 @@
+name: Build LittleNet Android with EAS
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: mobile_app
+    env:
+      EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
+      EXPO_OWNER: ${{ vars.EXPO_OWNER }}
+      EXPO_PROJECT_ID: ${{ vars.EXPO_PROJECT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: mobile_app/package-lock.json
+      - name: Require Expo release configuration
+        run: |
+          test -n "$EXPO_TOKEN" || (echo 'Missing EXPO_TOKEN secret' && exit 1)
+          test -n "$EXPO_OWNER" || (echo 'Missing EXPO_OWNER repository variable' && exit 1)
+          test -n "$EXPO_PROJECT_ID" || (echo 'Missing EXPO_PROJECT_ID repository variable' && exit 1)
+      - run: npm ci
+      - name: Inject account-owned EAS identifiers for this build only
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const p = JSON.parse(fs.readFileSync('app.json', 'utf8'));
+          p.expo.owner = process.env.EXPO_OWNER;
+          p.expo.extra = { ...(p.expo.extra || {}), eas: { projectId: process.env.EXPO_PROJECT_ID } };
+          fs.writeFileSync('app.json', JSON.stringify(p, null, 2) + '\n');
+          NODE
+      - run: npx eas-cli@latest build --platform android --profile production --non-interactive --no-wait
