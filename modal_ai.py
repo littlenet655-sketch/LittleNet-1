@@ -95,9 +95,9 @@ image = (
     volumes={"/cache": model_cache},
     timeout=900,
     startup_timeout=900,
-    scaledown_window=300,
+    scaledown_window=60,
     min_containers=0,
-    max_containers=2,
+    max_containers=1,
 )
 @modal.concurrent(max_inputs=2, target_inputs=1)
 @modal.wsgi_app()
