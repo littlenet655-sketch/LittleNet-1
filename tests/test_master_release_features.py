@@ -54,15 +54,15 @@ def test_face_challenge_and_replay_protection(client):
     assert len(nonce) >= 32
 
     # Ensure user has biometric credentials enrolled
-    import hmac, hashlib, secrets
+    import hmac, hashlib, secrets, json
     face_prof = fetch_one("SELECT biometric_key FROM face_profiles WHERE child_id=%s", (user["user_id"],))
     if not face_prof or not face_prof.get("biometric_key"):
         b_key = secrets.token_hex(32)
         execute(
             """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
-               VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
-               ON CONFLICT (child_id) DO UPDATE SET biometric_key=EXCLUDED.biometric_key""",
-            (user["user_id"], b_key),
+               VALUES(%s, %s::jsonb, 'Facenet512', %s)
+               ON CONFLICT (child_id) DO UPDATE SET biometric_key=EXCLUDED.biometric_key, model_name='Facenet512', embedding=EXCLUDED.embedding""",
+            (user["user_id"], json.dumps([0.05] * 512), b_key),
         )
     else:
         b_key = face_prof["biometric_key"]

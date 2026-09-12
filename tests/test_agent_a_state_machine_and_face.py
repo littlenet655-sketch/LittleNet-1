@@ -45,17 +45,61 @@ def test_validated_embedding_rejects_empty_and_invalid():
     with pytest.raises(ValueError, match="embedding_missing"):
         face_service._validated_embedding(None)
 
-    with pytest.raises(ValueError, match="insufficient_dimensions"):
+    # Rejection of <512 and >512 dimensions (including 128, 511, 513)
+    with pytest.raises(ValueError, match="invalid_embedding_dimensions"):
         face_service._validated_embedding([0.1] * 64)
 
+    with pytest.raises(ValueError, match="invalid_embedding_dimensions"):
+        face_service._validated_embedding([0.1] * 128)
+
+    with pytest.raises(ValueError, match="invalid_embedding_dimensions"):
+        face_service._validated_embedding([0.1] * 511)
+
+    with pytest.raises(ValueError, match="invalid_embedding_dimensions"):
+        face_service._validated_embedding([0.1] * 513)
+
+    # Non-finite values: NaN, Infinity
     with pytest.raises(ValueError, match="embedding_invalid"):
         face_service._validated_embedding([float('nan')] * 512)
 
     with pytest.raises(ValueError, match="embedding_invalid"):
+        face_service._validated_embedding([float('inf')] * 512)
+
+    with pytest.raises(ValueError, match="embedding_invalid"):
+        face_service._validated_embedding([float('-inf')] * 512)
+
+    # Zero vector
+    with pytest.raises(ValueError, match="embedding_invalid"):
         face_service._validated_embedding([0.0] * 512)
+
+    # Booleans and strings
+    with pytest.raises(ValueError, match="embedding_invalid"):
+        face_service._validated_embedding([True] * 512)
 
     with pytest.raises(ValueError, match="embedding_invalid"):
         face_service._validated_embedding(["bad_string"] * 512)
+
+
+def test_enroll_and_verify_model_name_enforcement():
+    # Enroll rejects wrong model
+    with pytest.raises(ValueError, match="invalid_model_name"):
+        face_service.enroll(202, "dummy_path.jpg", model_name="VGG-Face")
+
+    # Verify rejects wrong model in profile
+    with patch("safety.face_service.fetch_one", return_value={"embedding": _valid_vector(), "model_name": "VGG-Face"}), \
+         patch("safety.face_service.execute") as mock_exec:
+        match, reason, dist = face_service.verify(202, "dummy.jpg")
+        assert match is False
+        assert reason == "invalid_enrolled_model"
+        mock_exec.assert_called_once()
+        assert "invalid_enrolled_model" in mock_exec.call_args[0][1]
+
+    # Verify rejects malformed JSON
+    with patch("safety.face_service.fetch_one", return_value={"embedding": "{not_valid_json", "model_name": "Facenet512"}), \
+         patch("safety.face_service.execute") as mock_exec:
+        match, reason, dist = face_service.verify(202, "dummy.jpg")
+        assert match is False
+        assert reason == "invalid_enrolled_embedding"
 
 
 def test_validated_embedding_accepts_valid_vector():
@@ -118,13 +162,13 @@ def test_child_gate_blocks_invalid_or_missing_face_profile(client):
 # ============================================================================
 
 def test_verify_fails_closed_on_corrupt_stored_profile():
-    with patch("safety.face_service.fetch_one", return_value={"embedding": []}), \
+    with patch("safety.face_service.fetch_one", return_value={"embedding": [], "model_name": "Facenet512"}), \
          patch("safety.face_service.execute"):
         match, reason, dist = face_service.verify(202, "dummy.jpg")
         assert match is False
         assert reason == "invalid_enrolled_embedding"
 
-    with patch("safety.face_service.fetch_one", return_value={"embedding": [0.0] * 512}), \
+    with patch("safety.face_service.fetch_one", return_value={"embedding": [0.0] * 512, "model_name": "Facenet512"}), \
          patch("safety.face_service.execute"):
         match, reason, dist = face_service.verify(202, "dummy.jpg")
         assert match is False
@@ -132,7 +176,7 @@ def test_verify_fails_closed_on_corrupt_stored_profile():
 
 
 def test_verify_liveness_failure():
-    with patch("safety.face_service.fetch_one", return_value={"embedding": _valid_vector()}), \
+    with patch("safety.face_service.fetch_one", return_value={"embedding": _valid_vector(), "model_name": "Facenet512"}), \
          patch("safety.remote_client.enabled", return_value=False), \
          patch("safety.face_service._embedding", side_effect=ValueError("liveness_failed")), \
          patch("safety.face_service.execute"):
@@ -143,7 +187,7 @@ def test_verify_liveness_failure():
 
 def test_verify_match_and_mismatch():
     enrolled = _valid_vector(val=0.05)
-    with patch("safety.face_service.fetch_one", return_value={"embedding": enrolled}), \
+    with patch("safety.face_service.fetch_one", return_value={"embedding": enrolled, "model_name": "Facenet512"}), \
          patch("safety.remote_client.enabled", return_value=False), \
          patch("safety.face_service.execute"):
 
@@ -401,26 +445,25 @@ def test_v2_upload_complete_idempotent_retry(client):
         "kind": "POST",
         "expected_size_bytes": 1000,
         "mime_type": "image/jpeg",
-        "status": "PENDING",
+        "status": "CONSUMED",
         "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
     }
 
     with patch("mobile.api.fetch_one") as mock_fetch, \
          patch("services.object_storage.enabled", return_value=True), \
          patch("services.object_storage.head_object", return_value={"content_length": 1000, "content_type": "image/jpeg"}), \
-         patch("services.job_queue.enqueue_media_job", return_value="job_modal_456"), \
          patch("mobile.api.get_db_connection") as mock_conn:
 
         mock_cur = MagicMock()
         mock_cur.fetchone.side_effect = [
             session_data,
-            {"post_id": 501, "media_path": "uploads/r2/quarantine/202/pic.jpg", "processing_status": "UPLOADED"}, # existing post found!
+            {"post_id": 501, "source_media_path": "uploads/r2/quarantine/202/pic.jpg", "processing_status": "PROCESSING", "processing_error": None},
         ]
         mock_conn.return_value.cursor.return_value = mock_cur
 
         mock_fetch.side_effect = [
             {"user_id": 202, "role": "CHILD", "account_status": "ACTIVE", "age": 10, "is_approved": True}, # auth
-            {"embedding": _valid_vector()}, # face gate
+            {"embedding": _valid_vector(), "model_name": "Facenet512"}, # face gate
         ]
         res = client.post(f"/api/mobile/v2/uploads/{session_data['upload_id']}/complete", headers=headers, json={})
         assert res.status_code == 200
@@ -428,6 +471,7 @@ def test_v2_upload_complete_idempotent_retry(client):
         assert data["ok"] is True
         assert data["post_id"] == 501
         assert data["status"] == "PROCESSING"
+        assert data["idempotent"] is True
 
 
 

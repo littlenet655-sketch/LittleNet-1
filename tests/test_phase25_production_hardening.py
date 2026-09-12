@@ -14,6 +14,7 @@ Verifies all security guards added in Phase 2.5:
 9. Quarantined posts never appear in child feed
 """
 
+import json
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -71,8 +72,9 @@ def _ensure_child(child_id: int, username: str) -> None:
         (child_id,),
     )
     execute(
-        "INSERT INTO face_profiles(child_id, embedding) VALUES(%s, '[]'::jsonb) ON CONFLICT DO NOTHING",
-        (child_id,),
+        """INSERT INTO face_profiles(child_id, embedding, model_name)
+           VALUES(%s, %s::jsonb, 'Facenet512') ON CONFLICT DO NOTHING""",
+        (child_id, json.dumps([0.05] * 512)),
     )
     execute(
         "INSERT INTO child_quiz_progress(child_id, quiz_required) VALUES(%s, FALSE) ON CONFLICT DO NOTHING",
@@ -336,12 +338,14 @@ def test_quarantined_post_not_in_feed(app):
 
     with app.app_context():
         _ensure_child(9913, "hkid_13")
+        q_key = f"uploads/r2/quarantine/9913/{uuid.uuid4().hex}/source.jpg"
         row = execute(
             """INSERT INTO posts(child_id, media_type, source_media_path, caption,
                    is_safe, moderation_status, processing_status, content_category)
-               VALUES(9913, 'IMAGE', 'uploads/r2/quarantine/9913/qid/source.jpg',
+               VALUES(9913, 'IMAGE', %s,
                    'Hidden quarantine post', FALSE, 'PENDING', 'PROCESSING', 'Other')
                RETURNING post_id""",
+            (q_key,),
             returning=True,
         )
         pid = row["post_id"]

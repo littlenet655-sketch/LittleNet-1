@@ -5,7 +5,7 @@ from database.connection import fetch_one, execute
 
 def _validated_embedding(values):
     if not isinstance(values,(list,tuple)) or not values:raise ValueError('embedding_missing')
-    if len(values) < 128: raise ValueError('insufficient_dimensions')
+    if len(values) != 512: raise ValueError('invalid_embedding_dimensions')
     out=[]
     for value in values:
         if isinstance(value,bool):raise ValueError('embedding_invalid')
@@ -34,7 +34,9 @@ def _embedding(img_path):
     return timed_call('deepface',run,timeout_seconds('deepface',120))
 
 
-def enroll(child_id,path):
+def enroll(child_id,path,model_name='Facenet512'):
+    if model_name != 'Facenet512':
+        raise ValueError('invalid_model_name')
     emb=_embedding(path)
     emb=_validated_embedding(emb)
     execute('''INSERT INTO face_profiles(child_id,embedding,model_name,reference_path)
@@ -45,14 +47,18 @@ def enroll(child_id,path):
 
 
 def verify(child_id,path):
-    row=fetch_one('SELECT embedding FROM face_profiles WHERE child_id=%s',(child_id,))
+    row=fetch_one('SELECT embedding, model_name FROM face_profiles WHERE child_id=%s',(child_id,))
     if not row: return False,'not_enrolled',None
+    if row.get('model_name') != 'Facenet512':
+        execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,reason) VALUES(%s,FALSE,NULL,%s)',(child_id,'invalid_enrolled_model'))
+        return False,'invalid_enrolled_model',None
     ref=row.get('embedding')
     if ref is None: return False,'not_enrolled',None
     try:
         ref=json.loads(ref) if isinstance(ref,str) else ref
         ref=_validated_embedding(ref)
     except Exception:
+
         execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,reason) VALUES(%s,FALSE,NULL,%s)',(child_id,'invalid_enrolled_embedding'))
         return False,'invalid_enrolled_embedding',None
     try:

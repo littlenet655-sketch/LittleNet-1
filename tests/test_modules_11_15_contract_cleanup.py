@@ -144,8 +144,10 @@ def test_chat_approved_connection_enforced(client):
 
 def test_profile_supported_fields_persisted(client):
     headers = _child_headers(202)
+    mock_decision = MagicMock(action="ALLOW")
     with patch("mobile.api.fetch_one", return_value={"user_id": 202, "role": "CHILD", "account_status": "ACTIVE"}), \
          patch("mobile.api.get_child_profile", return_value={"child_id": 202, "full_name": "Test Child"}), \
+         patch("mobile.api.evaluate", return_value=({}, mock_decision)), \
          patch("mobile.api.create_child_profile") as mock_create, \
          patch("mobile.api.replace_profile_tags") as mock_tags, \
          patch("mobile.api.parent_notify"), \
