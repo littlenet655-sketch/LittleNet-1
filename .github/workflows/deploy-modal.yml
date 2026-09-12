@@ -1,5 +1,8 @@
 name: Deploy & Validate LittleNet Live
 
+# Modal deployment is intentionally manual. Automatic deploys on every main
+# push previously rebuilt/restarted cloud services and could trigger GPU warmup
+# repeatedly, consuming Starter credits without a user actually testing AI.
 on:
   workflow_dispatch:
     inputs:
@@ -12,32 +15,17 @@ on:
         required: true
         type: boolean
         default: true
-  push:
-    branches: [main]
-    paths:
-      - '.github/workflows/deploy-modal.yml'
-      - 'modal_ai.py'
-      - 'modal_web.py'
-      - 'ai_server.py'
-      - 'app.py'
-      - 'auth/**'
-      - 'safety/**'
-      - 'services/**'
-      - 'parent/**'
-      - 'child/**'
-      - 'childMessage/**'
-      - 'uploadPost/**'
-      - 'admin/**'
-      - 'quiz/**'
-      - 'mobile/**'
-      - 'database/**'
-      - 'db/migrations/**'
+      warm_ai_models:
+        description: Run the expensive one-time T4 model warmup after deploy
+        required: true
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 env:
-  LIVE_URL: ${{ inputs.live_url || vars.LITTLENET_LIVE_URL || 'https://littlenet655--littlenet-web-web.modal.run' }}
+  LIVE_URL: ${{ inputs.live_url || vars.LITTLENET_LIVE_URL || 'https://netlittle2--littlenet-web-web.modal.run' }}
 
 jobs:
   deploy:
@@ -66,10 +54,12 @@ jobs:
       - run: modal deploy modal_ai.py
       - run: modal deploy modal_web.py
       - name: Apply database schema and migrations
-        if: ${{ github.event_name == 'push' || inputs.migrate_database }}
+        if: ${{ inputs.migrate_database }}
         run: modal run modal_web.py --init-db
       - run: modal run modal_web.py --seed
-      - run: modal run modal_ai.py
+      - name: Optional expensive AI model warmup
+        if: ${{ inputs.warm_ai_models }}
+        run: modal run modal_ai.py
       - run: modal run modal_web.py --preflight
       - name: Validate public readiness and mobile API
         run: |
