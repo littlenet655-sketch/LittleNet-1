@@ -55,9 +55,8 @@ image = (
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
             "LITTLENET_DETOXIFY_MODEL": "multilingual",
-            # Scene-aware sampling already protects short scene changes. A 4 s
-            # uniform backup interval plus a 24-frame cap keeps long reels from
-            # multiplying GPU work while retaining scene-selected evidence.
+            # Scene-aware sampling protects short scene changes. The bounded
+            # uniform fallback prevents long reels from multiplying GPU work.
             "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "4",
             "LITTLENET_VIDEO_MAX_FRAMES": "24",
             "LITTLENET_ENABLE_SCENEDETECT": "1",
@@ -71,7 +70,7 @@ image = (
             "LITTLENET_FALCONSAI_BLOCK_THRESHOLD": "0.70",
             "LITTLENET_CLIP_REVIEW_THRESHOLD": "0.40",
             "LITTLENET_CLIP_BLOCK_THRESHOLD": "0.65",
-            "LITTLENET_DEPLOY_VERSION": "11",
+            "LITTLENET_DEPLOY_VERSION": "12",
         }
     )
     .add_local_dir(
@@ -98,17 +97,12 @@ image = (
     volumes={"/cache": model_cache},
     timeout=900,
     startup_timeout=900,
-    # Keep scale-to-zero, but release an idle T4 much sooner than the old
-    # five-minute window. 120 s is a compromise between demo responsiveness
-    # and credit usage after bursts of uploads.
-    scaledown_window=120,
+    # Scale fully to zero. Keep only a short warm tail so a small demo burst is
+    # responsive without paying for minutes of idle GPU after every request.
+    scaledown_window=60,
     min_containers=0,
-    # One GPU worker is enough for the current college/demo load and prevents
-    # short bursts from doubling GPU spend.
     max_containers=1,
 )
-# These models execute synchronously and compete for GPU/CPU memory. One heavy
-# request per container gives more predictable latency than overlapping two.
 @modal.concurrent(max_inputs=1, target_inputs=1)
 @modal.wsgi_app()
 def ai_web():
@@ -126,15 +120,11 @@ def ai_web():
     secrets=[ai_secret],
     volumes={"/cache": model_cache},
     timeout=1800,
+    min_containers=0,
+    max_containers=1,
 )
 def warm_models():
-    """Warm every model/dependency in the locked moderation/face stack.
-
-    A failed component raises after reporting all failures, turning this command
-    into a deployment/release gate rather than a diagnostic that can be ignored.
-    Only plain serializable metadata is returned to Modal; model/session objects
-    stay inside the remote container and are never sent back to the caller.
-    """
+    """Warm every model/dependency in the locked moderation/face stack."""
     os.chdir("/root/littlenet")
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     os.environ["LITTLENET_AI_SERVER"] = "1"
@@ -166,8 +156,6 @@ def warm_models():
     def nudenet_validate():
         NudeDetector = importlib.import_module("nudenet").NudeDetector
         detector = NudeDetector()
-        # NudeDetector owns an ONNX Runtime InferenceSession, which is not
-        # pickleable. Validate construction here but return only plain metadata.
         return {"loaded": detector is not None}
     run("nudenet", nudenet_validate)
 
@@ -205,8 +193,6 @@ def warm_models():
         SceneManager = scenedetect.SceneManager
         open_video = scenedetect.open_video
         ContentDetector = detectors.ContentDetector
-        # Constructor/import validation catches incompatible OpenCV/PySceneDetect
-        # deployments without requiring a persistent sample video in production.
         _ = SceneManager(); _ = ContentDetector(threshold=27)
         return {"available": callable(open_video)}
     run("pyscenedetect", scene_detect)
@@ -219,7 +205,12 @@ def warm_models():
 
 
 @app.local_entrypoint()
-def main():
+def main(confirm_gpu_warmup: bool = False):
+    """Warm models only after an explicit opt-in to avoid accidental GPU spend."""
+    if not confirm_gpu_warmup:
+        print("GPU warmup skipped. This command is intentionally cost-guarded.")
+        print("To warm once on purpose, run: modal run modal_ai.py --confirm-gpu-warmup")
+        return
     report = warm_models.remote()
     for name, result in report.items():
         print(f"{'OK' if result['ok'] else 'FAIL':4} {name}: {result.get('error', '')}")
