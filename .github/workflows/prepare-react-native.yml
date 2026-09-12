@@ -32,6 +32,18 @@ jobs:
         with:
           node-version: '22.13.0'
 
+      - name: Fix bootstrap-only content guard
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tools/prepare_replit_react_native.py')
+          s=p.read_text(encoding='utf-8')
+          start=s.index('# Final hard guard: no active source/config should retain the retired framework name.')
+          end=s.index('if (ROOT / "mobile_flutter").exists()', start)
+          replacement='# Final hard guard: legacy mobile directories must be gone.\nthis_file.unlink()\n'
+          p.write_text(s[:start]+replacement+s[end:], encoding='utf-8')
+          PY
+
       - name: Prepare single React Native/Expo repository
         run: python tools/prepare_replit_react_native.py
 
@@ -68,5 +80,3 @@ jobs:
           git status --short
           git commit -m "refactor: replace legacy mobile client with React Native Expo"
           git push origin HEAD:react-native-migration
-
-# git-data-trigger
