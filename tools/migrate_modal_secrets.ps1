@@ -11,10 +11,10 @@ $exportScript = Join-Path $repoRoot "tools\modal_secret_export.py"
 $success = $false
 
 function Run-Modal {
-    param([string[]]$Args)
-    & modal @Args
+    param([Parameter(Mandatory=$true)][string[]]$ModalArgs)
+    & modal @ModalArgs
     if ($LASTEXITCODE -ne 0) {
-        throw "modal command failed: modal $($Args -join ' ')"
+        throw "modal command failed: modal $($ModalArgs -join ' ')"
     }
 }
 
@@ -31,14 +31,14 @@ try {
     New-Item -ItemType Directory -Force $tempDir | Out-Null
 
     Write-Host "`n[1/4] Activating old Modal profile..." -ForegroundColor Cyan
-    Run-Modal @("profile", "activate", $OldProfile)
+    Run-Modal -ModalArgs @("profile", "activate", $OldProfile)
     $currentOld = (& modal profile current).Trim()
     if ($currentOld -ne $OldProfile) {
         throw "Expected old profile '$OldProfile', got '$currentOld'"
     }
 
     Write-Host "[2/4] Exporting four LittleNet secrets to a temporary local directory..." -ForegroundColor Cyan
-    Run-Modal @("run", $exportScript, "--output-dir", $tempDir)
+    Run-Modal -ModalArgs @("run", $exportScript, "--output-dir", $tempDir)
 
     $files = @{
         "littlenet-ai-secrets"  = Join-Path $tempDir "littlenet-ai-secrets.env"
@@ -56,7 +56,7 @@ try {
     }
 
     Write-Host "[3/4] Activating new Modal profile and importing secrets..." -ForegroundColor Cyan
-    Run-Modal @("profile", "activate", $NewProfile)
+    Run-Modal -ModalArgs @("profile", "activate", $NewProfile)
     $currentNew = (& modal profile current).Trim()
     if ($currentNew -ne $NewProfile) {
         throw "Expected new profile '$NewProfile', got '$currentNew'"
@@ -64,11 +64,11 @@ try {
 
     foreach ($name in @("littlenet-ai-secrets", "littlenet-web-secrets", "littlenet-r2", "littlenet-email")) {
         Write-Host "  importing $name"
-        Run-Modal @("secret", "create", $name, "--from-dotenv", $files[$name], "--force")
+        Run-Modal -ModalArgs @("secret", "create", $name, "--from-dotenv", $files[$name], "--force")
     }
 
     Write-Host "[4/4] Verifying secret objects in the new workspace..." -ForegroundColor Cyan
-    Run-Modal @("secret", "list")
+    Run-Modal -ModalArgs @("secret", "list")
 
     $success = $true
     Write-Host "`nMigration completed. Active profile: $NewProfile" -ForegroundColor Green
@@ -86,6 +86,5 @@ finally {
         Write-Host "Do not upload or commit that directory." -ForegroundColor Yellow
     }
 
-    # Leave the new workspace active when possible.
     try { & modal profile activate $NewProfile | Out-Null } catch {}
 }
