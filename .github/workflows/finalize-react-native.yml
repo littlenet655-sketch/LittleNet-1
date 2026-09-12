@@ -48,6 +48,16 @@ jobs:
       - name: Prepare final repository tree
         run: python tools/finalize_react_native_migration.py
 
+      - name: Correct generated contract escaping
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('tests/test_react_native_contract.py')
+          s=p.read_text(encoding='utf-8')
+          s=s.replace("docs='\n'.join", "docs='\\\\n'.join")
+          p.write_text(s, encoding='utf-8')
+          PY
+
       - name: Install and validate Expo app
         working-directory: mobile_app
         run: |
