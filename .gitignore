@@ -7,7 +7,7 @@ __pycache__/
 .venv/
 venv/
 uploads/
-models/
+/models/
 model_cache/
 *.log
 .DS_Store
@@ -48,3 +48,11 @@ static/vendor/
 *.zip
 playwright-report/
 test-results/
+.codex/
+stitch_ui_reference/
+dist/
+
+
+recovery_backup/
+tools/k6/
+

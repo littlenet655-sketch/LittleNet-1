@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parent
 app = modal.App("littlenet-ai")
 model_cache = modal.Volume.from_name("littlenet-model-cache", create_if_missing=True)
 ai_secret = modal.Secret.from_name("littlenet-ai-secrets", required_keys=["AI_SHARED_SECRET"])
+web_secret = modal.Secret.from_name("littlenet-web-secrets")
+r2_secret = modal.Secret.from_name("littlenet-r2")
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
@@ -38,6 +40,9 @@ image = (
         "Pillow==12.3.0",
         "pypdf==6.16.1",
         "requests==2.33.0",
+        "qstash>=3.4.0,<4",
+        "psycopg2-binary==2.9.10",
+        "boto3==1.40.17",
     )
     .workdir("/root/littlenet")
     .env(
@@ -63,7 +68,7 @@ image = (
             "LITTLENET_FALCONSAI_BLOCK_THRESHOLD": "0.70",
             "LITTLENET_CLIP_REVIEW_THRESHOLD": "0.40",
             "LITTLENET_CLIP_BLOCK_THRESHOLD": "0.65",
-            "LITTLENET_DEPLOY_VERSION": "8",
+            "LITTLENET_DEPLOY_VERSION": "10",
         }
     )
     .add_local_dir(
@@ -71,9 +76,10 @@ image = (
         remote_path="/root/littlenet",
         ignore=[
             ".git/**", ".pytest_cache/**", "**/__pycache__/**", "uploads/**",
-            "android/**", "tools/gradle-8.9/**", "node_modules/**", ".agent/**",
-            ".agents/**", "agent/**", ".claude/**", ".cursor/**", "*.db",
-            "*.zip", "*.apk", ".env",
+            "android/**", "android-build/**", "mobile_flutter/**", "datasets/**",
+            "test-results/**", "playwright-report/**", "tools/gradle-8.9/**",
+            "node_modules/**", ".agent/**", ".agents/**", "agent/**",
+            ".claude/**", ".cursor/**", "*.db", "*.zip", "*.apk", ".env",
         ],
         copy=True,
     )
@@ -85,13 +91,13 @@ image = (
     gpu="T4",
     cpu=4.0,
     memory=8192,
-    secrets=[ai_secret],
+    secrets=[ai_secret, web_secret, r2_secret],
     volumes={"/cache": model_cache},
     timeout=900,
     startup_timeout=900,
-    scaledown_window=300,
+    scaledown_window=60,
     min_containers=0,
-    max_containers=2,
+    max_containers=1,
 )
 @modal.concurrent(max_inputs=2, target_inputs=1)
 @modal.wsgi_app()
@@ -136,17 +142,19 @@ def warm_models():
         except Exception as exc:
             results[name] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
+    import importlib
+
     def detoxify_explicit():
-        from detoxify import Detoxify
-        model=Detoxify("multilingual")
-        scores=model.predict("Hello, this is a normal LittleNet safety warmup sentence.")
+        Detoxify = importlib.import_module("detoxify").Detoxify
+        model = Detoxify("multilingual")
+        scores = model.predict("Hello, this is a normal LittleNet safety warmup sentence.")
         if "sexual_explicit" not in scores:
             raise RuntimeError("Detoxify multilingual model is missing sexual_explicit output")
         return {"labels": sorted(scores.keys())}
     run("detoxify_multilingual_explicit", detoxify_explicit)
 
     def nudenet_validate():
-        from nudenet import NudeDetector
+        NudeDetector = importlib.import_module("nudenet").NudeDetector
         detector = NudeDetector()
         # NudeDetector owns an ONNX Runtime InferenceSession, which is not
         # pickleable. Validate construction here but return only plain metadata.
@@ -154,18 +162,20 @@ def warm_models():
     run("nudenet", nudenet_validate)
 
     def clip():
-        from transformers import CLIPModel, CLIPProcessor
+        transformers = importlib.import_module("transformers")
+        CLIPModel = transformers.CLIPModel
+        CLIPProcessor = transformers.CLIPProcessor
         CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
         CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
     run("clip", clip)
 
     def falconsai():
-        from transformers import pipeline
+        pipeline = importlib.import_module("transformers").pipeline
         pipeline("image-classification", model="Falconsai/nsfw_image_detection", device=0)
     run("falconsai_nsfw", falconsai)
 
     def yolo():
-        from ultralytics import YOLO
+        YOLO = importlib.import_module("ultralytics").YOLO
         from safety.yolo_policy import dangerous_label_coverage
         model = YOLO("/root/littlenet/yolov8n-oiv7.pt")
         matched = dangerous_label_coverage(model.names)
@@ -175,13 +185,16 @@ def warm_models():
     run("yolo_oiv7", yolo)
 
     def face():
-        from deepface import DeepFace
+        DeepFace = importlib.import_module("deepface").DeepFace
         DeepFace.build_model("Facenet512")
     run("deepface_facenet512", face)
 
     def scene_detect():
-        from scenedetect import SceneManager, open_video
-        from scenedetect.detectors import ContentDetector
+        scenedetect = importlib.import_module("scenedetect")
+        detectors = importlib.import_module("scenedetect.detectors")
+        SceneManager = scenedetect.SceneManager
+        open_video = scenedetect.open_video
+        ContentDetector = detectors.ContentDetector
         # Constructor/import validation catches incompatible OpenCV/PySceneDetect
         # deployments without requiring a persistent sample video in production.
         _ = SceneManager(); _ = ContentDetector(threshold=27)

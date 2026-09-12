@@ -63,16 +63,17 @@ def needs_onboarding_quiz(cid, required_questions=2):
     face = fetch_one('SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1', (cid,))
     if not face:
         return False
-    row = fetch_one('SELECT COUNT(*) AS n FROM child_quiz_attempts WHERE child_id=%s', (cid,)) or {'n': 0}
+    row = fetch_one('SELECT COUNT(DISTINCT quiz_id) AS n FROM child_quiz_attempts WHERE child_id=%s', (cid,)) or {'n': 0}
     return int(row.get('n') or 0) < int(required_questions)
 
 # ─── Classic quiz bank (used by quiz page) ────────────────────────────────────
 
 def quizzes(cid, limit=5):
-    """Return random unseen age-matched questions; repeat only after exhaustion."""
+    """Return randomized unseen age-matched questions; guarantee non-repeating until pool is exhausted, then cycle from least-recently attempted."""
     g = age_group(cid)
     if not g:
         return []
+    limit = max(1, int(limit))
     rows = fetch_all(
         '''SELECT * FROM quizzes
            WHERE age_group=%s
@@ -82,17 +83,50 @@ def quizzes(cid, limit=5):
            ORDER BY RANDOM() LIMIT %s''',
         (g, cid, limit)
     )
-    if not rows:
-        rows = fetch_all(
-            'SELECT * FROM quizzes WHERE age_group=%s ORDER BY RANDOM() LIMIT %s',
-            (g, limit)
-        )
+    if len(rows) < limit:
+        needed = limit - len(rows)
+        existing_ids = [r['quiz_id'] for r in rows]
+        if existing_ids:
+            backfill = fetch_all(
+                '''SELECT q.* FROM quizzes q
+                   JOIN (
+                       SELECT quiz_id, MAX(attempted_at) as last_attempted
+                       FROM child_quiz_attempts
+                       WHERE child_id = %s
+                       GROUP BY quiz_id
+                   ) a ON q.quiz_id = a.quiz_id
+                   WHERE q.age_group = %s
+                     AND q.quiz_id NOT IN %s
+                   ORDER BY a.last_attempted ASC, RANDOM()
+                   LIMIT %s''',
+                (cid, g, tuple(existing_ids), needed)
+            )
+        else:
+            backfill = fetch_all(
+                '''SELECT q.* FROM quizzes q
+                   JOIN (
+                       SELECT quiz_id, MAX(attempted_at) as last_attempted
+                       FROM child_quiz_attempts
+                       WHERE child_id = %s
+                       GROUP BY quiz_id
+                   ) a ON q.quiz_id = a.quiz_id
+                   WHERE q.age_group = %s
+                   ORDER BY a.last_attempted ASC, RANDOM()
+                   LIMIT %s''',
+                (cid, g, needed)
+            )
+        if not backfill and not rows:
+            backfill = fetch_all(
+                'SELECT * FROM quizzes WHERE age_group=%s ORDER BY RANDOM() LIMIT %s',
+                (g, needed)
+            )
+        rows.extend(backfill)
     return rows
 
 # ─── Feed quiz — single unseen question injected between reels ────────────────
 
 def next_feed_quiz(cid):
-    """Return ONE unseen question, preferring personalized/adaptive material."""
+    """Return ONE unseen question, preferring personalized/adaptive material, cycling least-recently attempted when bank is exhausted."""
     g = age_group(cid)
     if not g:
         return None
@@ -135,8 +169,21 @@ def next_feed_quiz(cid):
             (g, cid)
         )
     if not row:
-        # Exhausted children still receive a compulsory age-matched question;
-        # repeats are safer than silently unlocking an overdue intervention.
+        # Exhausted children receive the single least-recently attempted question (strict LRU)
+        row = fetch_one(
+            '''SELECT q.* FROM quizzes q
+               JOIN (
+                   SELECT quiz_id, MAX(attempted_at) as last_attempted
+                   FROM child_quiz_attempts
+                   WHERE child_id = %s
+                   GROUP BY quiz_id
+               ) a ON q.quiz_id = a.quiz_id
+               WHERE q.age_group = %s
+               ORDER BY a.last_attempted ASC, RANDOM()
+               LIMIT 1''',
+            (cid, g)
+        )
+    if not row:
         row = fetch_one('SELECT * FROM quizzes WHERE age_group=%s ORDER BY RANDOM() LIMIT 1', (g,))
 
     try:
@@ -165,14 +212,22 @@ def setting(cid):
 
 
 def feed_quiz_interval(cid):
-    """Return the server-authoritative view threshold for the next brain break."""
+    """Return the server-authoritative view threshold for the next brain break.
+
+    LittleNet default is 4.
+    Parent may configure a MORE frequent intervention: 1, 2, 3, or 4.
+    Never allow > 4 for a child. Child cannot disable it.
+    """
     threshold = FEED_QUIZ_INTERVAL
     s = setting(cid)
-    if s and s.get('mandatory_quiz'):
-        try:
-            threshold = min(threshold, max(1, int(s.get('quiz_frequency') or threshold)))
-        except (TypeError, ValueError):
-            pass
+    if s:
+        raw_freq = s.get('quiz_frequency')
+        if raw_freq is not None:
+            try:
+                freq = int(raw_freq)
+                threshold = min(FEED_QUIZ_INTERVAL, max(1, freq))
+            except (TypeError, ValueError):
+                threshold = FEED_QUIZ_INTERVAL
     return threshold
 
 
@@ -192,25 +247,40 @@ def feed_quiz_state(cid):
     }
 
 
-def record_feed_view(cid, post_id):
-    """Atomically count one unique visible post/reel in the current quiz cycle.
+def record_feed_view(cid, post_id, source_type="POST"):
+    """Atomically count one unique visible post/reel/curated item in the current quiz cycle.
 
-    The browser reports the concrete post id when it becomes substantially visible.
+    The client reports the concrete item id when it becomes substantially visible.
+    Both Feed posts and Reels increment the SAME server-side view counter.
+    Curated LittleNet content and social child content both count.
     PostgreSQL owns de-duplication and the latch. Once ``quiz_required`` is true,
     additional views cannot clear or postpone it; only ``reset`` after an accepted
     answer starts a new cycle.
     """
+    stype = str(source_type or "POST").upper()
     try:
-        post_id = int(post_id)
+        clean_id = int(str(post_id).replace("CURATED:", "").replace("POST:", ""))
     except (TypeError, ValueError):
         return {'accepted': False, **feed_quiz_state(cid)}
-    visible = fetch_one(
-        """SELECT post_id FROM posts
-           WHERE post_id=%s AND moderation_status='ALLOWED' AND is_safe=TRUE AND is_story=FALSE""",
-        (post_id,)
-    )
-    if not visible:
-        return {'accepted': False, **feed_quiz_state(cid)}
+
+    if stype == "CURATED" or str(post_id).startswith("CURATED:"):
+        stype = "CURATED"
+        visible = fetch_one(
+            """SELECT content_id AS id FROM curated_content
+               WHERE content_id=%s""",
+            (clean_id,)
+        )
+        if not visible and clean_id <= 0:
+            return {'accepted': False, **feed_quiz_state(cid)}
+    else:
+        stype = "POST"
+        visible = fetch_one(
+            """SELECT post_id AS id FROM posts
+               WHERE post_id=%s AND moderation_status='ALLOWED' AND is_safe=TRUE AND is_story=FALSE""",
+            (clean_id,)
+        )
+        if not visible:
+            return {'accepted': False, **feed_quiz_state(cid)}
 
     threshold = feed_quiz_interval(cid)
     conn = get_db_connection()
@@ -236,10 +306,13 @@ def record_feed_view(cid, post_id):
                     'quiz_id': int(row['required_quiz_id']) if row.get('required_quiz_id') else None,
                     'interval': threshold,
                 }
-            seen = [int(x) for x in (row.get('viewed_post_ids') or []) if str(x).isdigit()]
-            accepted = post_id not in seen
+            seen = [x for x in (row.get('viewed_post_ids') or [])]
+            item_token = f"{stype}:{clean_id}"
+            accepted = (post_id not in seen and item_token not in seen and clean_id not in seen)
             count = int(row.get('posts_seen') or 0)
             if accepted:
+                seen.append(item_token)
+                seen.append(clean_id)
                 seen.append(post_id)
                 count += 1
             required = count >= threshold
@@ -344,10 +417,8 @@ def quiz_due(cid):
     state = feed_quiz_state(cid)
     if state['required']:
         return True
-    s = setting(cid)
-    if not s or not s['mandatory_quiz'] or not quizzes(cid, 1):
-        return False
-    if state['posts_seen'] >= int(s['quiz_frequency']):
+    interval = feed_quiz_interval(cid)
+    if state['posts_seen'] >= interval:
         execute(
             '''INSERT INTO child_quiz_progress(child_id,posts_seen,quiz_required,required_at)
                VALUES(%s,%s,TRUE,NOW())

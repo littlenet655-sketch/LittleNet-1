@@ -22,7 +22,7 @@ def _get_pool():
                     from psycopg2.extras import RealDictCursor
                 except ImportError as exc:
                     raise RuntimeError('psycopg2 is required. Install requirements-core.txt') from exc
-                _pool = ThreadedConnectionPool(1, 10, _database_url(), cursor_factory=RealDictCursor)
+                _pool = ThreadedConnectionPool(2, 20, _database_url(), cursor_factory=RealDictCursor)
     return _pool
 
 
@@ -57,8 +57,15 @@ class PooledConnectionWrapper:
         except Exception:_discard_connection(self._pool,self._conn)
         else:self._pool.putconn(self._conn)
     def __getattr__(self,name):return getattr(self._conn,name)
-    def __enter__(self):return self._conn.__enter__()
-    def __exit__(self,exc_type,exc_val,exc_tb):return self._conn.__exit__(exc_type,exc_val,exc_tb)
+    def __enter__(self):
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        try:
+            return self._conn.__exit__(exc_type, exc_val, exc_tb)
+        finally:
+            self.close()
 
 
 def get_db_connection():

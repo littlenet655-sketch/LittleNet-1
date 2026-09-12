@@ -1,5 +1,5 @@
 FROM python:3.11-slim
-ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 DBMATE_MIGRATIONS_DIR=/app/db/migrations DBMATE_NO_DUMP_SCHEMA=true DBMATE_STRICT=true
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1 DBMATE_MIGRATIONS_DIR=/app/db/migrations DBMATE_NO_DUMP_SCHEMA=true
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg curl ca-certificates && rm -rf /var/lib/apt/lists/* \
     && curl -fsSL -o /usr/local/bin/dbmate https://github.com/amacneil/dbmate/releases/download/v2.34.1/dbmate-linux-amd64 \

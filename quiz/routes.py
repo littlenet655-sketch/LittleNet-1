@@ -69,10 +69,10 @@ def settings():
     kids=children(session['user_id']);cid=int(request.values.get('child_id') or (kids[0]['user_id'] if kids else 0))
     if not owns(session['user_id'],cid):return ('Forbidden',403)
     if request.method=='POST':
-        try:f=int(request.form.get('quiz_frequency',5))
+        try:f=int(request.form.get('quiz_frequency',4))
         except:return ('Invalid frequency',400)
-        if not 1<=f<=50:return ('Frequency 1-50',400)
-        execute('INSERT INTO parent_quiz_settings(parent_id,child_id,quiz_frequency,mandatory_quiz) VALUES(%s,%s,%s,%s) ON CONFLICT(child_id) DO UPDATE SET quiz_frequency=EXCLUDED.quiz_frequency,mandatory_quiz=EXCLUDED.mandatory_quiz',(session['user_id'],cid,f,'mandatory_quiz' in request.form))
+        if not 1<=f<=4:return ('Frequency must be between 1 and 4',400)
+        execute('INSERT INTO parent_quiz_settings(parent_id,child_id,quiz_frequency,mandatory_quiz) VALUES(%s,%s,%s,TRUE) ON CONFLICT(child_id) DO UPDATE SET quiz_frequency=EXCLUDED.quiz_frequency,mandatory_quiz=TRUE',(session['user_id'],cid,f))
         return redirect(f'/quiz/settings/?child_id={cid}')
     return render_template('parent_quiz_settings.html',child_id=cid,settings=fetch_one('SELECT * FROM parent_quiz_settings WHERE child_id=%s',(cid,)))
 

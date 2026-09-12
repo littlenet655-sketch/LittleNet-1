@@ -1,0 +1,129 @@
+{
+  "mobile_flutter/lib/api.dart": {
+    "widgets": [],
+    "api_methods_used": [
+      "restore",
+      "setToken",
+      "clearToken",
+      "logout"
+    ],
+    "lines": 200,
+    "size_bytes": 5674
+  },
+  "mobile_flutter/lib/main.dart": {
+    "widgets": [
+      "LittleNetApp",
+      "_LaunchScreen",
+      "_BrandMark"
+    ],
+    "api_methods_used": [
+      "restore",
+      "clearToken",
+      "logout"
+    ],
+    "lines": 178,
+    "size_bytes": 4751
+  },
+  "mobile_flutter/lib/widgets.dart": {
+    "widgets": [
+      "Avatar",
+      "NativeMedia",
+      "AsyncBody"
+    ],
+    "api_methods_used": [],
+    "lines": 250,
+    "size_bytes": 7081
+  },
+  "mobile_flutter/lib/screens/admin.dart": {
+    "widgets": [
+      "AdminShell",
+      "AdminDashboard",
+      "_Stat",
+      "AdminReviews",
+      "AdminUsers",
+      "AdminAudit",
+      "_AdminSettings"
+    ],
+    "api_methods_used": [],
+    "lines": 454,
+    "size_bytes": 16868
+  },
+  "mobile_flutter/lib/screens/auth.dart": {
+    "widgets": [
+      "LoginScreen",
+      "_LoginBrand",
+      "ParentRegistrationScreen",
+      "ParentVerificationScreen"
+    ],
+    "api_methods_used": [
+      "setToken"
+    ],
+    "lines": 554,
+    "size_bytes": 20876
+  },
+  "mobile_flutter/lib/screens/kids.dart": {
+    "widgets": [
+      "KidsShell",
+      "DiscoverPage",
+      "_PersonCard",
+      "CreatePostPage",
+      "MessagesPage",
+      "ChatPage",
+      "ProfilePage",
+      "_Count"
+    ],
+    "api_methods_used": [],
+    "lines": 631,
+    "size_bytes": 26530
+  },
+  "mobile_flutter/lib/screens/kids_feed.dart": {
+    "widgets": [
+      "KidsHomePage",
+      "StoryBubble",
+      "StoryViewer",
+      "PostCard",
+      "ReelsPage",
+      "ReelPane"
+    ],
+    "api_methods_used": [],
+    "lines": 677,
+    "size_bytes": 21598
+  },
+  "mobile_flutter/lib/screens/kids_learning.dart": {
+    "widgets": [
+      "LearningScreen",
+      "NotificationsScreen"
+    ],
+    "api_methods_used": [],
+    "lines": 247,
+    "size_bytes": 8728
+  },
+  "mobile_flutter/lib/screens/kids_onboarding.dart": {
+    "widgets": [
+      "GateAwareError",
+      "FaceEnrollmentScreen",
+      "QuizGateScreen"
+    ],
+    "api_methods_used": [],
+    "lines": 343,
+    "size_bytes": 11416
+  },
+  "mobile_flutter/lib/screens/parent.dart": {
+    "widgets": [
+      "ParentShell",
+      "ParentDashboard",
+      "ChildDashboardCard",
+      "_Metric",
+      "ParentSafety",
+      "_ReviewCard",
+      "ParentChildren",
+      "ChildControlsScreen",
+      "ScreenTimeScreen",
+      "ParentActivity",
+      "ParentSettings"
+    ],
+    "api_methods_used": [],
+    "lines": 758,
+    "size_bytes": 29589
+  }
+}

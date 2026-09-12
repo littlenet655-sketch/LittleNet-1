@@ -46,7 +46,9 @@ class _LearningScreenState extends State<LearningScreen> {
           ],
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Later')),
+          TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Later')),
           FilledButton(
             onPressed: () => Navigator.pop(context, controller.text.trim()),
             child: const Text('Submit'),
@@ -115,10 +117,12 @@ class _LearningScreenState extends State<LearningScreen> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               const Text('Learning points',
-                                  style: TextStyle(fontWeight: FontWeight.w700)),
+                                  style:
+                                      TextStyle(fontWeight: FontWeight.w700)),
                               Text('${data['points'] ?? 0}',
                                   style: const TextStyle(
-                                      fontSize: 28, fontWeight: FontWeight.w900)),
+                                      fontSize: 28,
+                                      fontWeight: FontWeight.w900)),
                             ],
                           ),
                         ),
@@ -128,12 +132,14 @@ class _LearningScreenState extends State<LearningScreen> {
                 ),
                 const SizedBox(height: 18),
                 const Text('Challenges',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
+                    style:
+                        TextStyle(fontSize: 20, fontWeight: FontWeight.w900)),
                 const SizedBox(height: 8),
                 if (challenges.isEmpty)
                   const Padding(
                     padding: EdgeInsets.symmetric(vertical: 48),
-                    child: Center(child: Text('No learning challenge is due right now.')),
+                    child: Center(
+                        child: Text('No learning challenge is due right now.')),
                   ),
                 ...challenges.map(
                   (challenge) => Card(
@@ -155,7 +161,8 @@ class _LearningScreenState extends State<LearningScreen> {
                         ),
                       ),
                       trailing: challenge['completed'] == true
-                          ? const Icon(Icons.verified_rounded, color: Colors.green)
+                          ? const Icon(Icons.verified_rounded,
+                              color: Colors.green)
                           : const Icon(Icons.chevron_right_rounded),
                       onTap: challenge['completed'] == true
                           ? null
@@ -225,16 +232,19 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
               itemBuilder: (_, i) {
                 final item = items[i];
                 return ListTile(
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                  contentPadding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                   leading: Avatar(
                     api: widget.api,
                     url: item['actor_avatar_url']?.toString(),
                     radius: 22,
                   ),
-                  title: Text(item['message']?.toString() ?? 'LittleNet activity'),
+                  title:
+                      Text(item['message']?.toString() ?? 'LittleNet activity'),
                   subtitle: Text(item['created_at']?.toString() ?? ''),
                   trailing: item['is_read'] == false
-                      ? const Icon(Icons.circle, size: 10, color: Color(0xFF2563EB))
+                      ? const Icon(Icons.circle,
+                          size: 10, color: Color(0xFF2563EB))
                       : null,
                 );
               },

@@ -86,6 +86,29 @@ def visible_posts(viewer_id, reels=False, limit=20, offset=0):
       (viewer_id,reels,cats,age_group,age_group,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,viewer_id,limit,offset))
 
 
+def discoverable_posts(viewer_id, reels=False, limit=30, offset=0):
+    controls = controls_for_child(viewer_id)
+    feature = 'allow_reels' if reels else 'allow_discover'
+    if not controls.get(feature, True):
+        return []
+    cats = effective_categories(viewer_id)
+    age_group = _age_group(viewer_id)
+    return fetch_all('''SELECT p.*, u.full_name, u.username, cp.profile_picture,
+      (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,
+      (SELECT COUNT(*) FROM comments c WHERE c.post_id=p.post_id AND c.moderation_status='ALLOWED') comments_count
+      FROM posts p JOIN users u ON u.user_id=p.child_id LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
+      WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=%s
+        AND p.content_category = ANY(%s)
+        AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
+        AND p.child_id NOT IN (
+          SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
+          UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
+          UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
+      ORDER BY p.created_at DESC
+      LIMIT %s OFFSET %s''',
+      (reels, cats, age_group, age_group, viewer_id, viewer_id, viewer_id, limit, offset))
+
+
 def active_stories(viewer_id):
     controls=controls_for_child(viewer_id)
     if not controls.get('allow_stories',True):return []

@@ -58,17 +58,7 @@ def _normalized_text(text):
 
 
 def _detox_scores(text):
-    global _DETOX,_DETOX_NAME
-    try:
-        import torch
-        if hasattr(torch,'serialization') and hasattr(torch.serialization,'add_safe_globals'):
-            _orig_load=torch.load
-            def _safe_load(*args,**kwargs):
-                if 'weights_only' not in kwargs:kwargs['weights_only']=False
-                return _orig_load(*args,**kwargs)
-            torch.load=_safe_load
-    except Exception:
-        pass
+    global _DETOX, _DETOX_NAME
     from detoxify import Detoxify
     # ``original`` does not expose sexual_explicit. LittleNet needs that head,
     # so production defaults to multilingual and falls back to unbiased only.
@@ -76,10 +66,33 @@ def _detox_scores(text):
     if model_name not in {'multilingual','unbiased'}:
         model_name='multilingual'
     if _DETOX is None or _DETOX_NAME!=model_name:
+        _orig_load = None
         try:
-            _DETOX=Detoxify(model_name);_DETOX_NAME=model_name
+            import torch
+            if hasattr(torch, 'load'):
+                _orig_load = torch.load
+                def _safe_load(*args, **kwargs):
+                    if 'weights_only' not in kwargs:
+                        kwargs['weights_only'] = False
+                    return _orig_load(*args, **kwargs)
+                torch.load = _safe_load
         except Exception:
-            _DETOX=Detoxify('unbiased');_DETOX_NAME='unbiased'
+            _orig_load = None
+
+        try:
+            try:
+                _DETOX=Detoxify(model_name)
+                _DETOX_NAME=model_name
+            except Exception:
+                _DETOX=Detoxify('unbiased')
+                _DETOX_NAME='unbiased'
+        finally:
+            if _orig_load is not None:
+                try:
+                    import torch
+                    torch.load = _orig_load
+                except Exception:
+                    pass
     scores=_DETOX.predict(text) if text else {}
     if text and 'sexual_explicit' not in scores:
         raise RuntimeError('detoxify_missing_sexual_explicit_head')

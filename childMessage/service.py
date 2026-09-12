@@ -16,10 +16,41 @@ def conversation(a,b):
         return r['conversation_id'] if r and can_interact(a,b) else None
 
 
-def messages(cid,viewer):
+def messages(cid, viewer, limit=None, before_id=None):
     """Read messages only for an authorized participant pair."""
-    conv=fetch_one('SELECT child1_id,child2_id FROM child_conversations WHERE conversation_id=%s AND (child1_id=%s OR child2_id=%s)',(cid,viewer,viewer))
-    if not conv:return []
-    peer=conv['child2_id'] if conv['child1_id']==viewer else conv['child1_id']
-    if not can_interact(viewer,peer):return []
-    return fetch_all("SELECT m.*,u.full_name FROM child_messages m JOIN users u ON u.user_id=m.sender_child_id WHERE m.conversation_id=%s AND m.is_deleted=FALSE AND (m.moderation_status='ALLOWED' OR m.sender_child_id=%s) ORDER BY m.sent_at",(cid,viewer))
+    conv = fetch_one('SELECT child1_id,child2_id FROM child_conversations WHERE conversation_id=%s AND (child1_id=%s OR child2_id=%s)', (cid, viewer, viewer))
+    if not conv:
+        return []
+    peer = conv['child2_id'] if conv['child1_id'] == viewer else conv['child1_id']
+    if not can_interact(viewer, peer):
+        return []
+    
+    params = [cid, viewer]
+    where_extra = ""
+    if before_id is not None:
+        where_extra = " AND m.child_message_id < %s"
+        params.append(before_id)
+        
+    if limit is not None:
+        params.append(limit)
+        rows = fetch_all(
+            f"""SELECT m.*, u.full_name 
+               FROM child_messages m 
+               JOIN users u ON u.user_id = m.sender_child_id 
+               WHERE m.conversation_id = %s AND m.is_deleted = FALSE 
+                 AND (m.moderation_status = 'ALLOWED' OR m.sender_child_id = %s){where_extra} 
+               ORDER BY m.sent_at DESC, m.child_message_id DESC 
+               LIMIT %s""",
+            tuple(params),
+        )
+        return list(reversed(rows))
+
+    return fetch_all(
+        f"""SELECT m.*, u.full_name 
+           FROM child_messages m 
+           JOIN users u ON u.user_id = m.sender_child_id 
+           WHERE m.conversation_id = %s AND m.is_deleted = FALSE 
+             AND (m.moderation_status = 'ALLOWED' OR m.sender_child_id = %s){where_extra} 
+           ORDER BY m.sent_at""",
+        tuple(params),
+    )

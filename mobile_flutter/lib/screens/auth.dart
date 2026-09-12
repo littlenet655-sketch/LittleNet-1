@@ -32,7 +32,10 @@ class _LoginScreenState extends State<LoginScreen> {
 
   Future<void> _login() async {
     if (busy) return;
-    setState(() { busy = true; error = null; });
+    setState(() {
+      busy = true;
+      error = null;
+    });
     try {
       final data = await widget.api.login(
         identifier: identifier.text.trim(),
@@ -63,25 +66,31 @@ class _LoginScreenState extends State<LoginScreen> {
       maxWidth: 1600,
     );
     if (file == null) return;
-    setState(() { busy = true; error = null; });
+    setState(() {
+      busy = true;
+      error = null;
+    });
     try {
       final data = await widget.api.faceLogin(
         identifier: id,
         mode: mode,
         photo: File(file.path),
       );
-      widget.onSignedIn(Map<String, dynamic>.from(data['user'] as Map? ?? const {}));
+      widget.onSignedIn(
+          Map<String, dynamic>.from(data['user'] as Map? ?? const {}));
     } on ApiException catch (e) {
       final reason = e.payload?['reason']?.toString();
       if (e.message == 'account_not_found') {
-        setState(() => error = 'Account not found. Create the account first or use password login.');
+        setState(() => error =
+            'Account not found. Create the account first or use password login.');
       } else if (reason != null && reason.isNotEmpty) {
         setState(() => error = reason.replaceAll('_', ' '));
       } else {
         setState(() => error = friendlyError(e));
       }
     } catch (_) {
-      setState(() => error = 'Face verification could not connect to LittleNet.');
+      setState(
+          () => error = 'Face verification could not connect to LittleNet.');
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -103,7 +112,9 @@ class _LoginScreenState extends State<LoginScreen> {
                     children: [
                       const _LoginBrand(),
                       const SizedBox(height: 18),
-                      const Text('LittleNet', style: TextStyle(fontSize: 31, fontWeight: FontWeight.w900)),
+                      const Text('LittleNet',
+                          style: TextStyle(
+                              fontSize: 31, fontWeight: FontWeight.w900)),
                       const SizedBox(height: 4),
                       const Text(
                         'A safe, AI-guided social world for children',
@@ -113,20 +124,35 @@ class _LoginScreenState extends State<LoginScreen> {
                       const SizedBox(height: 22),
                       SegmentedButton<String>(
                         segments: const [
-                          ButtonSegment(value: 'kids', label: Text('Kids Mode'), icon: Icon(Icons.child_care_rounded)),
-                          ButtonSegment(value: 'parent', label: Text('Parent Mode'), icon: Icon(Icons.shield_outlined)),
-                          ButtonSegment(value: 'admin', label: Text('Admin'), icon: Icon(Icons.admin_panel_settings_outlined)),
+                          ButtonSegment(
+                              value: 'kids',
+                              label: Text('Kids Mode'),
+                              icon: Icon(Icons.child_care_rounded)),
+                          ButtonSegment(
+                              value: 'parent',
+                              label: Text('Parent Mode'),
+                              icon: Icon(Icons.shield_outlined)),
+                          ButtonSegment(
+                              value: 'admin',
+                              label: Text('Admin'),
+                              icon: Icon(Icons.admin_panel_settings_outlined)),
                         ],
                         selected: {mode},
-                        onSelectionChanged: (value) => setState(() { mode = value.first; error = null; }),
+                        onSelectionChanged: (value) => setState(() {
+                          mode = value.first;
+                          error = null;
+                        }),
                       ),
                       if (error != null) ...[
                         const SizedBox(height: 16),
                         Container(
                           width: double.infinity,
                           padding: const EdgeInsets.all(13),
-                          decoration: BoxDecoration(color: const Color(0xFFFFEEEE), borderRadius: BorderRadius.circular(14)),
-                          child: Text(error!, style: const TextStyle(color: Color(0xFFB42318))),
+                          decoration: BoxDecoration(
+                              color: const Color(0xFFFFEEEE),
+                              borderRadius: BorderRadius.circular(14)),
+                          child: Text(error!,
+                              style: const TextStyle(color: Color(0xFFB42318))),
                         ),
                       ],
                       const SizedBox(height: 16),
@@ -134,7 +160,9 @@ class _LoginScreenState extends State<LoginScreen> {
                         controller: identifier,
                         textInputAction: TextInputAction.next,
                         decoration: InputDecoration(
-                          labelText: mode == 'kids' ? 'Username or Child Email' : 'Email or Username',
+                          labelText: mode == 'kids'
+                              ? 'Username or Child Email'
+                              : 'Email or Username',
                           prefixIcon: const Icon(Icons.person_outline_rounded),
                         ),
                       ),
@@ -147,8 +175,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           labelText: 'Password',
                           prefixIcon: const Icon(Icons.lock_outline_rounded),
                           suffixIcon: IconButton(
-                            onPressed: () => setState(() => hidePassword = !hidePassword),
-                            icon: Icon(hidePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                            onPressed: () =>
+                                setState(() => hidePassword = !hidePassword),
+                            icon: Icon(hidePassword
+                                ? Icons.visibility_outlined
+                                : Icons.visibility_off_outlined),
                           ),
                         ),
                       ),
@@ -158,7 +189,10 @@ class _LoginScreenState extends State<LoginScreen> {
                         child: FilledButton.icon(
                           onPressed: busy ? null : _login,
                           icon: busy
-                              ? const SizedBox.square(dimension: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
                               : const Icon(Icons.login_rounded),
                           label: Text(busy ? 'Signing in…' : 'Log In'),
                         ),
@@ -169,7 +203,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           width: double.infinity,
                           child: OutlinedButton.icon(
                             onPressed: busy ? null : _faceLogin,
-                            icon: const Icon(Icons.face_retouching_natural_rounded),
+                            icon: const Icon(
+                                Icons.face_retouching_natural_rounded),
                             label: const Text('Face ID Login'),
                           ),
                         ),
@@ -178,8 +213,11 @@ class _LoginScreenState extends State<LoginScreen> {
                         const SizedBox(height: 12),
                         TextButton.icon(
                           onPressed: () async {
-                            final signedIn = await Navigator.of(context).push<Map<String, dynamic>>(
-                              MaterialPageRoute(builder: (_) => ParentRegistrationScreen(api: widget.api)),
+                            final signedIn = await Navigator.of(context)
+                                .push<Map<String, dynamic>>(
+                              MaterialPageRoute(
+                                  builder: (_) => ParentRegistrationScreen(
+                                      api: widget.api)),
                             );
                             if (signedIn != null) widget.onSignedIn(signedIn);
                           },
@@ -206,7 +244,9 @@ class _LoginBrand extends StatelessWidget {
     return Container(
       width: 82,
       height: 82,
-      decoration: BoxDecoration(color: const Color(0xFF0B0F19), borderRadius: BorderRadius.circular(22)),
+      decoration: BoxDecoration(
+          color: const Color(0xFF0B0F19),
+          borderRadius: BorderRadius.circular(22)),
       child: const Stack(
         alignment: Alignment.center,
         children: [
@@ -223,7 +263,8 @@ class ParentRegistrationScreen extends StatefulWidget {
   final ApiClient api;
 
   @override
-  State<ParentRegistrationScreen> createState() => _ParentRegistrationScreenState();
+  State<ParentRegistrationScreen> createState() =>
+      _ParentRegistrationScreenState();
 }
 
 class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
@@ -258,7 +299,8 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       helpText: 'Parent / guardian date of birth',
     );
     if (picked != null) {
-      dob.text = '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
+      dob.text =
+          '${picked.year.toString().padLeft(4, '0')}-${picked.month.toString().padLeft(2, '0')}-${picked.day.toString().padLeft(2, '0')}';
     }
   }
 
@@ -269,12 +311,17 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       return;
     }
     if (!guardianDeclaration) {
-      setState(() => error = 'Confirm that you are the adult parent or guardian.');
+      setState(
+          () => error = 'Confirm that you are the adult parent or guardian.');
       return;
     }
-    setState(() { busy = true; error = null; });
+    setState(() {
+      busy = true;
+      error = null;
+    });
     try {
-      final data = await widget.api.postJson('/api/mobile/v1/auth/parent/register', {
+      final data =
+          await widget.api.postJson('/api/mobile/v1/auth/parent/register', {
         'username': username.text.trim(),
         'full_name': fullName.text.trim(),
         'email': email.text.trim(),
@@ -283,7 +330,8 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
         'guardian_declaration': '1',
       });
       if (!mounted) return;
-      final signedIn = await Navigator.of(context).pushReplacement<Map<String, dynamic>, Map<String, dynamic>>(
+      final signedIn = await Navigator.of(context)
+          .pushReplacement<Map<String, dynamic>, Map<String, dynamic>>(
         MaterialPageRoute(
           builder: (_) => ParentVerificationScreen(
             api: widget.api,
@@ -309,20 +357,33 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
       body: ListView(
         padding: const EdgeInsets.all(20),
         children: [
-          const Text('Create the verified adult account first.', style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+          const Text('Create the verified adult account first.',
+              style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
           const SizedBox(height: 6),
-          const Text('Email ownership and a live adult camera check are required before Parent Mode activates.'),
+          const Text(
+              'Email ownership and a live adult camera check are required before Parent Mode activates.'),
           const SizedBox(height: 14),
           if (error != null)
             Card(
               color: const Color(0xFFFFEEEE),
-              child: Padding(padding: const EdgeInsets.all(12), child: Text(error!)),
+              child: Padding(
+                  padding: const EdgeInsets.all(12), child: Text(error!)),
             ),
-          TextField(controller: fullName, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Full name')),
+          TextField(
+              controller: fullName,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(labelText: 'Full name')),
           const SizedBox(height: 10),
-          TextField(controller: username, textInputAction: TextInputAction.next, decoration: const InputDecoration(labelText: 'Username')),
+          TextField(
+              controller: username,
+              textInputAction: TextInputAction.next,
+              decoration: const InputDecoration(labelText: 'Username')),
           const SizedBox(height: 10),
-          TextField(controller: email, textInputAction: TextInputAction.next, keyboardType: TextInputType.emailAddress, decoration: const InputDecoration(labelText: 'Email')),
+          TextField(
+              controller: email,
+              textInputAction: TextInputAction.next,
+              keyboardType: TextInputType.emailAddress,
+              decoration: const InputDecoration(labelText: 'Email')),
           const SizedBox(height: 10),
           TextField(
             controller: password,
@@ -331,7 +392,9 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
               labelText: 'Password (minimum 8 characters)',
               suffixIcon: IconButton(
                 onPressed: () => setState(() => hidePassword = !hidePassword),
-                icon: Icon(hidePassword ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                icon: Icon(hidePassword
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined),
               ),
             ),
           ),
@@ -351,8 +414,10 @@ class _ParentRegistrationScreenState extends State<ParentRegistrationScreen> {
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
             value: guardianDeclaration,
-            onChanged: (value) => setState(() => guardianDeclaration = value ?? false),
-            title: const Text('I confirm that I am an adult parent or guardian.'),
+            onChanged: (value) =>
+                setState(() => guardianDeclaration = value ?? false),
+            title:
+                const Text('I confirm that I am an adult parent or guardian.'),
             controlAffinity: ListTileControlAffinity.leading,
           ),
           const SizedBox(height: 12),
@@ -378,7 +443,8 @@ class ParentVerificationScreen extends StatefulWidget {
   final bool initialEmailSent;
 
   @override
-  State<ParentVerificationScreen> createState() => _ParentVerificationScreenState();
+  State<ParentVerificationScreen> createState() =>
+      _ParentVerificationScreenState();
 }
 
 class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
@@ -396,7 +462,8 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
     pendingToken = widget.pendingToken;
     emailSent = widget.initialEmailSent;
     if (!emailSent) {
-      error = 'The verification email was not delivered. Tap Resend code after the LittleNet mail service is available.';
+      error =
+          'The verification email was not delivered. Tap Resend code after the LittleNet mail service is available.';
     }
   }
 
@@ -408,9 +475,14 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
 
   Future<void> _verifyOtp() async {
     if (busy) return;
-    setState(() { busy = true; error = null; notice = null; });
+    setState(() {
+      busy = true;
+      error = null;
+      notice = null;
+    });
     try {
-      final data = await widget.api.postJson('/api/mobile/v1/auth/parent/verify-email', {
+      final data =
+          await widget.api.postJson('/api/mobile/v1/auth/parent/verify-email', {
         'pending_token': pendingToken,
         'otp': otp.text.trim(),
       });
@@ -421,7 +493,8 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
     } on ApiException catch (e) {
       setState(() => error = friendlyError(e));
     } catch (_) {
-      setState(() => error = 'Email verification could not connect to LittleNet.');
+      setState(
+          () => error = 'Email verification could not connect to LittleNet.');
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -429,18 +502,25 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
 
   Future<void> _resendOtp() async {
     if (busy) return;
-    setState(() { busy = true; error = null; notice = null; });
+    setState(() {
+      busy = true;
+      error = null;
+      notice = null;
+    });
     try {
-      final data = await widget.api.postJson('/api/mobile/v1/auth/parent/resend-email', {
+      final data =
+          await widget.api.postJson('/api/mobile/v1/auth/parent/resend-email', {
         'pending_token': pendingToken,
       });
       if (data['ok'] == true) {
         setState(() {
           emailSent = true;
-          notice = 'A new 6-digit verification code was sent. Check your inbox and spam folder.';
+          notice =
+              'A new 6-digit verification code was sent. Check your inbox and spam folder.';
         });
       } else {
-        setState(() => error = data['error']?.toString() ?? 'The verification email could not be sent.');
+        setState(() => error = data['error']?.toString() ??
+            'The verification email could not be sent.');
       }
     } on ApiException catch (e) {
       setState(() => error = friendlyError(e));
@@ -459,7 +539,11 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
       maxWidth: 1800,
     );
     if (photo == null) return;
-    setState(() { busy = true; error = null; notice = null; });
+    setState(() {
+      busy = true;
+      error = null;
+      notice = null;
+    });
     try {
       final data = await widget.api.multipart(
         '/api/mobile/v1/auth/parent/verify-liveness',
@@ -470,11 +554,15 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
       final token = data['token']?.toString();
       if (token != null) await widget.api.setToken(token);
       if (!mounted) return;
-      Navigator.of(context).pop(Map<String, dynamic>.from(data['user'] as Map? ?? const {}));
+      Navigator.of(context)
+          .pop(Map<String, dynamic>.from(data['user'] as Map? ?? const {}));
     } on ApiException catch (e) {
-      setState(() => error = e.payload?['reason']?.toString().replaceAll('_', ' ') ?? friendlyError(e));
+      setState(() => error =
+          e.payload?['reason']?.toString().replaceAll('_', ' ') ??
+              friendlyError(e));
     } catch (_) {
-      setState(() => error = 'Live adult verification could not connect to LittleNet.');
+      setState(() =>
+          error = 'Live adult verification could not connect to LittleNet.');
     } finally {
       if (mounted) setState(() => busy = false);
     }
@@ -492,7 +580,8 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
               color: const Color(0xFFEFFCF6),
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Text(notice!, style: const TextStyle(color: Color(0xFF067647))),
+                child: Text(notice!,
+                    style: const TextStyle(color: Color(0xFF067647))),
               ),
             ),
           if (error != null)
@@ -500,24 +589,32 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
               color: const Color(0xFFFFEEEE),
               child: Padding(
                 padding: const EdgeInsets.all(12),
-                child: Text(error!, style: const TextStyle(color: Color(0xFFB42318))),
+                child: Text(error!,
+                    style: const TextStyle(color: Color(0xFFB42318))),
               ),
             ),
           if (!otpVerified) ...[
             Row(
               children: [
-                Icon(emailSent ? Icons.mark_email_read_rounded : Icons.mark_email_unread_rounded, color: emailSent ? Colors.green : Colors.orange),
+                Icon(
+                    emailSent
+                        ? Icons.mark_email_read_rounded
+                        : Icons.mark_email_unread_rounded,
+                    color: emailSent ? Colors.green : Colors.orange),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(
-                    emailSent ? 'Verification email sent.' : 'Verification email is waiting to be sent.',
+                    emailSent
+                        ? 'Verification email sent.'
+                        : 'Verification email is waiting to be sent.',
                     style: const TextStyle(fontWeight: FontWeight.w700),
                   ),
                 ),
               ],
             ),
             const SizedBox(height: 14),
-            const Text('Enter the 6-digit code from your email.', style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
+            const Text('Enter the 6-digit code from your email.',
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w800)),
             const SizedBox(height: 14),
             TextField(
               controller: otp,
@@ -525,16 +622,21 @@ class _ParentVerificationScreenState extends State<ParentVerificationScreen> {
               maxLength: 6,
               decoration: const InputDecoration(labelText: 'Email OTP'),
             ),
-            FilledButton(onPressed: busy ? null : _verifyOtp, child: Text(busy ? 'Checking…' : 'Verify email')),
+            FilledButton(
+                onPressed: busy ? null : _verifyOtp,
+                child: Text(busy ? 'Checking…' : 'Verify email')),
             TextButton.icon(
               onPressed: busy ? null : _resendOtp,
               icon: const Icon(Icons.refresh_rounded),
               label: const Text('Resend code'),
             ),
           ] else ...[
-            const Icon(Icons.face_retouching_natural_rounded, size: 82, color: Color(0xFF7C3AED)),
+            const Icon(Icons.face_retouching_natural_rounded,
+                size: 82, color: Color(0xFF7C3AED)),
             const SizedBox(height: 14),
-            const Text('Adult guardian camera check', textAlign: TextAlign.center, style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
+            const Text('Adult guardian camera check',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 21, fontWeight: FontWeight.w900)),
             const SizedBox(height: 8),
             const Text(
               'Use the live front camera in good light. LittleNet verifies adult/liveness before Parent Mode activates.',

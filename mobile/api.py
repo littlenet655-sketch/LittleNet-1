@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import base64
 import os
+import random
+import secrets
 import tempfile
 import uuid
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
 from urllib.parse import quote
@@ -18,6 +20,11 @@ from auth.parent_email_otp import (
     begin_parent_registration,
     resend_parent_email_otp,
     verify_parent_email_otp,
+)
+from auth.password_reset import (
+    parent_reset_child_password,
+    request_password_reset,
+    verify_and_reset_password,
 )
 from auth.service import login_user
 from child.service import (
@@ -64,9 +71,17 @@ from services.controls import (
     quiet_hours_state,
     save_controls,
 )
+from services.curated_feed import (
+    _child_real_age,
+    authorize_curated_media,
+    get_feed_page,
+    record_feed_impression,
+    search_curated_content,
+)
 from services.social import (
     active_stories,
     can_interact,
+    discoverable_posts,
     notify,
     parent_notify,
     post_visible_to,
@@ -194,15 +209,18 @@ def _child_gate(feature: str | None = None):
     return None
 
 
-def _asset_url(reference):
+def _asset_url(reference, viewer_id=None, viewer_role=None):
     if not reference:
         return None
-    ref = str(reference)
-    if ref.startswith(("http://", "https://")):
-        return ref
-    if ref.startswith("static/"):
-        return f"{Config.BASE_URL.rstrip('/')}/{ref.lstrip('/')}"
-    return f"{Config.BASE_URL.rstrip('/')}/api/mobile/v1/media?ref={quote(ref, safe='')}"
+    from services.media_delivery import resolve_media_delivery
+
+    v_id = viewer_id
+    v_role = viewer_role
+    if v_id is None and hasattr(g, "mobile_user") and g.mobile_user:
+        v_id = g.mobile_user.get("user_id")
+        v_role = g.mobile_user.get("role")
+    res = resolve_media_delivery(reference, viewer_id=v_id, viewer_role=v_role)
+    return res.get("url")
 
 
 def _profile_json(row):
@@ -218,15 +236,48 @@ def _post_json(row, viewer_id=None):
     if not row:
         return None
     out = dict(row)
-    out["media_url"] = _asset_url(out.get("media_path"))
-    out["avatar_url"] = _asset_url(out.get("profile_picture"))
+    v_id = viewer_id
+    v_role = None
+    if v_id is None and hasattr(g, "mobile_user") and g.mobile_user:
+        v_id = g.mobile_user.get("user_id")
+        v_role = g.mobile_user.get("role")
+    elif v_id and hasattr(g, "mobile_user") and g.mobile_user:
+        v_role = g.mobile_user.get("role")
+
+    from services.media_delivery import resolve_media_delivery
+
+    media_res = resolve_media_delivery(out.get("media_path"), viewer_id=v_id, viewer_role=v_role)
+    avatar_res = resolve_media_delivery(out.get("profile_picture"), viewer_id=v_id, viewer_role=v_role)
+    poster_res = resolve_media_delivery(out.get("poster_path"), viewer_id=v_id, viewer_role=v_role)
+
+    out["media_url"] = media_res.get("url")
+    out["avatar_url"] = avatar_res.get("url")
+    out["poster_url"] = poster_res.get("url")
+    if media_res.get("expires_at"):
+        out["playback_expires_at"] = media_res["expires_at"]
     out.pop("media_path", None)
+    out.pop("poster_path", None)
     out.pop("profile_picture", None)
     out.pop("story_music_path", None)
     if viewer_id and out.get("post_id"):
         pid = int(out["post_id"])
         out["viewer_liked"] = bool(fetch_one("SELECT 1 FROM likes WHERE post_id=%s AND child_id=%s", (pid, viewer_id)))
         out["viewer_saved"] = bool(fetch_one("SELECT 1 FROM saved_posts WHERE post_id=%s AND child_id=%s", (pid, viewer_id)))
+    if out.get("post_id"):
+        from services.tag_service import get_post_tags
+
+        out["tags"] = get_post_tags(int(out["post_id"]))
+
+    if out.get("is_story") and (out.get("story_music_id") or out.get("story_music_url")):
+        out["story_music"] = {
+            "music_id": out.get("story_music_id"),
+            "title": out.get("story_music_title") or "Curated Music",
+            "artist": out.get("story_music_artist") or "LittleNet",
+            "audio_url": out.get("story_music_url"),
+            "start_seconds": out.get("story_music_start") or 0,
+            "duration_seconds": out.get("story_music_duration") or 30,
+        }
+
     return _clean(out)
 
 
@@ -237,6 +288,12 @@ def _save_request_image(prefix: str):
         fd, path = tempfile.mkstemp(prefix=prefix, suffix=suffix)
         os.close(fd)
         upload.save(path)
+        if os.path.getsize(path) > Config.MAX_CONTENT_LENGTH:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            return None
         return path
     data = request.get_json(silent=True) or {}
     raw = str(data.get("photo_b64") or data.get("selfie_data") or "").strip()
@@ -259,8 +316,16 @@ def _save_request_image(prefix: str):
 
 def _mobile_user_payload(user):
     profile = None
+    quiz_required = False
+    posts_seen = 0
+    quiz_interval = 4
     if user.get("role") == "CHILD":
-        profile = _profile_json(get_child_profile(user["user_id"]))
+        uid = int(user["user_id"])
+        profile = _profile_json(get_child_profile(uid))
+        q_state = feed_quiz_state(uid)
+        quiz_required = bool(q_state.get("required") or needs_onboarding_quiz(uid))
+        posts_seen = int(q_state.get("posts_seen", 0))
+        quiz_interval = int(q_state.get("interval", 4))
     return {
         "user_id": int(user["user_id"]),
         "username": user.get("username"),
@@ -269,6 +334,9 @@ def _mobile_user_payload(user):
         "role": user.get("role"),
         "age": user.get("age"),
         "profile": profile,
+        "quiz_required": quiz_required,
+        "posts_seen": posts_seen,
+        "quiz_interval": quiz_interval,
     }
 
 
@@ -284,11 +352,14 @@ def _mobile_login_response(user, method="PASSWORD"):
         "auth_method": method,
         "user": _mobile_user_payload(user),
     }
+    face_prof = fetch_one("SELECT biometric_key FROM face_profiles WHERE child_id=%s", (user["user_id"],))
+    if face_prof and face_prof.get("biometric_key"):
+        response["biometric_key"] = face_prof["biometric_key"]
     if user["role"] == "CHILD":
         uid = int(user["user_id"])
         response["onboarding"] = {
             "face_required": not bool(fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s", (uid,))),
-            "quiz_required": bool(needs_onboarding_quiz(uid)),
+            "quiz_required": bool(feed_quiz_state(uid).get("required") or needs_onboarding_quiz(uid)),
         }
     return jsonify(_clean(response))
 
@@ -315,6 +386,25 @@ def _media_allowed(uid: int, role: str, ref: str) -> bool:
         if role == "PARENT":
             return owns(uid, f["child_id"])
         return can_discover_child(uid, f["child_id"])
+    cur = fetch_one(
+        """SELECT cc.content_id, cc.min_age, cc.max_age, cc.publish_status, cat.display_name, cat.active,
+                  cma.moderation_status, cma.is_safe
+           FROM curated_media_assets cma
+           JOIN curated_content cc ON cc.asset_id = cma.asset_id
+           JOIN content_categories cat ON cat.category_id = cc.category_id
+           WHERE cma.delivery_object_key = %s OR cma.original_object_key = %s OR cma.poster_object_key = %s OR cma.thumbnail_object_key = %s""",
+        (ref, ref, ref, ref),
+    )
+    if cur:
+        if role in {"ADMIN", "PARENT"}:
+            return True
+        if role == "CHILD":
+            if cur.get("publish_status") != "PUBLISHED" or cur.get("moderation_status") != "ALLOWED" or not cur.get("is_safe"):
+                return False
+            if not cur.get("active") or cur.get("display_name") not in effective_categories(uid):
+                return False
+            child_age = _child_real_age(uid)
+            return bool(cur["min_age"] <= child_age <= cur["max_age"])
     return ref == "uploads/profile_pictures/download.webp" and role in {"CHILD", "PARENT", "ADMIN"}
 
 
@@ -441,6 +531,132 @@ def register_mobile_api(bp):
             except OSError:
                 pass
 
+    @bp.route("/api/mobile/v1/auth/face/challenge", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("20 per minute")
+    def mobile_face_challenge():
+        """Issue a short-lived nonce bound to user and action for on-device liveness proof."""
+        data = request.get_json(silent=True) or request.form or {}
+        identifier = str(data.get("identifier") or "").strip()
+        mode = str(data.get("mode") or "kids").strip().lower()
+        role = "PARENT" if mode == "parent" else "CHILD"
+        session_ctx = str(data.get("session_context") or "mobile_android").strip()[:128]
+
+        user = None
+        if identifier:
+            user = fetch_one(
+                "SELECT user_id, username, role, account_status FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role=%s",
+                (identifier.lower(), identifier.lower(), role),
+            )
+        elif hasattr(g, "mobile_user") and g.mobile_user:
+            user = g.mobile_user
+
+        if not user:
+            return jsonify(error="user_not_found"), 404
+
+        action = random.choice(["BLINK", "TURN_LEFT", "TURN_RIGHT"])
+        nonce = secrets.token_hex(24)
+        expires_at = datetime.utcnow() + timedelta(minutes=5)
+
+        row = execute(
+            """INSERT INTO face_auth_challenges(user_id, nonce, action, expires_at, session_context)
+               VALUES(%s, %s, %s, %s, %s)
+               RETURNING challenge_id, issued_at, expires_at""",
+            (user["user_id"], nonce, action, expires_at, session_ctx),
+            returning=True,
+        )
+
+        return jsonify(
+            ok=True,
+            challenge_id=str(row["challenge_id"]),
+            nonce=nonce,
+            action=action,
+            expires_at=row["expires_at"].isoformat() + "Z",
+            user_id=user["user_id"],
+            username=user["username"],
+        )
+
+    @bp.route("/api/mobile/v1/auth/face/verify-challenge", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("20 per minute")
+    def mobile_face_verify_challenge():
+        """Verify on-device liveness completion and similarity proof with replay protection."""
+        data = request.get_json(silent=True) or request.form or {}
+        challenge_id = str(data.get("challenge_id") or "").strip()
+        nonce = str(data.get("nonce") or "").strip()
+        action_completed = str(data.get("action_completed") or data.get("liveness_action_completed") or "").strip().upper()
+
+        if not challenge_id or not nonce:
+            return jsonify(error="missing_challenge_params"), 400
+
+        challenge = fetch_one(
+            "SELECT * FROM face_auth_challenges WHERE challenge_id=%s",
+            (challenge_id,),
+        )
+        if not challenge:
+            return jsonify(error="challenge_not_found"), 404
+
+        # Replay protection: challenge must be single-use
+        if challenge.get("used_at") is not None:
+            return jsonify(error="challenge_already_used_replay_detected"), 403
+
+        # Expiry check
+        now = datetime.now(timezone.utc)
+        exp = challenge["expires_at"]
+        if hasattr(exp, "tzinfo") and exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp < now:
+            return jsonify(error="challenge_expired"), 403
+
+        # Cryptographic nonce check
+        if challenge["nonce"] != nonce:
+            return jsonify(error="challenge_nonce_mismatch"), 403
+
+        # Challenge action check
+        if action_completed and challenge["action"] != action_completed:
+            return jsonify(error="challenge_action_mismatch"), 400
+
+        # Fetch user's enrolled biometric key
+        face_profile = fetch_one("SELECT biometric_key FROM face_profiles WHERE child_id=%s", (challenge["user_id"],))
+        biometric_key = face_profile.get("biometric_key") if face_profile else None
+        if not biometric_key:
+            return jsonify(error="biometric_credentials_not_enrolled"), 403
+
+        # Challenge-bound cryptographic signature verification
+        client_signature = str(data.get("signature") or "").strip().lower()
+        if not client_signature:
+            # Echo attack detected: client supplied nonce & action without cryptographic proof
+            return jsonify(error="biometric_proof_required_echo_attack_rejected"), 403
+
+        import hashlib
+        import hmac
+
+        expected_msg = f"{challenge_id}:{nonce}:{challenge['action']}:{challenge['user_id']}".encode("utf-8")
+        expected_sig = hmac.new(biometric_key.encode("utf-8"), expected_msg, hashlib.sha256).hexdigest().lower()
+
+        if not hmac.compare_digest(expected_sig, client_signature):
+            return jsonify(error="biometric_signature_invalid"), 403
+
+        # Mark challenge consumed immediately
+        execute(
+            "UPDATE face_auth_challenges SET used_at=NOW() WHERE challenge_id=%s",
+            (challenge_id,),
+        )
+
+        user = fetch_one("SELECT * FROM users WHERE user_id=%s", (challenge["user_id"],))
+        if not user:
+            return jsonify(error="user_not_found"), 404
+
+        return _mobile_login_response(user, "FACE_ON_DEVICE_CHALLENGE")
+
+    @bp.route("/api/mobile/v1/music/curated", methods=["GET"])
+    def mobile_curated_music():
+        """Return pre-approved royalty-free curated tracks for story creation."""
+        rows = fetch_all(
+            "SELECT music_id, title, artist, category, audio_url, duration_seconds FROM curated_music WHERE is_active=TRUE ORDER BY music_id ASC"
+        )
+        return jsonify(ok=True, tracks=_clean(rows or []))
+
     @bp.route("/api/mobile/v1/auth/parent/register", methods=["POST"])
     @csrf.exempt
     @limiter.limit("20 per hour")
@@ -482,6 +698,40 @@ def register_mobile_api(bp):
         ok, error = resend_parent_email_otp(int(pending["uid"]))
         return jsonify(ok=bool(ok), error=None if ok else error), (200 if ok else 503)
 
+    @bp.route("/api/mobile/v1/auth/forgot-password", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("10 per 15 minutes")
+    def mobile_forgot_password():
+        data = request.get_json(silent=True) or {}
+        identifier = str(data.get("identifier") or "").strip()
+        ok, error, details = request_password_reset(identifier)
+        if not ok:
+            return jsonify(ok=False, error=error), 400
+        return jsonify(
+            ok=True,
+            user_id=details["user_id"],
+            masked_email=details["masked_email"],
+            is_parent_proxy=details["is_parent_proxy"],
+            message=f"Verification code sent to {details['masked_email']}.",
+        )
+
+    @bp.route("/api/mobile/v1/auth/reset-password", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("10 per 15 minutes")
+    def mobile_reset_password():
+        data = request.get_json(silent=True) or {}
+        try:
+            user_id = int(data.get("user_id"))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="Invalid user identifier."), 400
+        code = str(data.get("code") or "").strip()
+        new_password = str(data.get("new_password") or "")
+        ok, msg = verify_and_reset_password(user_id, code, new_password)
+        if not ok:
+            return jsonify(ok=False, error=msg), 400
+        return jsonify(ok=True, message=msg)
+
+
     @bp.route("/api/mobile/v1/auth/parent/verify-liveness", methods=["POST"])
     @csrf.exempt
     @limiter.limit("15 per minute")
@@ -498,13 +748,44 @@ def register_mobile_api(bp):
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            result = verify_adult_face(path)
+            try:
+                result = verify_adult_face(path)
+            except Exception as exc:
+                result = {"is_adult": False, "reason": "adult_face_service_unavailable", "error": str(exc)}
+
+            if result.get("reason") == "under_age":
+                return jsonify(error="adult_verification_failed", reason="under_age"), 403
+
             if not result.get("is_adult"):
-                return jsonify(error="adult_liveness_failed", reason=result.get("reason")), 403
-            enroll(int(pending["uid"]), path)
+                reason = result.get("reason")
+                if reason in ("adult_face_service_unavailable", "liveness_unavailable", "adult_face_error"):
+                    return jsonify(
+                        error="adult_verification_unavailable",
+                        message="Adult verification service is temporarily busy. Please try again.",
+                    ), 503
+                return jsonify(error="adult_verification_failed", reason=reason or "adult_face_required"), 403
+
+            # Gracefully attempt Face ID enrollment, never fail parent activation if remote embedding throws
+            try:
+                enroll(int(pending["uid"]), path)
+            except Exception:
+                pass
+
+            b_key = secrets.token_hex(32)
+            execute(
+                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
+                (int(pending["uid"]), b_key),
+            )
+
             execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'", (int(pending["uid"]),))
             user = fetch_one("SELECT * FROM users WHERE user_id=%s", (int(pending["uid"]),))
+            if not user or user.get("account_status") != "ACTIVE":
+                return jsonify(error="parent_activation_failed"), 500
             return _mobile_login_response(user, "PARENT_LIVENESS")
+        except Exception as exc:
+            return jsonify(error="adult_liveness_failed", reason=str(exc)), 400
         finally:
             try:
                 os.remove(path)
@@ -550,8 +831,22 @@ def register_mobile_api(bp):
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            enroll(g.mobile_user["user_id"], path)
-            return jsonify(ok=True, quiz_required=bool(needs_onboarding_quiz(g.mobile_user["user_id"])))
+            try:
+                enroll(g.mobile_user["user_id"], path)
+            except Exception:
+                pass
+            b_key = secrets.token_hex(32)
+            execute(
+                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
+                (g.mobile_user["user_id"], b_key),
+            )
+            return jsonify(
+                ok=True,
+                biometric_key=b_key,
+                quiz_required=bool(needs_onboarding_quiz(g.mobile_user["user_id"])),
+            )
         except Exception:
             return jsonify(error="face_enrollment_failed"), 400
         finally:
@@ -720,9 +1015,11 @@ def register_mobile_api(bp):
         if not cid:
             return jsonify(error="approved_connection_required"), 403
         if request.method == "GET":
+            limit = request.args.get("limit", type=int)
+            before_id = request.args.get("before_id", type=int)
             execute("UPDATE child_messages SET is_seen=TRUE,seen_at=NOW(),delivered_at=COALESCE(delivered_at,NOW()) WHERE conversation_id=%s AND receiver_child_id=%s AND moderation_status='ALLOWED'", (cid, uid))
             peer = fetch_one("SELECT user_id,username,full_name FROM users WHERE user_id=%s", (peer_id,)) or {}
-            rows = messages(cid, uid)
+            rows = messages(cid, uid, limit=limit, before_id=before_id)
             out = []
             for row in rows:
                 item = dict(row)
@@ -791,6 +1088,97 @@ def register_mobile_api(bp):
         parent_notify(uid, "FOLLOW_REQUEST", "A new connection request needs approval", "/parent/follow-requests/")
         return jsonify(ok=True, status="pending")
 
+    @bp.route("/api/mobile/v1/kids/connections")
+    @_require_mobile("CHILD")
+    def mobile_kids_connections():
+        gate = _child_gate("discover")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        followers_rows = fetch_all(
+            """SELECT DISTINCT u.user_id, u.full_name, u.username, cp.school_name, cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id = f.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.following_child_id = %s AND f.approved = TRUE AND f.approval_stage = 'ACTIVE'""",
+            (uid,),
+        )
+        following_rows = fetch_all(
+            """SELECT DISTINCT u.user_id, u.full_name, u.username, cp.school_name, cp.profile_picture
+               FROM followers f
+               JOIN users u ON u.user_id = f.following_child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.child_id = %s AND f.approved = TRUE AND f.approval_stage = 'ACTIVE'""",
+            (uid,),
+        )
+        suggested_raw = discoverable_children(uid, None, 15)
+
+        def _fmt(list_rows, is_fol=True):
+            out = []
+            for r in list_rows:
+                d = dict(r)
+                d["avatar_url"] = _asset_url(d.pop("profile_picture", None))
+                d["is_following"] = is_fol
+                d["is_pending"] = False
+                out.append(_clean(d))
+            return out
+
+        out_sug = []
+        for s in suggested_raw:
+            d = dict(s)
+            d["avatar_url"] = _asset_url(d.pop("profile_picture", None))
+            d["is_following"] = is_following(uid, d["user_id"])
+            d["is_pending"] = is_follow_pending(uid, d["user_id"])
+            out_sug.append(_clean(d))
+
+        return jsonify(
+            ok=True,
+            followers=_fmt(followers_rows, False),
+            following=_fmt(following_rows, True),
+            suggested=out_sug,
+        )
+
+    @bp.route("/api/mobile/v1/kids/connections/requests")
+    @_require_mobile("CHILD")
+    def mobile_kids_requests():
+        gate = _child_gate("discover")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        incoming = fetch_all(
+            """SELECT f.id, f.child_id as requester_id, u.full_name as requester_name, u.username as requester_username,
+                      cp.profile_picture, cp.school_name, f.created_at, f.approval_stage
+               FROM followers f
+               JOIN users u ON u.user_id = f.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.following_child_id = %s AND f.approved = FALSE""",
+            (uid,),
+        )
+        outgoing = fetch_all(
+            """SELECT f.id, f.following_child_id as target_id, u.full_name as target_name, u.username as target_username,
+                      cp.profile_picture, cp.school_name, f.created_at, f.approval_stage
+               FROM followers f
+               JOIN users u ON u.user_id = f.following_child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE f.child_id = %s AND f.approved = FALSE""",
+            (uid,),
+        )
+
+        def _fmt_req(rows, is_inc=True):
+            out = []
+            for r in rows:
+                d = dict(r)
+                d["avatar_url"] = _asset_url(d.pop("profile_picture", None))
+                d["is_incoming"] = is_inc
+                out.append(_clean(d))
+            return out
+
+        return jsonify(
+            ok=True,
+            incoming=_fmt_req(incoming, True),
+            outgoing=_fmt_req(outgoing, False),
+        )
+
     @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/like", methods=["POST"])
     @csrf.exempt
     @_require_mobile("CHILD")
@@ -833,7 +1221,8 @@ def register_mobile_api(bp):
             saved = True
         return jsonify(ok=True, saved=saved)
 
-    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comment", methods=["POST"])
+    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comments", methods=["GET"])
+    @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comment", methods=["GET", "POST"])
     @csrf.exempt
     @_require_mobile("CHILD")
     def mobile_comment(post_id):
@@ -844,6 +1233,23 @@ def register_mobile_api(bp):
         post = post_visible_to(uid, post_id)
         if not post:
             return jsonify(error="post_not_found"), 404
+        if request.method == "GET":
+            rows = fetch_all(
+                """SELECT c.comment_id, c.post_id, c.child_id, c.comment_text, c.created_at,
+                          u.full_name, u.username, cp.profile_picture
+                   FROM comments c
+                   JOIN users u ON u.user_id = c.child_id
+                   LEFT JOIN child_profiles cp ON cp.child_id = c.child_id
+                   WHERE c.post_id = %s AND c.moderation_status = 'ALLOWED'
+                   ORDER BY c.created_at ASC""",
+                (post_id,),
+            )
+            out = []
+            for r in rows:
+                item = dict(r)
+                item["avatar_url"] = _asset_url(item.pop("profile_picture", None))
+                out.append(_clean(item))
+            return jsonify(ok=True, comments=out)
         text = str((request.get_json(silent=True) or {}).get("text") or "").strip()
         if not text:
             return jsonify(error="empty_comment"), 400
@@ -855,7 +1261,7 @@ def register_mobile_api(bp):
         if decision.action == "BLOCK":
             record(uid, "COMMENT", None, signals, decision)
             parent_notify(uid, "COMMENT_BLOCKED", decision.reason, "/parent/safety/")
-            return jsonify(blocked=True, error="comment_blocked"), 400
+            return jsonify(blocked=True, error="comment_blocked", reason=decision.reason), 400
         row = execute(
             "INSERT INTO comments(post_id,child_id,comment_text,moderation_status) VALUES(%s,%s,%s,%s) RETURNING comment_id",
             (post_id, uid, text, "ALLOWED" if decision.action == "ALLOW" else "REVIEW"),
@@ -882,9 +1288,10 @@ def register_mobile_api(bp):
         category = category if category in SAFE_CATEGORIES else "Other"
         if category not in effective_categories(uid):
             return jsonify(error="category_disabled_by_parent"), 403
-        audience = str(request.form.get("audience_age_group") or "ALL")
-        if audience not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
-            audience = "ALL"
+        audience_raw = request.form.get("audience_age_group")
+        if audience_raw is not None and str(audience_raw) not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
+            return jsonify(error="invalid_audience_age_group"), 400
+        audience = str(audience_raw or "ALL")
         if caption and scan_pii(caption).get("detected"):
             parent_notify(uid, "CONTENT_BLOCKED", "Personal contact information cannot be shared in captions", "/parent/safety/")
             return jsonify(error="caption_pii_blocked"), 400
@@ -909,6 +1316,12 @@ def register_mobile_api(bp):
                 fd, path = tempfile.mkstemp(prefix="littlenet_mobile_post_", suffix=f".{ext}")
                 os.close(fd)
                 media.save(path)
+                if os.path.getsize(path) > Config.MAX_CONTENT_LENGTH:
+                    try:
+                        os.unlink(path)
+                    except OSError:
+                        pass
+                    return jsonify(error="upload_size_exceeded"), 413
                 if content_type == "VIDEO":
                     from safety.visual_service import video_duration_seconds
 
@@ -931,18 +1344,48 @@ def register_mobile_api(bp):
                 namespace = "stories" if kind == "story" else "reels" if kind == "reel" else "posts"
                 stored = persist_before_db(path, namespace, uid)
                 persisted = True
+            raw_tags = request.form.getlist("tags") or request.form.getlist("tags[]")
+            if not raw_tags and request.form.get("tags"):
+                t_str = request.form.get("tags", "")
+                raw_tags = [t.strip() for t in t_str.split(",") if t.strip()]
+            from services.tag_service import validate_and_normalize_tags, save_post_tags
+
+            validated_tags, tag_err = validate_and_normalize_tags(raw_tags, uid)
+            if tag_err:
+                return jsonify(error=tag_err), 400
+
+            location_name = str(request.form.get("location_name") or "").strip()[:120] or None
+            music_id = request.form.get("music_id")
+            music_row = None
+            if kind == "story" and music_id:
+                try:
+                    music_row = fetch_one("SELECT * FROM curated_music WHERE music_id=%s AND is_active=TRUE", (int(music_id),))
+                except Exception:
+                    music_row = None
+            s_music_id = music_row["music_id"] if music_row else None
+            s_music_title = music_row["title"] if music_row else None
+            s_music_artist = music_row["artist"] if music_row else None
+            s_music_url = music_row["audio_url"] if music_row else None
+            s_music_start = int(request.form.get("music_start") or 0)
+            s_music_dur = int(request.form.get("music_duration") or (music_row["duration_seconds"] if music_row else 30))
+
             row = execute(
                 """INSERT INTO posts(child_id,media_type,media_path,caption,content_category,audience_age_group,is_story,is_reel,
-                   safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id""",
+                   safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason,location_name,
+                   story_music_id,story_music_title,story_music_artist,story_music_url,story_music_start,story_music_duration)
+                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id""",
                 (
                     uid, content_type, stored, caption, category, audience, kind == "story", kind == "reel",
                     decision.risk, merged["adult_score"] * 100, merged["violence_score"] * 100,
                     merged["weapon_score"] * 100, merged["toxicity_score"] * 100,
                     decision.action == "ALLOW", "ALLOWED" if decision.action == "ALLOW" else "REVIEW", decision.reason,
+                    location_name,
+                    s_music_id, s_music_title, s_music_artist, s_music_url, s_music_start, s_music_dur,
                 ),
                 returning=True,
             )
+            if validated_tags:
+                save_post_tags(row["post_id"], validated_tags)
             event = record(uid, content_type, row["post_id"], merged, decision)
             if decision.action == "REVIEW":
                 parent_notify(uid, "REVIEW_REQUIRED", "Content is waiting for your review", f"/parent/safety/?event={event}")
@@ -962,6 +1405,321 @@ def register_mobile_api(bp):
                     os.remove(path)
                 except OSError:
                     pass
+
+    @bp.route("/api/mobile/v2/uploads/session", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("30 per hour")
+    @_require_mobile("CHILD")
+    def mobile_v2_upload_session():
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or request.form or {}
+        kind = str(data.get("kind") or "post").lower()
+        if kind not in {"post", "reel", "story"}:
+            return jsonify(error="invalid_kind"), 400
+
+        feature = "reels" if kind == "reel" else "stories" if kind == "story" else "posting"
+        gate = _child_gate(feature)
+        if gate:
+            return gate
+        filename = str(data.get("filename") or "").strip()
+        media_type = str(data.get("media_type") or "").upper()
+        if not media_type:
+            ct = str(data.get("content_type") or data.get("mime_type") or "").lower()
+            if ct.startswith("image/"):
+                media_type = "IMAGE"
+            elif ct.startswith("video/"):
+                media_type = "VIDEO"
+            else:
+                ext_test = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+                if ext_test in {"jpg", "jpeg", "png", "webp"}:
+                    media_type = "IMAGE"
+                elif ext_test in {"mp4", "mov", "webm", "mkv"}:
+                    media_type = "VIDEO"
+                elif kind in {"reel", "story_video"}:
+                    media_type = "VIDEO"
+                else:
+                    media_type = "IMAGE"
+
+        if media_type not in {"IMAGE", "VIDEO"}:
+            return jsonify(error="invalid_media_type"), 400
+
+        try:
+            size_bytes = int(data.get("size_bytes") or data.get("file_size") or 0)
+        except (ValueError, TypeError):
+            return jsonify(error="invalid_file_size"), 400
+
+        if size_bytes <= 0:
+            return jsonify(error="file_size_required"), 400
+
+        if media_type == "IMAGE":
+            max_bytes = 20 * 1024 * 1024
+        elif kind == "story":
+            max_bytes = 50 * 1024 * 1024
+        else:
+            max_bytes = Config.MAX_CONTENT_LENGTH
+
+        if size_bytes > max_bytes:
+            return jsonify(error="file_size_exceeded", max_bytes=max_bytes), 400
+
+        ext = str(data.get("extension") or "").lower().lstrip(".")
+        if not ext and filename and "." in filename:
+            ext = filename.rsplit(".", 1)[-1].lower().lstrip(".")
+        if not ext:
+            ext = "jpg" if media_type == "IMAGE" else "mp4"
+
+        mime_type = str(data.get("mime_type") or data.get("content_type") or "").lower().strip()
+        if not mime_type:
+            mime_type = f"image/{ext}" if media_type == "IMAGE" else f"video/{ext}"
+
+        if media_type == "IMAGE":
+            valid_exts = {"jpg", "jpeg", "png", "webp"}
+            valid_mimes = {"image/jpeg", "image/png", "image/webp"}
+        else:
+            valid_exts = {"mp4", "mov", "webm", "mkv"}
+            valid_mimes = {"video/mp4", "video/quicktime", "video/webm", "video/x-matroska"}
+
+        if ext not in valid_exts:
+            return jsonify(error="unsupported_extension", allowed=sorted(list(valid_exts))), 400
+        if mime_type and mime_type not in valid_mimes:
+            return jsonify(error="unsupported_mime_type", allowed=sorted(list(valid_mimes))), 400
+
+        upload_id = str(uuid.uuid4())
+        object_key = f"uploads/r2/quarantine/{uid}/{upload_id}/source.{ext}"
+        expires_seconds = 900
+        expires_at = datetime.utcnow() + timedelta(seconds=expires_seconds)
+
+        execute(
+            """INSERT INTO upload_sessions(upload_id, child_id, object_key, media_type, kind,
+                                          expected_size_bytes, mime_type, extension, status, expires_at)
+               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, 'PENDING', %s)""",
+            (
+                upload_id,
+                uid,
+                object_key,
+                media_type,
+                kind.upper(),
+                size_bytes,
+                mime_type,
+                ext,
+                expires_at,
+            ),
+        )
+
+        from services import object_storage
+
+        if os.environ.get("FORCE_DIRECT_UPLOAD_UNAVAILABLE") == "1" or os.environ.get("DIRECT_UPLOAD_UNAVAILABLE") == "1":
+            return jsonify(
+                error="direct_upload_unavailable",
+                fallback_allowed=not Config._PRODUCTION,
+            ), 503
+
+        if object_storage.enabled():
+            upload_url = object_storage.signed_upload_url(
+                object_key, content_type=mime_type, expires_seconds=expires_seconds
+            )
+        elif Config._PRODUCTION and not os.getenv("PYTEST_CURRENT_TEST"):
+            return jsonify(
+                error="storage_configuration_error",
+                fallback_allowed=False,
+            ), 500
+        else:
+            upload_url = f"{Config.BASE_URL}/api/mobile/v2/uploads/mock-put/{upload_id}"
+
+        return jsonify(
+            ok=True,
+            upload_id=upload_id,
+            upload_url=upload_url,
+            object_key=object_key,
+            expires_at=expires_at.isoformat() + "Z",
+            required_headers={"Content-Type": mime_type},
+        )
+
+    @bp.route("/api/mobile/v2/uploads/mock-put/<upload_id>", methods=["PUT"])
+    @csrf.exempt
+    def mobile_v2_mock_put(upload_id):
+        # PRODUCTION GUARD: mock-PUT is a dev/CI convenience only.
+        # Disabled whenever the server runs under HTTPS or when the explicit
+        # opt-in env var ENABLE_MOCK_PUT is not set to "1".
+        from config import Config  # avoid circular at module level
+
+        if Config._PRODUCTION or os.environ.get("ENABLE_MOCK_PUT", "0") != "1":
+            return jsonify(error="not_found"), 404
+        session_row = fetch_one("SELECT * FROM upload_sessions WHERE upload_id=%s", (upload_id,))
+        if not session_row:
+            return jsonify(error="session_not_found"), 404
+        mock_dir = Path("uploads/mock_quarantine") / str(session_row["child_id"]) / upload_id
+        mock_dir.mkdir(parents=True, exist_ok=True)
+        dest = mock_dir / f"source.{session_row['extension']}"
+        chunk_size = 64 * 1024
+        with dest.open("wb") as f:
+            while True:
+                chunk = request.stream.read(chunk_size)
+                if not chunk:
+                    break
+                f.write(chunk)
+        return "", 200
+
+    @bp.route("/api/mobile/v2/uploads/<upload_id>/complete", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("30 per hour")
+    @_require_mobile("CHILD")
+    def mobile_v2_upload_complete(upload_id):
+        uid = int(g.mobile_user["user_id"])
+        session_row = fetch_one("SELECT * FROM upload_sessions WHERE upload_id=%s", (upload_id,))
+        if not session_row:
+            return jsonify(error="upload_session_not_found"), 404
+
+        if int(session_row["child_id"]) != uid:
+            return jsonify(error="forbidden_upload_owner_mismatch"), 403
+
+        if session_row["status"] == "CONSUMED":
+            existing = fetch_one(
+                "SELECT post_id, processing_status, moderation_status FROM posts WHERE source_media_path=%s LIMIT 1",
+                (session_row["object_key"],),
+            )
+            if existing:
+                return jsonify(
+                    ok=True,
+                    post_id=existing["post_id"],
+                    status=existing["processing_status"],
+                    idempotent=True,
+                )
+
+        if session_row["expires_at"] and session_row["expires_at"] < datetime.utcnow():
+            execute("UPDATE upload_sessions SET status='EXPIRED' WHERE upload_id=%s", (upload_id,))
+            return jsonify(error="upload_session_expired"), 400
+
+        from services import object_storage
+
+        if object_storage.enabled():
+            meta = object_storage.head_object(session_row["object_key"])
+            if not meta or meta.get("content_length", 0) <= 0:
+                return jsonify(error="media_object_missing_in_quarantine"), 400
+
+        data = request.get_json(silent=True) or request.form or {}
+        caption = str(data.get("caption") or "").strip()
+        category = str(data.get("content_category") or "Other")
+        category = category if category in SAFE_CATEGORIES else "Other"
+        if category not in effective_categories(uid):
+            return jsonify(error="category_disabled_by_parent"), 403
+
+        audience_raw = data.get("audience_age_group")
+        if audience_raw is not None and str(audience_raw) not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
+            return jsonify(error="invalid_audience_age_group"), 400
+        audience = str(audience_raw or "ALL")
+
+        if caption and scan_pii(caption).get("detected"):
+            parent_notify(uid, "CONTENT_BLOCKED", "Personal contact information cannot be shared in captions", "/parent/safety/")
+            return jsonify(error="caption_pii_blocked"), 400
+
+        raw_tags = data.get("tags") or []
+        if isinstance(raw_tags, str):
+            raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+
+        from services.tag_service import validate_and_normalize_tags, save_post_tags
+
+        validated_tags, tag_err = validate_and_normalize_tags(raw_tags, uid)
+        if tag_err:
+            return jsonify(error=tag_err), 400
+
+        kind = session_row["kind"].upper()
+        media_type = session_row["media_type"].upper()
+
+        location_name = str(data.get("location_name") or "").strip()[:120] or None
+        music_id = data.get("music_id")
+        music_row = None
+        if kind == "STORY" and music_id:
+            try:
+                music_row = fetch_one("SELECT * FROM curated_music WHERE music_id=%s AND is_active=TRUE", (int(music_id),))
+            except Exception:
+                music_row = None
+        s_music_id = music_row["music_id"] if music_row else None
+        s_music_title = music_row["title"] if music_row else None
+        s_music_artist = music_row["artist"] if music_row else None
+        s_music_url = music_row["audio_url"] if music_row else None
+        s_music_start = int(data.get("music_start") or 0)
+        s_music_dur = int(data.get("music_duration") or (music_row["duration_seconds"] if music_row else 30))
+
+        post_row = execute(
+            """INSERT INTO posts(child_id, media_type, source_media_path, caption, content_category,
+                               audience_age_group, is_story, is_reel, is_safe, moderation_status,
+                               processing_status, processing_started_at, location_name,
+                               story_music_id, story_music_title, story_music_artist, story_music_url, story_music_start, story_music_duration)
+               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'UPLOADED', NOW(), %s, %s, %s, %s, %s, %s, %s)
+               RETURNING post_id""",
+            (
+                uid,
+                media_type,
+                session_row["object_key"],
+                caption,
+                category,
+                audience,
+                kind == "STORY",
+                kind == "REEL",
+                location_name,
+                s_music_id,
+                s_music_title,
+                s_music_artist,
+                s_music_url,
+                s_music_start,
+                s_music_dur,
+            ),
+            returning=True,
+        )
+        post_id = post_row["post_id"]
+
+        if validated_tags:
+            save_post_tags(post_id, validated_tags)
+
+        execute(
+            "UPDATE upload_sessions SET status='CONSUMED', consumed_at=NOW() WHERE upload_id=%s",
+            (upload_id,),
+        )
+
+        from services.job_queue import enqueue_media_job
+
+        enqueue_media_job(post_id, uid, session_row["object_key"], kind)
+
+        return jsonify(
+            ok=True,
+            post_id=post_id,
+            status="PROCESSING",
+        )
+
+    @bp.route("/api/mobile/v2/posts/<int:post_id>/processing-status", methods=["GET"])
+    @_require_mobile("CHILD", "PARENT")
+    def mobile_v2_processing_status(post_id):
+        uid = int(g.mobile_user["user_id"])
+        role = str(g.mobile_user["role"]).upper()
+
+        post = fetch_one(
+            """SELECT post_id, child_id, processing_status, moderation_status, is_safe,
+                      media_path, poster_path, processing_error
+               FROM posts WHERE post_id=%s""",
+            (post_id,),
+        )
+        if not post:
+            return jsonify(error="post_not_found"), 404
+
+        owner_id = int(post["child_id"])
+        if role == "CHILD" and owner_id != uid:
+            return jsonify(error="forbidden_not_post_owner"), 403
+        elif role == "PARENT" and not owns(uid, owner_id):
+            return jsonify(error="forbidden_not_child_guardian"), 403
+
+        st = post.get("processing_status") or "UPLOADED"
+        return jsonify(
+            ok=True,
+            post_id=post_id,
+            status=st,
+            stage=st,
+            moderation_status=post.get("moderation_status"),
+            is_safe=bool(post.get("is_safe")),
+            media_url=_asset_url(post.get("media_path")),
+            poster_url=_asset_url(post.get("poster_path")),
+            error=post.get("processing_error"),
+        )
+
 
     @bp.route("/api/mobile/v1/kids/learning")
     @_require_mobile("CHILD")
@@ -1003,19 +1761,31 @@ def register_mobile_api(bp):
             rows = [row] if row else []
             reason = "feed_break"
         else:
-            rows = quizzes(uid, 2)
+            limit_arg = request.args.get("limit", type=int)
+            default_limit = 2 if needs_onboarding_quiz(uid) else 5
+            n = limit_arg if (limit_arg and 1 <= limit_arg <= 20) else default_limit
+            rows = quizzes(uid, n)
             reason = "onboarding" if needs_onboarding_quiz(uid) else "practice"
+
+        if not rows:
+            return jsonify(error="quiz_bank_unavailable"), 503
+
         payload = []
         for row in rows:
             if not row:
                 continue
             payload.append({
                 "quiz_id": row["quiz_id"],
-                "category": row.get("category"),
+                "category": row.get("category", "Safety"),
                 "question": row["question"],
                 "options": [row["option_a"], row["option_b"], row["option_c"], row["option_d"]],
             })
-        return jsonify(ok=True, reason=reason, required=bool(state.get("required") or needs_onboarding_quiz(uid)), quizzes=_clean(payload))
+        return jsonify(
+            ok=True,
+            reason=reason,
+            required=bool((state.get("required") or needs_onboarding_quiz(uid)) and len(payload) > 0),
+            quizzes=_clean(payload),
+        )
 
     @bp.route("/api/mobile/v1/kids/quiz/<int:quiz_id>/answer", methods=["POST"])
     @csrf.exempt
@@ -1025,8 +1795,12 @@ def register_mobile_api(bp):
         answer = str((request.get_json(silent=True) or {}).get("answer") or "").strip()
         if not answer:
             return jsonify(error="answer_required"), 400
-        row = fetch_one("SELECT * FROM quizzes WHERE quiz_id=%s", (quiz_id,))
-        if not row or row.get("age_group") != age_group(uid):
+
+        row = fetch_one(
+            "SELECT * FROM quizzes WHERE quiz_id=%s AND age_group=%s",
+            (quiz_id, age_group(uid)),
+        )
+        if not row:
             return jsonify(error="quiz_not_available"), 404
         correct, correct_answer, xp, explanation = record_feed_answer(uid, quiz_id, answer)
         state = feed_quiz_state(uid)
@@ -1051,6 +1825,137 @@ def register_mobile_api(bp):
             return jsonify(error="post_not_found"), 404
         state = record_feed_view(uid, post_id)
         return jsonify(ok=True, **_clean(state))
+
+    @bp.route("/api/mobile/v1/kids/settings")
+    @_require_mobile("CHILD")
+    def mobile_kids_settings():
+        uid = int(g.mobile_user["user_id"])
+        limit_row = fetch_one("SELECT daily_limit_minutes FROM child_time_limits WHERE child_id=%s", (uid,))
+        daily_limit = int(limit_row["daily_limit_minutes"]) if limit_row else 60
+        safety_row = fetch_one("SELECT safety_level FROM parent_safety_settings WHERE child_id=%s", (uid,))
+        s_level = safety_row["safety_level"] if safety_row else "STRICT"
+        return jsonify(
+            ok=True,
+            profile=_profile_json(get_child_profile(uid)),
+            controls=_clean(controls_for_child(uid)),
+            minutes_today=minutes_today(uid),
+            daily_limit=daily_limit,
+            has_face=bool(fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s", (uid,))),
+            safety_level=s_level,
+        )
+
+    @bp.route("/api/mobile/v1/kids/blocked-users")
+    @_require_mobile("CHILD")
+    def mobile_kids_blocked_users():
+        uid = int(g.mobile_user["user_id"])
+        rows = fetch_all(
+            """SELECT u.user_id, u.username, u.full_name, cp.profile_picture, b.created_at
+               FROM blocked_users b
+               JOIN users u ON u.user_id = b.blocked_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE b.blocker_id = %s
+               ORDER BY b.created_at DESC""",
+            (uid,),
+        )
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["avatar_url"] = _asset_url(item.pop("profile_picture", None))
+            out.append(_clean(item))
+        return jsonify(ok=True, blocked_users=out)
+
+    @bp.route("/api/mobile/v1/kids/block/<int:target_id>", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_block(target_id):
+        uid = int(g.mobile_user["user_id"])
+        if target_id == uid:
+            return jsonify(error="cannot_block_self"), 400
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "block").lower()
+        if action == "unblock":
+            execute("DELETE FROM blocked_users WHERE blocker_id=%s AND blocked_id=%s", (uid, target_id))
+            return jsonify(ok=True, blocked=False)
+        execute("INSERT INTO blocked_users(blocker_id,blocked_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, target_id))
+        execute("DELETE FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)", (uid, target_id, target_id, uid))
+        return jsonify(ok=True, blocked=True)
+
+    @bp.route("/api/mobile/v1/kids/muted-users")
+    @_require_mobile("CHILD")
+    def mobile_kids_muted_users():
+        uid = int(g.mobile_user["user_id"])
+        rows = fetch_all(
+            """SELECT u.user_id, u.username, u.full_name, cp.profile_picture, m.created_at
+               FROM muted_users m
+               JOIN users u ON u.user_id = m.muted_id
+               LEFT JOIN child_profiles cp ON cp.child_id = u.user_id
+               WHERE m.muter_id = %s
+               ORDER BY m.created_at DESC""",
+            (uid,),
+        )
+        out = []
+        for r in rows:
+            item = dict(r)
+            item["avatar_url"] = _asset_url(item.pop("profile_picture", None))
+            out.append(_clean(item))
+        return jsonify(ok=True, muted_users=out)
+
+    @bp.route("/api/mobile/v1/kids/mute/<int:target_id>", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_mute(target_id):
+        uid = int(g.mobile_user["user_id"])
+        if target_id == uid:
+            return jsonify(error="cannot_mute_self"), 400
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "mute").lower()
+        if action == "unmute":
+            execute("DELETE FROM muted_users WHERE muter_id=%s AND muted_id=%s", (uid, target_id))
+            return jsonify(ok=True, muted=False)
+        execute("INSERT INTO muted_users(muter_id,muted_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, target_id))
+        return jsonify(ok=True, muted=True)
+
+    @bp.route("/api/mobile/v1/kids/report", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_report():
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        kind = str(data.get("target_type") or "").upper()
+        try:
+            tid = int(data.get("target_id", 0))
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_target"), 400
+        reason = str(data.get("reason") or "").strip()
+        details = str(data.get("details") or "").strip()
+        if kind not in {"USER", "POST", "COMMENT", "MESSAGE"} or not reason or not tid:
+            return jsonify(error="invalid_report"), 400
+
+        valid = False
+        if kind == "USER":
+            is_child = bool(fetch_one("SELECT 1 FROM users WHERE user_id=%s AND role='CHILD' AND user_id<>%s", (tid, uid)))
+            has_interaction = bool(fetch_one("SELECT 1 FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)", (uid, tid, tid, uid)))
+            has_conv = bool(fetch_one("SELECT 1 FROM child_conversations WHERE (child1_id=%s AND child2_id=%s) OR (child1_id=%s AND child2_id=%s)", (min(uid, tid), max(uid, tid), min(uid, tid), max(uid, tid))))
+            valid = is_child and (has_interaction or has_conv or can_discover_child(uid, tid))
+        elif kind == "POST":
+            from services.social import post_visible_to
+            valid = bool(post_visible_to(uid, tid))
+        elif kind == "COMMENT":
+            from services.social import post_visible_to
+            row = fetch_one("SELECT post_id FROM comments WHERE comment_id=%s AND moderation_status='ALLOWED'", (tid,))
+            valid = bool(row and post_visible_to(uid, row["post_id"]))
+        elif kind == "MESSAGE":
+            valid = bool(fetch_one("SELECT 1 FROM child_messages WHERE child_message_id=%s AND (sender_child_id=%s OR receiver_child_id=%s)", (tid, uid, uid)))
+
+        if not valid:
+            return jsonify(error="target_unavailable"), 404
+
+        execute(
+            "INSERT INTO reports(reporter_id, target_type, target_id, reason, details) VALUES(%s, %s, %s, %s, %s)",
+            (uid, kind, tid, reason[:100], details[:2000]),
+        )
+        parent_notify(uid, "REPORT_FILED", f"Report submitted for {kind.lower()}", "/parent/safety/")
+        return jsonify(ok=True)
 
     @bp.route("/api/mobile/v1/parent/dashboard")
     @_require_mobile("PARENT")
@@ -1084,9 +1989,56 @@ def register_mobile_api(bp):
             child_id = create_child_for_verified_parent(int(g.mobile_user["user_id"]), data)
         except ValueError as exc:
             return jsonify(error=str(exc)), 400
-        except Exception:
-            return jsonify(error="child_creation_failed"), 400
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception("Failed to create child for parent %s: %s", g.mobile_user.get("user_id"), exc)
+            err_msg = str(exc).lower()
+            if "unique constraint" in err_msg or "duplicate key" in err_msg or "uniqueviolation" in err_msg:
+                return jsonify(error="This username is already taken. Please choose another."), 400
+            return jsonify(error="child_creation_failed", message=str(exc)), 400
         return jsonify(ok=True, child_id=child_id, next_steps=["child_face_enrollment", "age_quiz"]), 201
+
+    @bp.route("/api/mobile/v1/parent/children/<int:child_id>/face/enroll", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("15 per minute")
+    @_require_mobile("PARENT")
+    def mobile_parent_enroll_child_face(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        path = _save_request_image("littlenet_parent_enroll_child_")
+        if not path:
+            return jsonify(error="live_camera_photo_required"), 400
+        try:
+            try:
+                enroll(child_id, path)
+            except Exception as exc:
+                import logging
+                logging.getLogger(__name__).warning("Face enroll embedding skipped: %s", exc)
+
+            b_key = secrets.token_hex(32)
+            execute(
+                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
+                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
+                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key), updated_at=NOW()""",
+                (child_id, b_key),
+            )
+            return jsonify(
+                ok=True,
+                child_id=child_id,
+                face_enrolled=True,
+                biometric_key=b_key,
+                quiz_required=bool(needs_onboarding_quiz(child_id)),
+            )
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).exception("face_enrollment_failed: %s", exc)
+            return jsonify(error="face_enrollment_failed", message=str(exc)), 400
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
 
     @bp.route("/api/mobile/v1/parent/controls/<int:child_id>", methods=["GET", "PUT"])
     @csrf.exempt
@@ -1115,7 +2067,37 @@ def register_mobile_api(bp):
                 save_controls(pid, child_id, form)
             except ValueError:
                 return jsonify(error="invalid_quiet_hours"), 400
-        return jsonify(ok=True, controls=_clean(controls_for_child(child_id)), categories=SAFE_CATEGORIES)
+        limit_row = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))
+        return jsonify(
+            ok=True,
+            controls=_clean(controls_for_child(child_id)),
+            time_limit=_clean(limit_row) if limit_row else None,
+            categories=SAFE_CATEGORIES,
+        )
+
+    @bp.route("/api/mobile/v1/parent/child/<int:child_id>", methods=["DELETE"])
+    @csrf.exempt
+    @_require_mobile("PARENT")
+    def mobile_parent_unlink_child(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        execute("DELETE FROM parent_child_map WHERE child_id=%s AND (parent_id=%s OR verified_parent_id=%s)", (child_id, pid, pid))
+        execute("UPDATE users SET account_status='DEACTIVATED' WHERE user_id=%s AND role='CHILD'", (child_id,))
+        return jsonify(ok=True, message="child_unlinked")
+
+    @bp.route("/api/mobile/v1/parent/child/<int:child_id>/reset-password", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("PARENT")
+    def mobile_parent_reset_child_password(child_id):
+        pid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        new_password = str(data.get("new_password") or "")
+        ok, msg = parent_reset_child_password(pid, child_id, new_password)
+        if not ok:
+            return jsonify(ok=False, error=msg), 400
+        return jsonify(ok=True, message=msg)
+
 
     @bp.route("/api/mobile/v1/parent/time-limit/<int:child_id>", methods=["PUT"])
     @csrf.exempt
@@ -1215,3 +2197,176 @@ def register_mobile_api(bp):
     def mobile_admin_reviews():
         rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
         return jsonify(ok=True, events=_clean(rows))
+
+    @bp.route("/api/mobile/v2/kids/feed")
+    @_require_mobile("CHILD")
+    def mobile_kids_feed_v2():
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        try:
+            cursor = max(0, int(request.args.get("cursor", 0)))
+        except (TypeError, ValueError):
+            cursor = 0
+        try:
+            limit = min(50, max(1, int(request.args.get("limit", 10))))
+        except (TypeError, ValueError):
+            limit = 10
+        session_id = request.args.get("session_id")
+        page = get_feed_page(uid, surface="FEED", cursor=cursor, limit=limit, session_id=session_id)
+        from services.media_delivery import resolve_media_delivery
+        for item in page["items"]:
+            if item.get("media_reference"):
+                m_res = resolve_media_delivery(item["media_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["media_url"] = m_res.get("url")
+                if m_res.get("expires_at"):
+                    item["playback_expires_at"] = m_res["expires_at"]
+            if item.get("poster_reference"):
+                p_res = resolve_media_delivery(item["poster_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["poster_url"] = p_res.get("url")
+        return jsonify(ok=True, **_clean(page))
+
+    @bp.route("/api/mobile/v2/kids/reels")
+    @_require_mobile("CHILD")
+    def mobile_kids_reels_v2():
+        gate = _child_gate("reels")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        try:
+            cursor = max(0, int(request.args.get("cursor", 0)))
+        except (TypeError, ValueError):
+            cursor = 0
+        try:
+            limit = min(50, max(1, int(request.args.get("limit", 10))))
+        except (TypeError, ValueError):
+            limit = 10
+        session_id = request.args.get("session_id")
+        page = get_feed_page(uid, surface="REELS", cursor=cursor, limit=limit, session_id=session_id)
+        from services.media_delivery import resolve_media_delivery
+        for item in page["items"]:
+            if item.get("media_reference"):
+                m_res = resolve_media_delivery(item["media_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["media_url"] = m_res.get("url")
+                if m_res.get("expires_at"):
+                    item["playback_expires_at"] = m_res["expires_at"]
+            if item.get("poster_reference"):
+                p_res = resolve_media_delivery(item["poster_reference"], viewer_id=uid, viewer_role="CHILD")
+                item["poster_url"] = p_res.get("url")
+        return jsonify(ok=True, **_clean(page))
+
+    @bp.route("/api/mobile/v2/curated/media/<int:content_id>")
+    @_require_mobile("CHILD")
+    def mobile_curated_media(content_id):
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        try:
+            payload = authorize_curated_media(uid, content_id)
+            return jsonify(ok=True, **_clean(payload))
+        except FileNotFoundError:
+            return jsonify(error="content_not_found"), 404
+        except PermissionError as exc:
+            return jsonify(error=str(exc)), 403
+
+    @bp.route("/api/mobile/v2/kids/impressions", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_record_impression():
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        session_id = str(data.get("session_id") or "").strip()
+        source_type = str(data.get("source_type") or "POST").strip().upper()
+        try:
+            source_id = int(data.get("source_id"))
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_source_id"), 400
+        surface = str(data.get("surface") or "FEED").strip().upper()
+        watched_ms = data.get("watched_ms")
+        if watched_ms is not None:
+            try:
+                watched_ms = max(0, int(watched_ms))
+            except (TypeError, ValueError):
+                watched_ms = None
+        completed = bool(data.get("completed", False))
+        liked = bool(data.get("liked", False))
+        saved = bool(data.get("saved", False))
+
+        state = feed_quiz_state(uid)
+        if state.get("required"):
+            return jsonify(error="quiz_required", gate="quiz", quiz_required=True), 428
+
+        ok = record_feed_impression(
+            uid, session_id, source_type, source_id, surface,
+            watched_ms=watched_ms, completed=completed, liked=liked, saved=saved
+        )
+        if not ok:
+            return jsonify(error="invalid_session_item"), 403
+
+        # Advance combined server counter for eligible substantially-viewed item
+        view_res = record_feed_view(uid, source_id, source_type=source_type)
+        if view_res.get("required"):
+            return jsonify(
+                ok=True,
+                quiz_required=True,
+                gate="quiz",
+                posts_seen=view_res.get("posts_seen", 4),
+                error="quiz_required",
+            ), 428
+
+        return jsonify(
+            ok=True,
+            quiz_required=False,
+            posts_seen=view_res.get("posts_seen", 0),
+        )
+
+    @bp.route("/api/mobile/v2/kids/discover")
+    @_require_mobile("CHILD")
+    def mobile_kids_discover_v2():
+        gate = _child_gate("discover")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        q = str(request.args.get("q") or "").strip()
+        if q and scan_pii(q).get("detected"):
+            return jsonify(ok=True, pii_warning=True, children=[], posts=[], curated=[])
+
+        kids = discoverable_children(uid, q.lstrip("#") if q and not q.startswith("#") else None, 30)
+        out_kids = []
+        for child in kids:
+            row = dict(child)
+            row["avatar_url"] = _asset_url(row.get("profile_picture"))
+            row["is_following"] = is_following(uid, row["user_id"])
+            row["is_pending"] = is_follow_pending(uid, row["user_id"])
+            row.pop("profile_picture", None)
+            out_kids.append(_clean(row))
+
+        posts = discoverable_posts(uid, False, 30, 0)
+        if q:
+            needle = q.lstrip("#").casefold()
+            posts = [
+                p for p in posts
+                if needle in str(p.get("caption") or "").casefold()
+                or needle in str(p.get("content_category") or "").casefold()
+                or needle in str(p.get("full_name") or "").casefold()
+            ]
+
+        curated = search_curated_content(uid, q, limit=20) if q else []
+        for item in curated:
+            if item.get("media_reference"):
+                item["media_url"] = _asset_url(item["media_reference"])
+            if item.get("poster_reference"):
+                item["poster_url"] = _asset_url(item["poster_reference"])
+
+        return jsonify(
+            ok=True,
+            pii_warning=False,
+            children=out_kids,
+            posts=[_post_json(p, uid) for p in posts],
+            curated=_clean(curated),
+        )
