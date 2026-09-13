@@ -1,52 +1,15 @@
 import { useState } from 'react';
 import { ScrollView } from 'react-native';
-import { useQuery } from '@tanstack/react-query';
-import { createChild, fetchParentDashboard } from '../api/auth';
+import { useQueryClient } from '@tanstack/react-query';
+import { createChild } from '../api/auth';
 import { useAuth } from '../auth/AuthProvider';
-import { useIsOnline } from '../query/client';
 import type { ParentScreenProps } from '../navigation/types';
-import { BrandHeader, Button, Card, EmptyState, ErrorState, Field, LoadingState, Notice, OfflineBanner, Screen, errorText } from '../ui/components';
-
-/** Parent dashboard entry: child overview after successful setup. */
-export function ParentHomeScreen({ navigation }: ParentScreenProps<'ParentHome'>) {
-  const { session, signOut } = useAuth();
-  const online = useIsOnline();
-  const dashboard = useQuery({
-    queryKey: ['parent-dashboard'],
-    queryFn: () => fetchParentDashboard(session?.token ?? ''),
-    enabled: Boolean(session?.token),
-  });
-
-  return (
-    <Screen>
-      <ScrollView>
-        <OfflineBanner online={online} />
-        <BrandHeader title="Parent dashboard" subtitle="Your verified guardian home. Add a child to begin." />
-        <Card>
-          <Button label="Add a child" onPress={() => navigation.navigate('CreateChild')} />
-          <Button label="Log out" variant="secondary" onPress={() => void signOut()} />
-        </Card>
-        {dashboard.isPending ? (
-          <LoadingState message="Loading your family…" />
-        ) : dashboard.isError ? (
-          <ErrorState message={errorText(dashboard.error)} onRetry={() => void dashboard.refetch()} />
-        ) : (dashboard.data?.children.length ?? 0) === 0 ? (
-          <EmptyState title="No children yet" body="Add your first child to set up face login and quizzes." />
-        ) : (
-          <Card>
-            {(dashboard.data?.children ?? []).map((child) => {
-              const row = child as { user_id: number; username: string; full_name: string };
-              return <Notice key={row.user_id} tone="info" message={`${row.full_name} (@${row.username})`} />;
-            })}
-          </Card>
-        )}
-      </ScrollView>
-    </Screen>
-  );
-}
+import { parentKeys } from '../query/keys';
+import { BrandHeader, Button, Card, Field, Notice, Screen, errorText } from '../ui/components';
 
 export function CreateChildScreen({ navigation }: ParentScreenProps<'CreateChild'>) {
   const { session } = useAuth();
+  const queryClient = useQueryClient();
   const [username, setUsername] = useState('');
   const [fullName, setFullName] = useState('');
   const [age, setAge] = useState('');
@@ -68,6 +31,7 @@ export function CreateChildScreen({ navigation }: ParentScreenProps<'CreateChild
     setError('');
     try {
       await createChild(session.token, { username: username.trim(), full_name: fullName.trim(), age: ageNumber, password });
+      await queryClient.invalidateQueries({ queryKey: parentKeys.dashboard });
       navigation.navigate('ParentHome');
     } catch (err) {
       setError(errorText(err));

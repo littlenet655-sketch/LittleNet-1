@@ -24,7 +24,7 @@
 | Face Login/liveness | face-login/verification flows | `safety/face_service.py`, auth routes, MediaPipe assets | Face/liveness evidence before protected activation/login behavior |
 | Learning/quizzes | `/learning/` and quiz routes | `quiz/` | Age-group quizzes/challenges and learning features |
 | Admin/Moderator | `/admin/`, `/admin/moderation/` | `admin/routes.py` | Reports, moderation events, forced block and audit logs |
-| Android app | `android/` | `MainActivity.java`, Android resources | WebView wrapper using the same HTTPS Flask backend |
+| Android app | `mobile_app/` | React Native + Expo + TypeScript | Native role-aware UI using the same HTTPS Flask backend |
 
 ## 3. Moderation scope you must state correctly
 
@@ -58,7 +58,7 @@ Video audio is stripped before persistence. Older Phase-I material may mention s
    - Discover restrictions
    - profile/learning access
 
-Explain that authorization and safety decisions live on the Flask/PostgreSQL backend, so the Android wrapper and browser use the same rules.
+Explain that authorization and safety decisions live on the Flask/PostgreSQL backend, so native screens cannot bypass server rules.
 
 ### Step 2 — Content moderation (about 1 minute)
 
@@ -149,21 +149,13 @@ The system no longer treats image dimensions or missing face metadata as proof. 
 
 Flask keeps the college backend understandable and modular, while PostgreSQL gives reliable persistent relational state for users, parent-child mappings, social relationships, posts, messages, moderation events, usage logs and learning data.
 
-### Q13. Why an Android WebView instead of rebuilding everything natively?
+### Q13. Why React Native instead of an Android WebView?
 
-The project goal is to deliver a working Android application without duplicating the whole web product. The WebView wrapper reuses the same tested Flask routes and safety policy, reducing divergence between browser and mobile behavior.
+React Native provides a real native mobile navigation, camera, secure session, list and media experience while reusing the tested Flask business rules through JSON APIs. This keeps one server authority without wrapping web pages as the application.
 
 ### Q14. What proof do you have that the project is working?
 
-For the current merged baseline:
-
-- 331 tests passed, 1 database-service smoke test skipped in the ordinary unit job
-- dedicated real PostgreSQL Child/Parent/Admin E2E passed
-- 130 routes audited with 0 errors
-- 76 templates audited with 0 errors
-- scope check 53/53 passed
-- dynamic SQL, Python security, secret scan and MediaPipe integrity passed
-- Android APK build passed on the current source commit
+Use only the counts and artifacts recorded for the current commit in `docs/FINAL_E2E_MATRIX.md`. Typechecking or source presence is not device E2E evidence, and an Expo Android export is not an installed APK.
 
 ### Q15. Is the latest commit already deployed to Modal?
 

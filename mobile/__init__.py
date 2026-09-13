@@ -1,1 +1,1 @@
-"""Native mobile API package for the Flutter LittleNet client."""
+"""Native mobile API package for the React Native LittleNet client."""

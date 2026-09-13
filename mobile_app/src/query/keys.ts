@@ -19,6 +19,23 @@ export const kidsKeys = {
   processing: (postId: number) => ['kids', 'processing', postId],
 } as const;
 
+export const parentKeys = {
+  dashboard: ['parent', 'dashboard'],
+  controls: (childId: number) => ['parent', 'controls', childId],
+  safety: ['parent', 'safety'],
+  follows: ['parent', 'follows'],
+  activity: (childId: number) => ['parent', 'activity', childId],
+  notifications: ['parent', 'notifications'],
+} as const;
+
+export const adminKeys = {
+  dashboard: ['admin', 'dashboard'],
+  reviews: ['admin', 'reviews'],
+  review: (eventId: number) => ['admin', 'review', eventId],
+  users: (query: string) => ['admin', 'users', query],
+  audit: ['admin', 'audit'],
+} as const;
+
 export async function invalidateSocialCaches(postIds: number[] = []): Promise<void> {
   await queryClient.invalidateQueries({ queryKey: ['kids', 'feed'] });
   await queryClient.invalidateQueries({ queryKey: ['kids', 'reels'] });

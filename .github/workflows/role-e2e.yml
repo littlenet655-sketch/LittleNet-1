@@ -2,7 +2,7 @@ name: LittleNet Real PostgreSQL Role E2E
 
 on:
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master, chatgpt/submission-foundation-fixes ]
   workflow_dispatch:
 
 permissions:

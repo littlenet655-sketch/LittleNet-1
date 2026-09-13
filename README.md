@@ -16,7 +16,7 @@ React Native / Expo mobile app (`mobile_app/`)
 PostgreSQL / Neon      Private R2 media
       |                      |
       +------ async ----------+
-             QStash -> Modal AI
+          durable outbox -> Modal AI
                     |
              Parent/Admin review
 ```
@@ -32,6 +32,9 @@ cd mobile_app
 cp .env.example .env
 npm install
 npm run typecheck
+npm test
+npm run export:android
+npx expo install --check
 npm run start
 ```
 
@@ -104,6 +107,8 @@ npm run export:android
 ```
 
 GitHub Actions contains separate backend/security and React Native validation workflows. A manual mobile release workflow is included for EAS once the repository variables/secrets for the Expo project are configured.
+
+See [docs/FINAL_ARCHITECTURE.md](docs/FINAL_ARCHITECTURE.md), [docs/DEMO_RUNBOOK.md](docs/DEMO_RUNBOOK.md), [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md), and [docs/FINAL_E2E_MATRIX.md](docs/FINAL_E2E_MATRIX.md) for the submission architecture, predictable demo, recovery steps, limitations, and executed evidence.
 
 ## Safety principles
 

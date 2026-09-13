@@ -400,7 +400,7 @@ def api_login():
     return jsonify(success=True,role=u['role'],user_id=u['user_id'],full_name=u['full_name'],has_profile=profile_exists(u['user_id']) if u['role']=='CHILD' else True)
 
 
-# Attach the canonical native Flutter JSON API to the already-registered API
+# Attach the canonical native React Native JSON API to the registered API
 # blueprint. Keeping this at module end avoids circular imports during blueprint
 # construction while ensuring `/api/mobile/v1/*` exists in the real Flask app.
 from mobile.api import register_mobile_api

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import random
 import secrets
@@ -89,6 +90,7 @@ from services.social import (
     visible_posts,
     visible_profile_posts,
 )
+from services.audit import log
 from services.usage import close_session, heartbeat, lock_state, minutes_today, online_state, start_session
 
 
@@ -473,7 +475,13 @@ def _merge_signals(*signals):
     return out
 
 
-def _resolve_parent_review(reviewer_id: int, event_id: int, requested: str, is_admin: bool = False):
+def _resolve_parent_review(
+    reviewer_id: int,
+    event_id: int,
+    requested: str,
+    is_admin: bool = False,
+    notes: str | None = None,
+):
     requested = requested.upper()
     if requested not in {"APPROVE", "BLOCK"}:
         return False, "invalid_action"
@@ -538,8 +546,17 @@ def _resolve_parent_review(reviewer_id: int, event_id: int, requested: str, is_a
                                WHERE post_id=%s""",
                             (f"sanitization_failed: {exc}", post_id),
                         )
-                        cur.execute("INSERT INTO moderation_reviews(event_id,reviewer_id,action) VALUES(%s,%s,%s)", (event_id, reviewer_id, "BLOCK"))
+                        cur.execute(
+                            "INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)",
+                            (event_id, reviewer_id, "BLOCK", "Sanitization failed closed."),
+                        )
                         cur.execute("UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s", (event_id,))
+                        if is_admin:
+                            cur.execute(
+                                """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                                   VALUES(%s,'MODERATION_BLOCK','MODERATION_EVENT',%s,%s::jsonb)""",
+                                (reviewer_id, event_id, json.dumps({"result": "sanitization_failed"})),
+                            )
                         conn.commit()
                         return False, "sanitization_failed"
                 else:  # BLOCK
@@ -563,9 +580,28 @@ def _resolve_parent_review(reviewer_id: int, event_id: int, requested: str, is_a
             cur.execute("UPDATE comments SET moderation_status=%s WHERE comment_id=%s", (status, event["content_id"]))
         elif event["content_type"] == "MESSAGE" and event.get("content_id"):
             cur.execute("UPDATE child_messages SET moderation_status=%s WHERE child_message_id=%s", (status, event["content_id"]))
+        elif event["content_type"] == "USER" and event.get("content_id") and is_admin and requested == "BLOCK":
+            cur.execute(
+                "UPDATE users SET account_status='SUSPENDED' WHERE user_id=%s AND role='CHILD'",
+                (event["content_id"],),
+            )
 
-        cur.execute("INSERT INTO moderation_reviews(event_id,reviewer_id,action) VALUES(%s,%s,%s)", (event_id, reviewer_id, requested))
+        cur.execute(
+            "INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)",
+            (event_id, reviewer_id, requested, notes),
+        )
         cur.execute("UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s", (event_id,))
+        if is_admin:
+            cur.execute(
+                """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                   VALUES(%s,%s,'MODERATION_EVENT',%s,%s::jsonb)""",
+                (
+                    reviewer_id,
+                    f"MODERATION_{requested}",
+                    event_id,
+                    json.dumps({"child_id": event["child_id"], "content_type": event["content_type"]}),
+                ),
+            )
         # Commit DB state FIRST before external notifications and storage mutations
         conn.commit()
 
@@ -2304,18 +2340,13 @@ def register_mobile_api(bp):
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            try:
-                enroll(child_id, path)
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning("Face enroll embedding skipped: %s", exc)
-
+            enroll(child_id, path)
             b_key = secrets.token_hex(32)
             execute(
-                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
-                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
-                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key), updated_at=NOW()""",
-                (child_id, b_key),
+                """UPDATE face_profiles
+                   SET biometric_key=COALESCE(face_profiles.biometric_key, %s), updated_at=NOW()
+                   WHERE child_id=%s""",
+                (b_key, child_id),
             )
             return jsonify(
                 ok=True,
@@ -2343,6 +2374,17 @@ def register_mobile_api(bp):
             return jsonify(error="child_not_found"), 404
         if request.method == "PUT":
             data = request.get_json(silent=True) or {}
+            flags = {
+                "allow_reels", "allow_stories", "allow_messaging", "allow_posting", "allow_discover",
+                "quiet_hours_enabled", "educational_only_feed",
+            }
+            if any(key in data and not isinstance(data[key], bool) for key in flags):
+                return jsonify(error="invalid_controls"), 400
+            if "allowed_categories" in data and (
+                not isinstance(data["allowed_categories"], list)
+                or any(not isinstance(category, str) for category in data["allowed_categories"])
+            ):
+                return jsonify(error="invalid_categories"), 400
             current = controls_for_child(child_id)
             merged = dict(current)
             merged.update({k: data[k] for k in data if k in {
@@ -2358,9 +2400,11 @@ def register_mobile_api(bp):
             for category in merged.get("allowed_categories") or SAFE_CATEGORIES:
                 form.add("allowed_categories", category)
             try:
-                save_controls(pid, child_id, form)
+                updated = save_controls(pid, child_id, form)
             except ValueError:
                 return jsonify(error="invalid_quiet_hours"), 400
+            log(child_id, "PARENT_CONTROLS_UPDATED", {"parent_id": pid, "before": current, "after": updated})
+            notify(child_id, "PARENT_CONTROLS", "Parent Mode updated your LittleNet permissions", "/child/dashboard/", pid)
         limit_row = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))
         return jsonify(
             ok=True,
@@ -2409,27 +2453,51 @@ def register_mobile_api(bp):
             return jsonify(error="invalid_limit"), 400
         strict = bool(data.get("strict_mode", True))
         execute("INSERT INTO child_time_limits(child_id,daily_limit_minutes,strict_mode) VALUES(%s,%s,%s) ON CONFLICT(child_id) DO UPDATE SET daily_limit_minutes=EXCLUDED.daily_limit_minutes,strict_mode=EXCLUDED.strict_mode,updated_at=NOW()", (child_id, minutes, strict))
+        log(child_id, "SCREEN_TIME_LIMIT_UPDATED", {"parent_id": pid, "daily_limit_minutes": minutes, "strict_mode": strict})
+        notify(child_id, "SCREEN_TIME", "Parent Mode updated your daily screen-time limit", "/child/dashboard/", pid)
         return jsonify(ok=True, limit=_clean(fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))))
 
     @bp.route("/api/mobile/v1/parent/safety")
     @_require_mobile("PARENT")
     def mobile_parent_safety():
         pid = int(g.mobile_user["user_id"])
-        rows = fetch_all("SELECT e.*,u.full_name FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.decision='REVIEW' AND e.status='OPEN' AND e.child_id IN (SELECT child_id FROM parent_child_map WHERE parent_id=%s) ORDER BY e.created_at DESC", (pid,))
+        rows = fetch_all(
+            """SELECT e.*,u.full_name
+               FROM moderation_events e JOIN users u ON u.user_id=e.child_id
+               WHERE e.decision='REVIEW' AND e.status='OPEN'
+                 AND EXISTS (
+                   SELECT 1 FROM parent_child_map m
+                   JOIN users p ON p.user_id=%s AND p.role='PARENT' AND p.account_status='ACTIVE'
+                   WHERE m.child_id=e.child_id
+                     AND m.approved=TRUE AND m.approval_status='APPROVED'
+                     AND (m.parent_id=%s OR m.verified_parent_id=%s)
+                 )
+               ORDER BY e.created_at DESC""",
+            (pid, pid, pid),
+        )
         out = []
         for event in rows:
             item = dict(event)
             preview = None
             if item.get("content_type") in {"IMAGE", "VIDEO", "TEXT"} and item.get("content_id"):
-                preview = fetch_one("SELECT media_type,media_path,caption FROM posts WHERE post_id=%s", (item["content_id"],))
+                preview = fetch_one(
+                    "SELECT media_type,media_path,source_media_path,poster_path,caption FROM posts WHERE post_id=%s",
+                    (item["content_id"],),
+                )
             elif item.get("content_type") == "COMMENT" and item.get("content_id"):
                 preview = fetch_one("SELECT comment_text FROM comments WHERE comment_id=%s", (item["content_id"],))
             elif item.get("content_type") == "MESSAGE" and item.get("content_id"):
                 preview = fetch_one("SELECT message_type,message_text,media_path,shared_post_id FROM child_messages WHERE child_message_id=%s", (item["content_id"],))
             if preview:
                 preview = dict(preview)
-                if preview.get("media_path"):
-                    preview["media_url"] = _asset_url(preview.pop("media_path"))
+                source_ref = preview.pop("source_media_path", None)
+                published_ref = preview.pop("media_path", None)
+                poster_ref = preview.pop("poster_path", None)
+                media_ref = source_ref or published_ref
+                if media_ref:
+                    preview["media_url"] = _asset_url(media_ref)
+                if poster_ref:
+                    preview["poster_url"] = _asset_url(poster_ref)
             item["preview"] = _clean(preview)
             out.append(_clean(item))
         return jsonify(ok=True, events=out)
@@ -2440,7 +2508,8 @@ def register_mobile_api(bp):
     def mobile_parent_review(event_id):
         action = str((request.get_json(silent=True) or {}).get("action") or "").upper()
         ok, result = _resolve_parent_review(int(g.mobile_user["user_id"]), event_id, action)
-        return jsonify(ok=ok, result=result), (200 if ok else 400)
+        status = 200 if ok else 403 if result == "forbidden" else 404 if result == "not_found" else 400
+        return jsonify(ok=ok, result=result), status
 
     @bp.route("/api/mobile/v1/parent/follow-requests")
     @_require_mobile("PARENT")
@@ -2461,19 +2530,39 @@ def register_mobile_api(bp):
             return jsonify(error="forbidden"), 403
         action = str(data.get("action") or "").lower()
         if action == "approve":
-            execute("UPDATE followers SET approved=TRUE,approval_stage='ACTIVE' WHERE child_id=%s AND following_child_id=%s AND approved=FALSE", (child_id, target_id))
+            changed = execute_count("UPDATE followers SET approved=TRUE WHERE child_id=%s AND following_child_id=%s AND approved=FALSE AND approval_stage IN ('REQUESTED','RECEIVER_PARENT_PENDING')", (child_id, target_id))
         elif action == "reject":
-            execute("DELETE FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=FALSE", (child_id, target_id))
+            changed = execute_count("DELETE FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=FALSE AND approval_stage IN ('REQUESTED','RECEIVER_PARENT_PENDING')", (child_id, target_id))
         else:
             return jsonify(error="invalid_action"), 400
+        if not changed:
+            return jsonify(error="follow_request_not_found"), 404
+        log(child_id, "PARENT_FOLLOW_ACTION", {"parent_id": int(g.mobile_user["user_id"]), "target_id": target_id, "action": action})
         return jsonify(ok=True, action=action)
 
-    @bp.route("/api/mobile/v1/parent/notifications")
+    @bp.route("/api/mobile/v1/parent/notifications", methods=["GET", "POST"])
+    @csrf.exempt
     @_require_mobile("PARENT")
     def mobile_parent_notifications():
         pid = int(g.mobile_user["user_id"])
+        if request.method == "POST":
+            execute("UPDATE parent_notifications SET is_read=TRUE WHERE parent_id=%s AND is_read=FALSE", (pid,))
         rows = fetch_all("SELECT * FROM parent_notifications WHERE parent_id=%s ORDER BY created_at DESC LIMIT 100", (pid,))
         return jsonify(ok=True, notifications=_clean(rows))
+
+    @bp.route("/api/mobile/v1/parent/activity/<int:child_id>")
+    @_require_mobile("PARENT")
+    def mobile_parent_activity(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        rows = fetch_all(
+            """SELECT log_id,activity_type,activity_data,created_at
+               FROM activity_logs WHERE child_id=%s
+               ORDER BY created_at DESC LIMIT 100""",
+            (child_id,),
+        )
+        return jsonify(ok=True, events=_clean(rows))
 
     @bp.route("/api/mobile/v1/admin/dashboard")
     @_require_mobile("ADMIN")
@@ -2489,7 +2578,7 @@ def register_mobile_api(bp):
     @bp.route("/api/mobile/v1/admin/reviews")
     @_require_mobile("ADMIN")
     def mobile_admin_reviews():
-        rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
+        rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.decision='REVIEW' AND e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
         return jsonify(ok=True, events=_clean(rows))
 
     @bp.route("/api/mobile/v2/kids/feed")
