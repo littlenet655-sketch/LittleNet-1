@@ -7,11 +7,11 @@ Status values:
 
 > This matrix is intentionally conservative. Source-presence checks, typechecking, and route existence are not enough to mark a user journey PASS.
 
-Verified on 2026-09-13 against commit `9bab489` or its implementation parent `dfc6328`:
+Verified on 2026-09-13 against commit `2195cf4`:
 
-- [LittleNet CI](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34760960598): source audit, 347 backend tests, dependency/security checks, and Gitleaks passed.
-- [Disposable PostgreSQL role E2E](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34760962652): fresh schema/migrations and authenticated Child/Parent/Admin smoke passed.
-- [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34760578750): 77 tests, typecheck, Android export, and Expo dependency check passed.
+- [LittleNet CI](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761242142): source audit, 347 backend tests, dependency/security checks, and Gitleaks passed.
+- [Disposable PostgreSQL role E2E](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761243565): fresh schema/migrations and authenticated Child/Parent/Admin smoke passed.
+- [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761244826): 77 tests, typecheck, Android export, and Expo dependency check passed.
 
 | Journey | Status | Required evidence |
 |---|---|---|

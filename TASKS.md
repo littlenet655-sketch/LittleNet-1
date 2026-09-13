@@ -9,4 +9,4 @@
 - [x] Remove stale mobile architecture and placeholder wording.
 - [x] Update architecture, setup, demo, recovery, limitations, and E2E evidence docs.
 - [x] Run mobile, backend, disposable PostgreSQL, security, dependency, and Android checks.
-- [ ] Commit, push only `agent-d/final-parent-admin-e2e`, and open one PR to `chatgpt/submission-foundation-fixes`.
+- [x] Commit, push only `agent-d/final-parent-admin-e2e`, and open one PR to `chatgpt/submission-foundation-fixes`.
