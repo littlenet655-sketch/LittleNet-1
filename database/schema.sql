@@ -73,10 +73,14 @@ CREATE TABLE IF NOT EXISTS posts (
   max_processing_attempts INTEGER NOT NULL DEFAULT 3,
   last_attempt_at TIMESTAMP,
   job_id VARCHAR(100),
+  processing_lease_token VARCHAR(64),
+  processing_lease_expires_at TIMESTAMPTZ,
   created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_source_media_path_uniq ON posts (source_media_path) WHERE source_media_path IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_upload_id_uniq ON posts (upload_id) WHERE upload_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_lease_expiry ON posts(processing_lease_expires_at)
+  WHERE processing_status IN ('UPLOADED', 'PROCESSING');
 CREATE TABLE IF NOT EXISTS post_tags (
  tag_id BIGSERIAL PRIMARY KEY,
  post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,

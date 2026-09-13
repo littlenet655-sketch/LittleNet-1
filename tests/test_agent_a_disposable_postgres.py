@@ -541,3 +541,261 @@ def test_quarantine_cleanup_failure_enqueues_to_media_outbox(db):
         assert len(outbox_entries) == 1
         assert outbox_entries[0]["key"] == bad_key
         assert outbox_entries[0]["id"] == post_id
+
+
+# ============================================================================
+# 8. ATOMIC WORKER CLAIM & CONCURRENCY VALIDATION
+# ============================================================================
+
+def test_concurrency_two_workers_one_post_results_in_exactly_one_processing_owner(db):
+    """Proves two concurrent Modal workers for the same post result in exactly one processing owner."""
+    import time
+    import io
+    from PIL import Image
+    from safety.policy import Decision
+
+    user = _random_user(db, "CHILD")
+    uid = user["user_id"]
+    cur = db.cursor()
+    src_key = f"uploads/r2/quarantine/{uuid.uuid4().hex}.jpg"
+
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color="blue").save(buf, format="JPEG")
+    valid_jpg = buf.getvalue()
+    local_file = Path(src_key)
+    local_file.parent.mkdir(parents=True, exist_ok=True)
+    local_file.write_bytes(valid_jpg)
+
+    try:
+        cur.execute(
+            """INSERT INTO posts(child_id, media_type, source_media_path, caption, processing_status,
+                                 processing_attempts, max_processing_attempts, is_safe, moderation_status)
+               VALUES(%s, 'IMAGE', %s, 'Two workers test', 'PROCESSING', 1, 3, FALSE, 'PENDING')
+               RETURNING post_id""",
+            (uid, src_key),
+        )
+        post_id = cur.fetchone()["post_id"]
+
+        mock_decision = Decision(action="ALLOW", risk=0.0, reason="clean_content")
+        notify_calls = []
+
+        def fake_notify(p_id, c_id, kind):
+            notify_calls.append((p_id, c_id))
+
+        with patch("services.media_processor.evaluate", return_value=({"adult_score": 0.0, "violence_score": 0.0, "risk_score": 0.0}, None)) as mock_eval, \
+             patch("services.media_processor.block_and_cleanup_quarantine", return_value=True), \
+             patch("services.media_processor._notify_approved_followers", side_effect=fake_notify):
+
+            def run_worker():
+                return media_processor.process_media_job(post_id, uid, src_key, "POST")
+
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                fut1 = executor.submit(run_worker)
+                fut2 = executor.submit(run_worker)
+                res1 = fut1.result()
+                res2 = fut2.result()
+
+        # Verify results
+        assert res1.get("ok") is True
+        assert res2.get("ok") is True
+
+        winner = res1 if not res1.get("already_claimed") else res2
+        loser = res2 if winner is res1 else res1
+
+        # Exactly one winner processed the media
+        assert winner.get("status") == "ALLOWED"
+        assert winner.get("already_claimed") is not True
+
+        # Exactly one loser exited idempotently
+        assert loser.get("already_claimed") is True
+        assert loser.get("idempotent") is True
+
+        # Single winner executed evaluate once for caption (TEXT) and once for image (IMAGE); loser executed 0 times (not 4)
+        assert mock_eval.call_count == 2
+        assert len(notify_calls) == 1
+
+        # In DB, post is ALLOWED with cleared lease
+        cur.execute("SELECT processing_status, moderation_status, is_safe, media_path, processing_lease_token FROM posts WHERE post_id=%s", (post_id,))
+        p = cur.fetchone()
+        assert p["processing_status"] == "ALLOWED"
+        assert p["moderation_status"] == "ALLOWED"
+        assert p["is_safe"] is True
+        assert p["media_path"] is not None
+        assert p["processing_lease_token"] is None
+    finally:
+        local_file.unlink(missing_ok=True)
+
+
+def test_concurrency_simultaneous_reaper_and_redrive_creates_one_logical_attempt(db):
+    """Proves simultaneous reaper and redrive calls create exactly one logical attempt."""
+    user = _random_user(db, "CHILD")
+    uid = user["user_id"]
+    cur = db.cursor()
+    src_key = f"uploads/r2/quarantine/{uuid.uuid4().hex}.jpg"
+
+    # Insert a stale post whose lease has expired
+    cur.execute(
+        """INSERT INTO posts(child_id, media_type, source_media_path, caption, processing_status,
+                             processing_attempts, max_processing_attempts, created_at, processing_started_at,
+                             last_attempt_at, processing_lease_token, processing_lease_expires_at)
+           VALUES(%s, 'IMAGE', %s, 'Reaper vs redrive test', 'PROCESSING',
+                  1, 3, NOW() - INTERVAL '15 minutes', NOW() - INTERVAL '15 minutes',
+                  NOW() - INTERVAL '15 minutes', 'expired_lease_token', NOW() - INTERVAL '5 minutes')
+           RETURNING post_id""",
+        (uid, src_key),
+    )
+    post_id = cur.fetchone()["post_id"]
+
+    dispatched_jobs = []
+
+    def fake_enqueue(p_id, c_id, key, kind, lease_token=None):
+        job_id = f"job_{uuid.uuid4().hex[:8]}"
+        dispatched_jobs.append((p_id, lease_token))
+        return job_id
+
+    with patch("services.job_queue.enqueue_media_job", side_effect=fake_enqueue):
+        def run_reaper():
+            return media_processor.reap_stale_media_jobs(stale_seconds=300)
+
+        def run_redrive():
+            return media_processor.redrive_media_job(post_id)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            fut_reap = executor.submit(run_reaper)
+            fut_redrive = executor.submit(run_redrive)
+            res_reap = fut_reap.result()
+            res_redrive = fut_redrive.result()
+
+    # Exactly ONE dispatch occurred for this post across both concurrent operations
+    post_dispatches = [job for job in dispatched_jobs if job[0] == post_id]
+    assert len(post_dispatches) == 1
+
+    # In DB, processing_attempts was incremented exactly ONCE (from 1 to 2, not 3)
+    cur.execute("SELECT processing_attempts, processing_lease_token, processing_lease_expires_at FROM posts WHERE post_id=%s", (post_id,))
+    p = cur.fetchone()
+    assert p["processing_attempts"] == 2
+    assert p["processing_lease_token"] is not None
+    assert p["processing_lease_token"] == post_dispatches[0][1]
+
+
+def test_concurrency_crash_retry_remains_recoverable(db):
+    """Proves crash/retry remains recoverable: an expired lease from a crashed worker can be claimed."""
+    import io
+    from PIL import Image
+    from safety.policy import Decision
+
+    user = _random_user(db, "CHILD")
+    uid = user["user_id"]
+    cur = db.cursor()
+    src_key = f"uploads/r2/quarantine/{uuid.uuid4().hex}.jpg"
+
+    buf = io.BytesIO()
+    Image.new("RGB", (10, 10), color="green").save(buf, format="JPEG")
+    valid_jpg = buf.getvalue()
+    local_file = Path(src_key)
+    local_file.parent.mkdir(parents=True, exist_ok=True)
+    local_file.write_bytes(valid_jpg)
+
+    try:
+        # Simulate crashed worker that left an expired lease
+        crashed_token = "crashed_worker_lease_999"
+        cur.execute(
+            """INSERT INTO posts(child_id, media_type, source_media_path, caption, processing_status,
+                                 processing_attempts, max_processing_attempts, processing_started_at,
+                                 last_attempt_at, processing_lease_token, processing_lease_expires_at,
+                                 is_safe, moderation_status)
+               VALUES(%s, 'IMAGE', %s, 'Crashed worker recovery', 'PROCESSING',
+                      1, 3, NOW() - INTERVAL '10 minutes',
+                      NOW() - INTERVAL '10 minutes', %s, NOW() - INTERVAL '1 minute',
+                      FALSE, 'PENDING')
+               RETURNING post_id""",
+            (uid, src_key, crashed_token),
+        )
+        post_id = cur.fetchone()["post_id"]
+
+        # Redrive or new worker claims the expired lease
+        acquired, new_token, post_data = media_processor.claim_media_job_lease(post_id)
+        assert acquired is True
+        assert new_token is not None
+        assert new_token != crashed_token
+
+        # Verify DB reflects the new lease
+        cur.execute("SELECT processing_lease_token, processing_attempts FROM posts WHERE post_id=%s", (post_id,))
+        p = cur.fetchone()
+        assert p["processing_lease_token"] == new_token
+        assert p["processing_attempts"] == 2
+
+        # Worker executes with new lease token to completion
+        with patch("services.media_processor.evaluate", return_value=({"adult_score": 0.0, "violence_score": 0.0, "risk_score": 0.0}, None)), \
+             patch("services.media_processor.block_and_cleanup_quarantine", return_value=True), \
+             patch("services.media_processor._notify_approved_followers", return_value=None):
+
+            res = media_processor.process_media_job(post_id, uid, src_key, "POST", lease_token=new_token)
+            assert res.get("ok") is True
+            assert res.get("status") == "ALLOWED"
+
+        cur.execute("SELECT processing_status, media_path, processing_lease_token FROM posts WHERE post_id=%s", (post_id,))
+        p_final = cur.fetchone()
+        assert p_final["processing_status"] == "ALLOWED"
+        assert p_final["media_path"] is not None
+        assert "_media.jpg" in p_final["media_path"]
+        assert p_final["processing_lease_token"] is None
+    finally:
+        local_file.unlink(missing_ok=True)
+
+
+def test_terminal_states_never_reprocessed(db):
+    """Proves terminal states (ALLOWED, BLOCKED, FAILED) are never claimed or reprocessed."""
+    user = _random_user(db, "CHILD")
+    uid = user["user_id"]
+    cur = db.cursor()
+
+    for term_status in ("ALLOWED", "BLOCKED", "FAILED"):
+        mod_status = "BLOCKED" if term_status == "FAILED" else term_status
+        src_key = f"uploads/r2/quarantine/{uuid.uuid4().hex}.jpg"
+        cur.execute(
+            """INSERT INTO posts(child_id, media_type, source_media_path, caption, processing_status,
+                                 processing_attempts, max_processing_attempts, moderation_status,
+                                 is_safe, created_at, processing_started_at)
+               VALUES(%s, 'IMAGE', %s, 'Terminal test', %s,
+                      2, 3, %s,
+                      %s, NOW() - INTERVAL '1 hour', NOW() - INTERVAL '1 hour')
+               RETURNING post_id""",
+            (uid, src_key, term_status, mod_status, term_status == "ALLOWED"),
+        )
+        post_id = cur.fetchone()["post_id"]
+
+        # 1. claim_media_job_lease must reject terminal state
+        acquired, token, _ = media_processor.claim_media_job_lease(post_id)
+        assert acquired is False
+        assert token is None
+
+        # 2. redrive_media_job must not reprocess or spawn terminal state
+        redrive_res = media_processor.redrive_media_job(post_id)
+        if term_status in ("ALLOWED", "BLOCKED"):
+            assert redrive_res["ok"] is True
+            assert redrive_res.get("idempotent") is True
+            assert redrive_res["status"] == term_status
+        else:
+            assert redrive_res["ok"] is False
+            assert redrive_res["status"] == "FAILED"
+
+        # 3. process_media_job must exit immediately without running AI
+        with patch("services.media_processor.evaluate") as mock_eval:
+            proc_res = media_processor.process_media_job(post_id, uid, src_key, "POST")
+            if term_status == "FAILED":
+                assert proc_res["ok"] is False
+                assert proc_res["status"] == "FAILED"
+                assert proc_res.get("idempotent") is True
+            else:
+                assert proc_res["ok"] is True
+                assert proc_res["status"] == term_status
+                assert proc_res.get("idempotent") is True
+            assert not mock_eval.called
+
+        # 4. Status in DB must remain strictly unchanged
+        cur.execute("SELECT processing_status, processing_attempts FROM posts WHERE post_id=%s", (post_id,))
+        p = cur.fetchone()
+        assert p["processing_status"] == term_status
+        assert p["processing_attempts"] == 2
+

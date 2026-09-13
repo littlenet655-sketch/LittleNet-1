@@ -116,10 +116,15 @@ class RealAppAcceptanceE2ETest(unittest.TestCase):
         self.assertEqual(res_post.status_code, 403)
 
     def test_02_child_chat_send_receive_reply_persist(self):
-        """Connected A sends safe text to B, B receives, replies, and both persist."""
-        from unittest.mock import patch, MagicMock
-        mock_dec = MagicMock(action="ALLOW", risk=0.0, reason="safe")
-        with patch("mobile.api.evaluate", return_value=({}, mock_dec)):
+        """Connected A sends safe text to B, B receives, replies, and both persist through real moderation."""
+        from unittest.mock import patch
+        clean_scores = {
+            'toxicity': 0.0, 'severe_toxicity': 0.0, 'obscene': 0.0,
+            'identity_attack': 0.0, 'insult': 0.0, 'threat': 0.0, 'sexual_explicit': 0.0
+        }
+        # Do NOT mock evaluate - run real evaluate() through the full moderation engine
+        with patch("safety.remote_client.enabled", return_value=False), \
+             patch("safety.text_service._detox_scores", return_value=clean_scores):
             # 1. A sends safe message
             res = self.client.post(
                 f'/api/mobile/v1/kids/chat/{self.bid}',
@@ -149,6 +154,19 @@ class RealAppAcceptanceE2ETest(unittest.TestCase):
             self.assertEqual(res_a.status_code, 200)
             a_msgs = res_a.get_json()['messages']
             self.assertTrue(any(m['message_text'] == 'Thanks! What time is robotics class tomorrow?' for m in a_msgs))
+
+    def test_02b_child_chat_persistence_fast(self):
+        """Persistence-only chat test with mocked evaluate for fast path validation."""
+        from unittest.mock import patch, MagicMock
+        mock_dec = MagicMock(action="ALLOW", risk=0.0, reason="safe")
+        with patch("mobile.api.evaluate", return_value=({}, mock_dec)):
+            res = self.client.post(
+                f'/api/mobile/v1/kids/chat/{self.bid}',
+                headers=self.headers_a,
+                data=json.dumps({'message_text': 'Persistence test message'}),
+            )
+            self.assertEqual(res.status_code, 200)
+            self.assertEqual(res.get_json()['status'], 'ALLOW')
 
     def test_03_chat_safety_pii_blocked_and_parent_notified(self):
         """Attempting to share phone/email/contact info is blocked and notifies parent."""

@@ -118,7 +118,7 @@ def web():
     min_containers=0,
     max_containers=1,
 )
-def process_media_job_background(post_id: int, child_id: int, object_key: str, kind: str = "post"):
+def process_media_job_background(post_id: int, child_id: int, object_key: str, kind: str = "post", lease_token: str | None = None):
     """CPU orchestration worker for asynchronous media processing.
 
     The worker downloads/sanitizes media and updates Neon/R2. Actual image/video
@@ -127,7 +127,7 @@ def process_media_job_background(post_id: int, child_id: int, object_key: str, k
     """
     os.chdir("/root/littlenet")
     from services.media_processor import process_media_job
-    return process_media_job(int(post_id), int(child_id), str(object_key), str(kind))
+    return process_media_job(int(post_id), int(child_id), str(object_key), str(kind), lease_token=lease_token)
 
 
 @app.function(image=web_image, secrets=[web_secret], timeout=300)

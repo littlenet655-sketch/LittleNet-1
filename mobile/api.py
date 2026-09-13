@@ -490,6 +490,8 @@ def _resolve_parent_review(reviewer_id: int, event_id: int, requested: str, is_a
         status = "ALLOWED" if requested == "APPROVE" else "BLOCKED"
         p_row = None
         kind = "post"
+        pub_media = None
+        pub_poster = None
         if event["content_type"] in {"IMAGE", "VIDEO", "AUDIO", "TEXT"} and event.get("content_id"):
             post_id = int(event["content_id"])
             cur.execute("SELECT * FROM posts WHERE post_id=%s FOR UPDATE", (post_id,))
@@ -506,16 +508,31 @@ def _resolve_parent_review(reviewer_id: int, event_id: int, requested: str, is_a
                         cur.execute(
                             """UPDATE posts
                                SET media_path=%s, poster_path=%s, moderation_status='ALLOWED',
-                                   processing_status='ALLOWED', is_safe=TRUE, processing_completed_at=NOW()
+                                   processing_status='ALLOWED', is_safe=TRUE, processing_completed_at=NOW(),
+                                   processing_lease_token=NULL, processing_lease_expires_at=NULL
                                WHERE post_id=%s""",
                             (pub_media, pub_poster, post_id),
                         )
                     except Exception as exc:
-                        # Fail-closed: do not publish unsanitized media
+                        # Fail-closed: do not publish unsanitized media; compensate if published
+                        if pub_media:
+                            try:
+                                from services.object_storage import object_storage
+                                if object_storage.enabled():
+                                    object_storage.delete_reference(pub_media)
+                                    if pub_poster:
+                                        object_storage.delete_reference(pub_poster)
+                                else:
+                                    Path(pub_media).unlink(missing_ok=True)
+                                    if pub_poster:
+                                        Path(pub_poster).unlink(missing_ok=True)
+                            except Exception:
+                                pass
                         cur.execute(
                             """UPDATE posts
                                SET moderation_status='BLOCKED', processing_status='FAILED',
-                                   processing_error=%s, is_safe=FALSE, processing_completed_at=NOW()
+                                   processing_error=%s, is_safe=FALSE, processing_completed_at=NOW(),
+                                   processing_lease_token=NULL, processing_lease_expires_at=NULL
                                WHERE post_id=%s""",
                             (f"sanitization_failed: {exc}", post_id),
                         )
@@ -527,12 +544,19 @@ def _resolve_parent_review(reviewer_id: int, event_id: int, requested: str, is_a
                     cur.execute(
                         """UPDATE posts
                            SET moderation_status='BLOCKED', processing_status='BLOCKED',
-                               is_safe=FALSE, media_path=NULL, processing_completed_at=NOW()
+                               is_safe=FALSE, media_path=NULL, processing_completed_at=NOW(),
+                               processing_lease_token=NULL, processing_lease_expires_at=NULL
                            WHERE post_id=%s""",
                         (post_id,),
                     )
             else:
-                cur.execute("UPDATE posts SET moderation_status=%s, processing_status=%s, is_safe=%s WHERE post_id=%s", (status, status, requested == "APPROVE", post_id))
+                cur.execute(
+                    """UPDATE posts
+                       SET moderation_status=%s, processing_status=%s, is_safe=%s,
+                           processing_lease_token=NULL, processing_lease_expires_at=NULL
+                       WHERE post_id=%s""",
+                    (status, status, requested == "APPROVE", post_id),
+                )
         elif event["content_type"] == "COMMENT" and event.get("content_id"):
             cur.execute("UPDATE comments SET moderation_status=%s WHERE comment_id=%s", (status, event["content_id"]))
         elif event["content_type"] == "MESSAGE" and event.get("content_id"):
@@ -553,6 +577,20 @@ def _resolve_parent_review(reviewer_id: int, event_id: int, requested: str, is_a
         return True, requested
     except Exception:
         conn.rollback()
+        if requested == "APPROVE" and pub_media:
+            # Compensate orphan published object on commit failure
+            try:
+                from services.object_storage import object_storage
+                if object_storage.enabled():
+                    object_storage.delete_reference(pub_media)
+                    if pub_poster:
+                        object_storage.delete_reference(pub_poster)
+                else:
+                    Path(pub_media).unlink(missing_ok=True)
+                    if pub_poster:
+                        Path(pub_poster).unlink(missing_ok=True)
+            except Exception:
+                pass
         raise
     finally:
         conn.close()

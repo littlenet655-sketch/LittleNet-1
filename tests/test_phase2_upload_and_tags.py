@@ -241,7 +241,7 @@ def test_upload_complete_and_ownership_security(client, app):
 
     # Check post in DB
     post = fetch_one("SELECT * FROM posts WHERE post_id=%s", (post_id,))
-    assert post["processing_status"] in ("PROCESSING", "UPLOADED")
+    assert post["processing_status"] == "PROCESSING"
     assert post["is_safe"] is False
     assert post["moderation_status"] == "PENDING"
     assert post["source_media_path"] == obj_key
@@ -255,6 +255,56 @@ def test_upload_complete_and_ownership_security(client, app):
     assert resp_repeat.status_code == 200
     assert resp_repeat.json["post_id"] == post_id
     assert resp_repeat.json["idempotent"] is True
+
+
+def test_upload_complete_dispatch_failure_marks_uploaded_and_retryable(client, app):
+    with app.app_context():
+        execute(
+            """INSERT INTO users(user_id, username, full_name, email, password_hash, role, age, dob, account_status)
+               VALUES(996, 'kid_dispatch_err', 'Kid Dispatch', 'kiddisp@test.com', 'scrypt:test', 'CHILD', 10, '2014-01-01', 'ACTIVE')
+               ON CONFLICT DO NOTHING"""
+        )
+        u_id = str(uuid.uuid4())
+        obj_key = f"uploads/r2/quarantine/996/{u_id}/source.mp4"
+        execute(
+            """INSERT INTO upload_sessions(upload_id, child_id, object_key, media_type, kind, expected_size_bytes, mime_type, extension, status, expires_at)
+               VALUES(%s, 996, %s, 'VIDEO', 'REEL', 50000, 'video/mp4', 'mp4', 'PENDING', NOW() + INTERVAL '10 minutes')""",
+            (u_id, obj_key),
+        )
+
+    token = _issue_token({"user_id": 996, "role": "CHILD"})
+    with patch("services.job_queue.enqueue_media_job", side_effect=RuntimeError("Modal worker connection timeout")):
+        resp = client.post(
+            f"/api/mobile/v2/uploads/{u_id}/complete",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"caption": "Dispatch test reel"},
+        )
+        assert resp.status_code == 503
+        assert resp.json["ok"] is False
+        assert resp.json["error"] == "job_dispatch_failed"
+        assert resp.json["retryable"] is True
+        post_id = resp.json["post_id"]
+
+    # Verify post in DB is UPLOADED with dispatch_failed error
+    post = fetch_one("SELECT * FROM posts WHERE post_id=%s", (post_id,))
+    assert post["processing_status"] == "UPLOADED"
+    assert "dispatch_failed" in (post["processing_error"] or "")
+
+    # Now retry complete call with enqueue_media_job succeeding
+    with patch("services.job_queue.enqueue_media_job", return_value="job_retry_996"):
+        resp_retry = client.post(
+            f"/api/mobile/v2/uploads/{u_id}/complete",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"caption": "Dispatch test reel"},
+        )
+        assert resp_retry.status_code == 200
+        assert resp_retry.json["ok"] is True
+        assert resp_retry.json["status"] == "PROCESSING"
+        assert resp_retry.json.get("retry_dispatched") is True
+
+    # Verify post is now PROCESSING
+    post_after = fetch_one("SELECT * FROM posts WHERE post_id=%s", (post_id,))
+    assert post_after["processing_status"] == "PROCESSING"
 
 
 def test_quarantine_not_feed_visible(app):
