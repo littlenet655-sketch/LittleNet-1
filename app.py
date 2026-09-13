@@ -300,15 +300,15 @@ def create_app():
         response.headers.setdefault('X-Frame-Options','DENY')
         response.headers.setdefault('Referrer-Policy','same-origin')
         response.headers.setdefault('Permissions-Policy','camera=(self), microphone=(self), geolocation=()')
+        # Allow media delivery from Cloudflare R2 (*.r2.cloudflarestorage.com)
         try:
-            import os
-            account=(os.getenv('R2_ACCOUNT_ID') or '').strip()
-            r2_origin=f'https://{account}.r2.cloudflarestorage.com' if account else ''
+            from services.object_storage import normalize_r2_origin
+            r2_origin = normalize_r2_origin()
         except Exception:
-            r2_origin=''
-        img_src="'self' data: blob:"+(f' {r2_origin}' if r2_origin else '')
-        media_src="'self' blob:"+(f' {r2_origin}' if r2_origin else '')
-        response.headers.setdefault('Content-Security-Policy',f"default-src 'self'; img-src {img_src}; media-src {media_src}; font-src 'self' https://fonts.gstatic.com data:; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
+            r2_origin = ''
+        img_src = "'self' data: blob:" + (f' {r2_origin}' if r2_origin else '')
+        media_src = "'self' blob:" + (f' {r2_origin}' if r2_origin else '')
+        response.headers.setdefault('Content-Security-Policy', f"default-src 'self'; img-src {img_src}; media-src {media_src}; font-src 'self' https://fonts.gstatic.com data:; script-src 'self' 'unsafe-eval' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'")
         if request.is_secure:response.headers.setdefault('Strict-Transport-Security','max-age=31536000; includeSubDomains')
         return response
 

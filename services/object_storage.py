@@ -31,27 +31,36 @@ def enabled() -> bool:
     return _enabled()
 
 
-def _account_id() -> str:
+def _account_id(raw: Optional[str] = None) -> str:
     """Accept either Cloudflare's bare account ID or the copied R2 endpoint URL."""
-    raw = (os.getenv("R2_ACCOUNT_ID") or "").strip()
+    if raw is None:
+        raw = os.getenv("R2_ACCOUNT_ID") or ""
+    raw = str(raw).strip()
     if not raw:
         return ""
-    if "://" in raw:
-        host = (urlparse(raw).hostname or "").strip().lower()
-        suffix = ".r2.cloudflarestorage.com"
-        if host.endswith(suffix):
-            return host[: -len(suffix)]
+    raw = raw.rstrip("/")
     suffix = ".r2.cloudflarestorage.com"
-    if raw.lower().endswith(suffix):
-        return raw[: -len(suffix)].removeprefix("https://").removeprefix("http://")
-    return raw.strip("/")
+    while "://" in raw:
+        _, _, raw = raw.partition("://")
+    host = raw.split("/")[0].split("?")[0].split("#")[0].split(":")[0].strip()
+    while host.lower().endswith(suffix):
+        host = host[: -len(suffix)].rstrip("/")
+    return host.strip("/")
+
+
+def normalize_r2_origin(raw: Optional[str] = None) -> str:
+    """Normalize bare account ID, endpoint URL, or host into https://<id>.r2.cloudflarestorage.com."""
+    account_id = _account_id(raw)
+    if not account_id:
+        return ""
+    return f"https://{account_id}.r2.cloudflarestorage.com"
 
 
 def _endpoint_url() -> str:
-    account_id = _account_id()
-    if not account_id:
+    origin = normalize_r2_origin()
+    if not origin:
         raise RuntimeError("Cloudflare R2 account ID is not configured")
-    return f"https://{account_id}.r2.cloudflarestorage.com"
+    return origin
 
 
 def healthcheck() -> dict:
