@@ -194,7 +194,9 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
         )
         return [normalize_social_item(r) for r in rows]
     from child.service import discoverable_child_ids
-    allowed_child_ids = discoverable_child_ids(child_id) or None
+    allowed_child_ids = discoverable_child_ids(child_id)
+    if allowed_child_ids is not None and len(allowed_child_ids) == 0:
+        return []
     rows = fetch_all(
         """SELECT p.*, u.full_name, cp.profile_picture,
              (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,

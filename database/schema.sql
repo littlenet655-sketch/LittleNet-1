@@ -42,27 +42,6 @@ CREATE TABLE IF NOT EXISTS child_skills (skill_id SERIAL PRIMARY KEY, child_id I
 CREATE TABLE IF NOT EXISTS child_interests (interest_id SERIAL PRIMARY KEY, child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, interest_name VARCHAR(100) NOT NULL, approved BOOLEAN NOT NULL DEFAULT FALSE);
 CREATE TABLE IF NOT EXISTS child_ambitions (ambition_id SERIAL PRIMARY KEY, child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, ambition_name VARCHAR(100) NOT NULL, approved BOOLEAN NOT NULL DEFAULT FALSE);
 
-CREATE TABLE IF NOT EXISTS posts (
- post_id BIGSERIAL PRIMARY KEY, child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
- media_type VARCHAR(20) NOT NULL CHECK (media_type IN ('IMAGE','VIDEO','AUDIO','TEXT')),
- media_path VARCHAR(500), story_music_path VARCHAR(500), caption TEXT, content_category VARCHAR(100) DEFAULT 'Other', audience_age_group VARCHAR(10) NOT NULL DEFAULT 'ALL' CHECK(audience_age_group IN ('ALL','6-8','9-11','12-13','14-18')), is_story BOOLEAN NOT NULL DEFAULT FALSE,
- is_reel BOOLEAN NOT NULL DEFAULT FALSE, safety_score NUMERIC(6,2) DEFAULT 0, adult_score NUMERIC(6,2) DEFAULT 0,
-  violence_score NUMERIC(6,2) DEFAULT 0, weapon_score NUMERIC(6,2) DEFAULT 0, toxicity_score NUMERIC(6,2) DEFAULT 0,
-  is_safe BOOLEAN NOT NULL DEFAULT FALSE, moderation_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (moderation_status IN ('PENDING','ALLOWED','REVIEW','BLOCKED')),
-  moderation_reason TEXT,
-  processing_status VARCHAR(20) NOT NULL DEFAULT 'ALLOWED' CHECK (processing_status IN ('UPLOADING','UPLOADED','PROCESSING','REVIEW','ALLOWED','BLOCKED','FAILED')),
-  source_media_path VARCHAR(500), poster_path VARCHAR(500), processing_error TEXT,
-  processing_started_at TIMESTAMP, processing_completed_at TIMESTAMP,
-  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-CREATE TABLE IF NOT EXISTS post_tags (
- tag_id BIGSERIAL PRIMARY KEY,
- post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
- tag VARCHAR(50) NOT NULL,
- normalized_tag VARCHAR(50) NOT NULL,
- created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
- UNIQUE(post_id, normalized_tag)
-);
 CREATE TABLE IF NOT EXISTS upload_sessions (
  upload_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
@@ -76,6 +55,39 @@ CREATE TABLE IF NOT EXISTS upload_sessions (
  expires_at TIMESTAMP NOT NULL,
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
  consumed_at TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS posts (
+ post_id BIGSERIAL PRIMARY KEY, child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+ media_type VARCHAR(20) NOT NULL CHECK (media_type IN ('IMAGE','VIDEO','AUDIO','TEXT')),
+ media_path VARCHAR(500), story_music_path VARCHAR(500), caption TEXT, content_category VARCHAR(100) DEFAULT 'Other', audience_age_group VARCHAR(10) NOT NULL DEFAULT 'ALL' CHECK(audience_age_group IN ('ALL','6-8','9-11','12-13','14-18')), is_story BOOLEAN NOT NULL DEFAULT FALSE,
+ is_reel BOOLEAN NOT NULL DEFAULT FALSE, safety_score NUMERIC(6,2) DEFAULT 0, adult_score NUMERIC(6,2) DEFAULT 0,
+  violence_score NUMERIC(6,2) DEFAULT 0, weapon_score NUMERIC(6,2) DEFAULT 0, toxicity_score NUMERIC(6,2) DEFAULT 0,
+  is_safe BOOLEAN NOT NULL DEFAULT FALSE, moderation_status VARCHAR(20) NOT NULL DEFAULT 'PENDING' CHECK (moderation_status IN ('PENDING','ALLOWED','REVIEW','BLOCKED')),
+  moderation_reason TEXT,
+  processing_status VARCHAR(20) NOT NULL DEFAULT 'ALLOWED' CHECK (processing_status IN ('UPLOADING','UPLOADED','PROCESSING','REVIEW','ALLOWED','BLOCKED','FAILED')),
+  source_media_path VARCHAR(500), poster_path VARCHAR(500), processing_error TEXT,
+  processing_started_at TIMESTAMP, processing_completed_at TIMESTAMP,
+  upload_id UUID REFERENCES upload_sessions(upload_id) ON DELETE SET NULL,
+  processing_attempts INTEGER NOT NULL DEFAULT 0,
+  max_processing_attempts INTEGER NOT NULL DEFAULT 3,
+  last_attempt_at TIMESTAMP,
+  job_id VARCHAR(100),
+  processing_lease_token VARCHAR(64),
+  processing_lease_expires_at TIMESTAMPTZ,
+  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_source_media_path_uniq ON posts (source_media_path) WHERE source_media_path IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_upload_id_uniq ON posts (upload_id) WHERE upload_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_lease_expiry ON posts(processing_lease_expires_at)
+  WHERE processing_status IN ('UPLOADED', 'PROCESSING');
+CREATE TABLE IF NOT EXISTS post_tags (
+ tag_id BIGSERIAL PRIMARY KEY,
+ post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
+ tag VARCHAR(50) NOT NULL,
+ normalized_tag VARCHAR(50) NOT NULL,
+ created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ UNIQUE(post_id, normalized_tag)
 );
 CREATE TABLE IF NOT EXISTS deleted_posts (
  deleted_post_id BIGSERIAL PRIMARY KEY, original_post_id BIGINT, child_id INTEGER, media_type VARCHAR(20), media_path VARCHAR(500), story_music_path VARCHAR(500), caption TEXT, content_category VARCHAR(100), deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -229,7 +241,8 @@ CREATE TABLE IF NOT EXISTS learning_challenge_attempts (
 
 CREATE TABLE IF NOT EXISTS face_profiles (
  face_profile_id BIGSERIAL PRIMARY KEY, child_id INTEGER UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
- embedding JSONB NOT NULL, model_name VARCHAR(50) NOT NULL DEFAULT 'Facenet512', reference_path VARCHAR(500), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+ embedding JSONB NOT NULL CHECK (jsonb_typeof(embedding) = 'array' AND jsonb_array_length(embedding) = 512),
+ model_name VARCHAR(50) NOT NULL DEFAULT 'Facenet512' CHECK (model_name = 'Facenet512'), reference_path VARCHAR(500), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS face_login_attempts (
  attempt_id BIGSERIAL PRIMARY KEY, child_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
@@ -256,6 +269,7 @@ ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_error TEXT;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_started_at TIMESTAMP;
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_completed_at TIMESTAMP;
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_source_media_path_uniq ON posts(source_media_path) WHERE source_media_path IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_feed ON posts(moderation_status,is_story,is_reel,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_child ON posts(child_id,created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_processing ON posts(processing_status,created_at DESC);

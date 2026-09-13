@@ -48,4 +48,5 @@ agent/
 .mcp.json
 .codex/
 walkthrough.md
+dbmate.exe
 ngrok.exe

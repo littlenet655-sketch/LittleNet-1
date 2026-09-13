@@ -49,6 +49,7 @@ class LocalJobQueue(JobQueue):
                     child_id=payload["child_id"],
                     object_key=payload["object_key"],
                     kind=payload.get("kind", "post"),
+                    lease_token=payload.get("lease_token"),
                 )
             except Exception as exc:
                 logger.exception("LocalJobQueue task error: %s", exc)
@@ -76,12 +77,15 @@ class ModalJobQueue(JobQueue):
             import modal
 
             fn = modal.Function.from_name(self.app_name, self.function_name)
-            call = fn.spawn(
+            args = [
                 int(payload["post_id"]),
                 int(payload["child_id"]),
                 str(payload["object_key"]),
                 str(payload.get("kind", "post")),
-            )
+            ]
+            if payload.get("lease_token"):
+                args.append(str(payload["lease_token"]))
+            call = fn.spawn(*args)
             return str(call.object_id)
         except Exception as exc:
             logger.exception("Failed to spawn Modal background media job")
@@ -120,6 +124,7 @@ def validate_job_queue_config(is_production: bool | None = None) -> str:
     return provider or "local"
 
 
+
 def get_job_queue() -> JobQueue:
     """Return the configured queue provider."""
     provider = validate_job_queue_config()
@@ -128,7 +133,13 @@ def get_job_queue() -> JobQueue:
     return LocalJobQueue(run_sync=os.getenv("LITTLENET_SYNC_JOBS") == "1")
 
 
-def enqueue_media_job(post_id: int, child_id: int, object_key: str, kind: str) -> str:
+def enqueue_media_job(
+    post_id: int,
+    child_id: int,
+    object_key: str,
+    kind: str,
+    lease_token: str | None = None,
+) -> str:
     """Enqueue an asynchronous media-processing job."""
     queue = get_job_queue()
     payload = {
@@ -137,5 +148,8 @@ def enqueue_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
         "object_key": object_key,
         "kind": kind,
     }
+    if lease_token:
+        payload["lease_token"] = lease_token
     dedup_id = f"proc_post_{post_id}"
     return queue.enqueue("media_processing", payload, deduplication_id=dedup_id)
+

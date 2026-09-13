@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -59,16 +60,18 @@ def _notify_approved_followers(post_id: int, child_id: int, kind: str) -> None:
 
 
 def _make_video_derivatives(source_path: Path, temp_dir: Path) -> tuple[Path, Path | None]:
-    """Generate +faststart video and poster thumbnail using ffmpeg if available."""
+    """Generate +faststart video and poster thumbnail using ffmpeg if available.
+    Fails closed if audio stripping or processing fails.
+    """
     clean_video = temp_dir / f"clean_{source_path.name}"
     poster_image = temp_dir / f"poster_{source_path.stem}.jpg"
 
-    # Always strip audio for child safety
+    # Always strip audio for child safety — fail closed on exception
+    shutil.copy2(source_path, clean_video)
     try:
-        shutil.copy2(source_path, clean_video)
         strip_video_audio_in_place(str(clean_video))
-    except Exception:
-        clean_video = source_path
+    except Exception as exc:
+        raise RuntimeError(f"video_sanitization_failed: {exc}") from exc
 
     if not shutil.which("ffmpeg"):
         return clean_video, None
@@ -95,8 +98,9 @@ def _make_video_derivatives(source_path: Path, temp_dir: Path) -> tuple[Path, Pa
         res_p = subprocess.run(poster_cmd, capture_output=True, timeout=30)
         final_poster = poster_image if res_p.returncode == 0 and poster_image.is_file() else None
         return final_video, final_poster
-    except Exception:
-        return clean_video, None
+    except Exception as exc:
+        raise RuntimeError(f"video_transcoding_failed: {exc}") from exc
+
 
 
 def _merge_signals(text_signals: dict | None, media_signals: dict | None) -> dict:
@@ -124,11 +128,18 @@ def _merge_signals(text_signals: dict | None, media_signals: dict | None) -> dic
     }
 
 
-def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -> dict[str, Any]:
+def process_media_job(
+    post_id: int,
+    child_id: int,
+    object_key: str,
+    kind: str,
+    lease_token: str | None = None,
+) -> dict[str, Any]:
     """Worker task entry point. Idempotent: safe to run multiple times."""
     post = fetch_one(
         """SELECT post_id, child_id, media_type, caption, content_category,
-                  audience_age_group, is_story, is_reel, processing_status, moderation_status
+                  audience_age_group, is_story, is_reel, processing_status, moderation_status,
+                  processing_lease_token, processing_lease_expires_at
            FROM posts WHERE post_id=%s""",
         (post_id,),
     )
@@ -138,6 +149,37 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
     # Idempotent skip if already terminal
     if post["processing_status"] in ("ALLOWED", "BLOCKED", "REVIEW"):
         return {"ok": True, "status": post["processing_status"], "idempotent": True}
+    if post["processing_status"] == "FAILED":
+        return {"ok": False, "status": "FAILED", "error": "terminal_failure", "idempotent": True}
+
+    # Atomic per-post worker claim/lease: exactly one worker owns a processing attempt
+    worker_exec_token = uuid.uuid4().hex
+    claimed = execute(
+        """UPDATE posts
+           SET processing_status='PROCESSING',
+               processing_lease_token=%s,
+               processing_lease_expires_at=NOW() + INTERVAL '300 seconds',
+               processing_started_at=COALESCE(processing_started_at, NOW()),
+               last_attempt_at=NOW()
+           WHERE post_id=%s
+             AND processing_status NOT IN ('ALLOWED', 'BLOCKED', 'FAILED')
+             AND (
+               (%s::text IS NOT NULL AND processing_lease_token=%s::text)
+               OR
+               (%s::text IS NULL AND (processing_lease_token IS NULL OR processing_lease_expires_at < NOW()))
+             )
+           RETURNING post_id, child_id, media_type, caption, content_category,
+                     audience_age_group, is_story, is_reel, processing_status, moderation_status,
+                     processing_lease_token""",
+        (worker_exec_token, post_id, lease_token, lease_token, lease_token),
+        returning=True,
+    )
+    if not claimed:
+        latest = fetch_one("SELECT processing_status FROM posts WHERE post_id=%s", (post_id,))
+        cur_status = latest["processing_status"] if latest else "UNKNOWN"
+        return {"ok": True, "status": cur_status, "already_claimed": True, "idempotent": True}
+
+    post = claimed
 
     # Check quarantine object size via head_object if storage enabled
     if object_storage.enabled():
@@ -151,21 +193,14 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                 execute(
                     """UPDATE posts
                        SET processing_status='FAILED', processing_error='upload_size_exceeded',
-                           processing_completed_at=NOW()
-                       WHERE post_id=%s""",
-                    (post_id,),
+                           processing_completed_at=NOW(), processing_lease_token=NULL,
+                           processing_lease_expires_at=NULL
+                       WHERE post_id=%s AND processing_lease_token=%s""",
+                    (post_id, worker_exec_token),
                 )
                 return {"ok": False, "error": "upload_size_exceeded"}
         except Exception:
             pass
-
-    # Mark PROCESSING
-    execute(
-        """UPDATE posts
-           SET processing_status='PROCESSING', processing_started_at=COALESCE(processing_started_at, NOW())
-           WHERE post_id=%s""",
-        (post_id,),
-    )
 
     tags_rows = fetch_all("SELECT tag FROM post_tags WHERE post_id=%s", (post_id,))
     tags_text = " ".join(f"#{r['tag']}" for r in tags_rows)
@@ -179,21 +214,34 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
         if object_storage.enabled():
             object_storage.download_file(object_key, source_local)
         else:
-            # Test / local simulated mode: look for existing local file or mock
             candidate = Path(object_key)
-            if candidate.is_file():
+            if not candidate.is_file():
+                for mock_candidate in Path("uploads/mock_quarantine").rglob("*"):
+                    if mock_candidate.is_file() and object_key in str(mock_candidate):
+                        candidate = mock_candidate
+                        break
+            if candidate.is_file() and candidate.stat().st_size > 0:
                 shutil.copy2(candidate, source_local)
-            else:
-                # Create a placeholder if running in offline test environment
-                source_local.write_bytes(b"dummy_test_media_content")
+
+        if not source_local.is_file() or source_local.stat().st_size <= 0:
+            execute(
+                """UPDATE posts
+                   SET processing_status='FAILED', processing_error='quarantine_media_missing_or_empty',
+                       processing_completed_at=NOW(), processing_lease_token=NULL,
+                       processing_lease_expires_at=NULL
+                   WHERE post_id=%s AND processing_lease_token=%s""",
+                (post_id, worker_exec_token),
+            )
+            return {"ok": False, "error": "quarantine_media_missing_or_empty"}
 
         if source_local.is_file() and source_local.stat().st_size > Config.MAX_CONTENT_LENGTH:
             execute(
                 """UPDATE posts
                    SET processing_status='FAILED', processing_error='upload_size_exceeded',
-                       processing_completed_at=NOW()
-                   WHERE post_id=%s""",
-                (post_id,),
+                       processing_completed_at=NOW(), processing_lease_token=NULL,
+                       processing_lease_expires_at=NULL
+                   WHERE post_id=%s AND processing_lease_token=%s""",
+                (post_id, worker_exec_token),
             )
             return {"ok": False, "error": "upload_size_exceeded"}
 
@@ -215,9 +263,10 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                 execute(
                     """UPDATE posts
                        SET processing_status='FAILED', processing_error='video_duration_exceeded',
-                           processing_completed_at=NOW()
-                       WHERE post_id=%s""",
-                    (post_id,),
+                           processing_completed_at=NOW(), processing_lease_token=NULL,
+                           processing_lease_expires_at=NULL
+                       WHERE post_id=%s AND processing_lease_token=%s""",
+                    (post_id, worker_exec_token),
                 )
                 return {"ok": False, "error": "video_duration_exceeded"}
 
@@ -230,10 +279,19 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                     clean_img_path = temp_dir / "clean_image.jpg"
                     # Strip EXIF/GPS by saving a fresh clean JPEG RGB image
                     img.convert("RGB").save(clean_img_path, format="JPEG", quality=92, optimize=True)
-                    if clean_img_path.is_file() and clean_img_path.stat().st_size > 0:
-                        final_media_local = clean_img_path
-            except Exception:
-                pass
+                    if not clean_img_path.is_file() or clean_img_path.stat().st_size == 0:
+                        raise RuntimeError("clean_image_empty")
+                    final_media_local = clean_img_path
+            except Exception as exc:
+                execute(
+                    """UPDATE posts
+                       SET processing_status='FAILED', processing_error=%s,
+                           processing_completed_at=NOW(), processing_lease_token=NULL,
+                           processing_lease_expires_at=NULL
+                       WHERE post_id=%s AND processing_lease_token=%s""",
+                    (f"image_sanitization_failed: {exc}", post_id, worker_exec_token),
+                )
+                raise RuntimeError(f"image_sanitization_failed: {exc}") from exc
 
         # AI Moderation
         text_signals, _ = evaluate(child_id, "TEXT", combined_text) if combined_text else ({}, None)
@@ -243,19 +301,14 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
         event_id = record(child_id, media_type, post_id, merged, decision)
 
         if decision.action == "BLOCK":
-            # Delete quarantine object if R2 enabled
-            if object_storage.enabled():
-                try:
-                    object_storage.delete_reference(object_key)
-                except Exception:
-                    pass
-
             execute(
                 """UPDATE posts
                    SET is_safe=FALSE, moderation_status='BLOCKED', processing_status='BLOCKED',
+                       media_path=NULL,
                        safety_score=%s, adult_score=%s, violence_score=%s, weapon_score=%s,
-                       toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW()
-                   WHERE post_id=%s""",
+                       toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW(),
+                       processing_lease_token=NULL, processing_lease_expires_at=NULL
+                   WHERE post_id=%s AND processing_lease_token=%s""",
                 (
                     decision.risk,
                     merged["adult_score"] * 100,
@@ -264,9 +317,11 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                     merged["toxicity_score"] * 100,
                     decision.reason,
                     post_id,
+                    worker_exec_token,
                 ),
             )
             parent_notify(child_id, "CONTENT_BLOCKED", decision.reason, "/parent/safety/")
+            block_and_cleanup_quarantine(post_id, object_key)
             return {"ok": True, "status": "BLOCKED", "reason": decision.reason}
 
         elif decision.action == "REVIEW":
@@ -274,8 +329,9 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                 """UPDATE posts
                    SET is_safe=FALSE, moderation_status='REVIEW', processing_status='REVIEW',
                        safety_score=%s, adult_score=%s, violence_score=%s, weapon_score=%s,
-                       toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW()
-                   WHERE post_id=%s""",
+                       toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW(),
+                       processing_lease_token=NULL, processing_lease_expires_at=NULL
+                   WHERE post_id=%s AND processing_lease_token=%s""",
                 (
                     decision.risk,
                     merged["adult_score"] * 100,
@@ -284,6 +340,7 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                     merged["toxicity_score"] * 100,
                     decision.reason,
                     post_id,
+                    worker_exec_token,
                 ),
             )
             parent_notify(
@@ -295,35 +352,40 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
             return {"ok": True, "status": "REVIEW", "event_id": event_id}
 
         else:  # ALLOW
-            # Promote quarantine to published namespace
-            ext = Path(object_key).suffix.lstrip(".") or ("mp4" if media_type == "VIDEO" else "jpg")
+            ext = "mp4" if media_type == "VIDEO" else "jpg"
+            media_mime = "video/mp4" if ext == "mp4" else "image/jpeg"
             namespace = "stories" if kind.lower() == "story" else "reels" if kind.lower() == "reel" else "posts"
             published_media_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_media.{ext}"
             published_poster_ref = None
 
             if object_storage.enabled():
-                # Upload derivative / sanitized media
-                object_storage.upload_file(str(final_media_local), f"{namespace}/{child_id}/{post_id}_media.{ext}")
+                object_storage.upload_file(str(final_media_local), f"{namespace}/{child_id}/{post_id}_media.{ext}", content_type=media_mime)
                 if final_poster_local and final_poster_local.is_file():
-                    published_poster_ref = object_storage.upload_file(
-                        str(final_poster_local), f"{namespace}/{child_id}/{post_id}_poster.jpg"
+                    published_poster_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_poster.jpg"
+                    object_storage.upload_file(
+                        str(final_poster_local), f"{namespace}/{child_id}/{post_id}_poster.jpg", content_type="image/jpeg"
                     )
-                # Cleanup quarantine source
-                try:
-                    object_storage.delete_reference(object_key)
-                except Exception:
-                    pass
             else:
-                published_media_ref = str(final_media_local)
-                published_poster_ref = str(final_poster_local) if final_poster_local else None
+                local_pub_dir = Path("uploads") / namespace / str(child_id)
+                local_pub_dir.mkdir(parents=True, exist_ok=True)
+                perm_media = local_pub_dir / f"{post_id}_media.{ext}"
+                shutil.copy2(final_media_local, perm_media)
+                published_media_ref = str(perm_media).replace("\\", "/")
+
+                published_poster_ref = None
+                if final_poster_local and final_poster_local.is_file():
+                    perm_poster = local_pub_dir / f"{post_id}_poster.jpg"
+                    shutil.copy2(final_poster_local, perm_poster)
+                    published_poster_ref = str(perm_poster).replace("\\", "/")
 
             execute(
                 """UPDATE posts
                    SET media_path=%s, poster_path=%s, is_safe=TRUE,
                        moderation_status='ALLOWED', processing_status='ALLOWED',
                        safety_score=%s, adult_score=%s, violence_score=%s, weapon_score=%s,
-                       toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW()
-                   WHERE post_id=%s""",
+                       toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW(),
+                       processing_lease_token=NULL, processing_lease_expires_at=NULL
+                   WHERE post_id=%s AND processing_lease_token=%s""",
                 (
                     published_media_ref,
                     published_poster_ref,
@@ -334,10 +396,11 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
                     merged["toxicity_score"] * 100,
                     decision.reason,
                     post_id,
+                    worker_exec_token,
                 ),
             )
-            # Idempotently notify approved followers
             _notify_approved_followers(post_id, child_id, kind)
+            block_and_cleanup_quarantine(post_id, object_key)
             return {
                 "ok": True,
                 "status": "ALLOWED",
@@ -348,11 +411,335 @@ def process_media_job(post_id: int, child_id: int, object_key: str, kind: str) -
     except Exception as exc:
         execute(
             """UPDATE posts
-               SET processing_status='FAILED', processing_error=%s, processing_completed_at=NOW()
-               WHERE post_id=%s""",
-            (str(exc), post_id),
+               SET processing_status='FAILED', processing_error=%s, processing_completed_at=NOW(),
+                   processing_lease_token=NULL, processing_lease_expires_at=NULL
+               WHERE post_id=%s AND processing_lease_token=%s""",
+            (str(exc), post_id, worker_exec_token),
         )
         return {"ok": False, "error": str(exc)}
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def sanitize_and_promote_media(
+    post_id: int, child_id: int, object_key: str, kind: str, media_type: str
+) -> tuple[str, str | None]:
+    """Sanitize quarantine media and promote bytes to the published namespace.
+
+    Fails closed: raises RuntimeError on any sanitization or storage failure so
+    unmoderated or unsanitized bytes are never published.
+    """
+    temp_dir = Path(tempfile.mkdtemp(prefix=f"littlenet_promote_{post_id}_"))
+    try:
+        source_local = temp_dir / "quarantine_source"
+        if object_storage.enabled():
+            object_storage.download_file(object_key, source_local)
+        else:
+            candidate = Path(object_key)
+            if not candidate.is_file():
+                for mock_candidate in Path("uploads/mock_quarantine").rglob("*"):
+                    if mock_candidate.is_file() and object_key in str(mock_candidate):
+                        candidate = mock_candidate
+                        break
+            if candidate.is_file():
+                shutil.copy2(candidate, source_local)
+
+        if not source_local.is_file() or source_local.stat().st_size <= 0:
+            raise RuntimeError("quarantine_media_missing_or_empty")
+
+        final_media_local = source_local
+        final_poster_local = None
+
+        ext = "mp4" if media_type.upper() == "VIDEO" else "jpg"
+        media_mime = "video/mp4" if ext == "mp4" else "image/jpeg"
+
+        if media_type.upper() == "VIDEO":
+            final_media_local, final_poster_local = _make_video_derivatives(source_local, temp_dir)
+        elif media_type.upper() == "IMAGE":
+            try:
+                from PIL import Image, ImageOps
+
+                with Image.open(source_local) as img:
+                    img = ImageOps.exif_transpose(img)
+                    clean_img_path = temp_dir / "clean_image.jpg"
+                    img.convert("RGB").save(clean_img_path, format="JPEG", quality=92, optimize=True)
+                    if not clean_img_path.is_file() or clean_img_path.stat().st_size == 0:
+                        raise RuntimeError("clean_image_empty")
+                    final_media_local = clean_img_path
+            except Exception as exc:
+                raise RuntimeError(f"image_sanitization_failed: {exc}") from exc
+
+        namespace = "stories" if kind.lower() == "story" else "reels" if kind.lower() == "reel" else "posts"
+
+        if object_storage.enabled():
+            published_media_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_media.{ext}"
+            published_poster_ref = None
+            object_storage.upload_file(str(final_media_local), f"{namespace}/{child_id}/{post_id}_media.{ext}", content_type=media_mime)
+            if final_poster_local and final_poster_local.is_file():
+                published_poster_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_poster.jpg"
+                object_storage.upload_file(
+                    str(final_poster_local), f"{namespace}/{child_id}/{post_id}_poster.jpg", content_type="image/jpeg"
+                )
+            # Caller deletes quarantine object_key AFTER database state commits!
+        else:
+            # Local persistent storage: copy into permanent local directory
+            local_pub_dir = Path("uploads") / namespace / str(child_id)
+            local_pub_dir.mkdir(parents=True, exist_ok=True)
+            perm_media = local_pub_dir / f"{post_id}_media.{ext}"
+            shutil.copy2(final_media_local, perm_media)
+            published_media_ref = str(perm_media).replace("\\", "/")
+
+            published_poster_ref = None
+            if final_poster_local and final_poster_local.is_file():
+                perm_poster = local_pub_dir / f"{post_id}_poster.jpg"
+                shutil.copy2(final_poster_local, perm_poster)
+                published_poster_ref = str(perm_poster).replace("\\", "/")
+
+        return published_media_ref, published_poster_ref
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+def block_and_cleanup_quarantine(post_id: int, object_key: str | None) -> None:
+    """Delete and invalidate quarantine media on moderation BLOCK (called after DB commit)."""
+    if not object_key:
+        return
+    cleaned = True
+    if object_storage.enabled():
+        try:
+            object_storage.delete_reference(object_key)
+        except Exception:
+            cleaned = False
+    try:
+        for p in Path("uploads/mock_quarantine").rglob("*"):
+            if p.is_file() and object_key in str(p):
+                p.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    if not cleaned:
+        try:
+            from services.media_outbox import enqueue_delete
+            enqueue_delete(object_key, "posts", post_id)
+        except Exception:
+            pass
+
+    return cleaned
+
+
+def claim_media_job_lease(
+    post_id: int,
+    lease_seconds: int = 300,
+    force: bool = False,
+    is_reap: bool = False,
+) -> tuple[bool, str | None, dict[str, Any] | None]:
+    """Atomically acquire or renew a DB-backed lease for a media processing attempt.
+
+    Returns (acquired: bool, lease_token: str | None, post_data: dict | None).
+    Guarantees:
+    - Never claims terminal states ('ALLOWED', 'BLOCKED', 'FAILED').
+    - Exactly one caller wins via atomic conditional UPDATE ... RETURNING.
+    - If another active lease exists and is not expired, returns (False, None, post).
+    """
+    post = fetch_one(
+        """SELECT post_id, child_id, source_media_path, is_reel, is_story,
+                  processing_status, moderation_status, processing_attempts,
+                  max_processing_attempts, last_attempt_at, processing_lease_token,
+                  processing_lease_expires_at
+           FROM posts WHERE post_id=%s""",
+        (post_id,),
+    )
+    if not post:
+        return False, None, None
+
+    if post.get("processing_status") in ("ALLOWED", "BLOCKED"):
+        return False, None, dict(post)
+
+    attempts = int(post.get("processing_attempts") or 0)
+    max_attempts = int(post.get("max_processing_attempts") or 3)
+
+    if attempts >= max_attempts and not force:
+        execute(
+            """UPDATE posts
+               SET processing_status='FAILED', processing_error='max_attempts_exceeded',
+                   processing_completed_at=NOW(), processing_lease_token=NULL,
+                   processing_lease_expires_at=NULL
+               WHERE post_id=%s AND processing_status NOT IN ('ALLOWED', 'BLOCKED', 'FAILED')""",
+            (post_id,),
+        )
+        post_dict = dict(post)
+        post_dict["processing_status"] = "FAILED"
+        return False, None, post_dict
+
+    last_att = post.get("last_attempt_at")
+    if last_att and not force and not is_reap:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
+        if hasattr(last_att, "tzinfo") and last_att.tzinfo is None:
+            last_att = last_att.replace(tzinfo=timezone.utc)
+        backoff_sec = min(300, (2 ** max(0, attempts - 1)) * 5)
+        elapsed = (now - last_att).total_seconds()
+        if elapsed < backoff_sec:
+            rem = int(backoff_sec - elapsed)
+            post_dict = dict(post)
+            post_dict["retry_after_seconds"] = rem
+            return False, None, post_dict
+
+    new_token = uuid.uuid4().hex
+    claimed_row = execute(
+        """UPDATE posts
+           SET processing_status='PROCESSING',
+               processing_lease_token=%s,
+               processing_lease_expires_at=NOW() + INTERVAL '300 seconds',
+               processing_started_at=COALESCE(processing_started_at, NOW()),
+               processing_attempts=processing_attempts + 1,
+               last_attempt_at=NOW(),
+               processing_error=NULL
+           WHERE post_id=%s
+             AND processing_status NOT IN ('ALLOWED', 'BLOCKED', 'FAILED')
+             AND (processing_attempts < max_processing_attempts OR %s=TRUE)
+             AND (processing_lease_token IS NULL OR processing_lease_expires_at < NOW() OR %s=TRUE)
+           RETURNING post_id, child_id, source_media_path, is_reel, is_story,
+                     processing_status, moderation_status, processing_attempts,
+                     max_processing_attempts, processing_lease_token""",
+        (new_token, post_id, force, force),
+        returning=True,
+    )
+    if claimed_row:
+        return True, new_token, dict(claimed_row)
+    latest = fetch_one("SELECT * FROM posts WHERE post_id=%s", (post_id,))
+    return False, None, dict(latest) if latest else None
+
+
+def redrive_media_job(post_id: int, force: bool = False) -> dict[str, Any]:
+    """Redrive an individual stalled or failed media processing job with bounded attempts and backoff."""
+    acquired, lease_token, post = claim_media_job_lease(post_id, lease_seconds=300, force=force)
+    if not acquired:
+        if not post:
+            return {"ok": False, "error": "post_not_found"}
+        if post.get("processing_status") in ("ALLOWED", "BLOCKED"):
+            return {"ok": True, "status": post["processing_status"], "idempotent": True}
+        if post.get("processing_status") == "FAILED":
+            return {
+                "ok": False,
+                "error": "max_attempts_exceeded",
+                "status": "FAILED",
+                "attempts": post.get("processing_attempts", 0),
+                "max_attempts": post.get("max_processing_attempts", 3),
+            }
+        if "retry_after_seconds" in post:
+            return {
+                "ok": False,
+                "error": "backoff_in_progress",
+                "retry_after_seconds": post["retry_after_seconds"],
+                "attempts": post.get("processing_attempts", 0),
+            }
+        return {
+            "ok": False,
+            "error": "already_claimed_or_in_progress",
+            "status": post.get("processing_status", "PROCESSING"),
+        }
+
+    kind = "reel" if post.get("is_reel") else ("story" if post.get("is_story") else "post")
+    object_key = post.get("source_media_path")
+    if not object_key:
+        return {"ok": False, "error": "missing_source_media_path"}
+
+    from services.job_queue import enqueue_media_job
+
+    try:
+        job_id = enqueue_media_job(
+            post_id, int(post["child_id"]), object_key, kind, lease_token=lease_token
+        )
+        execute("UPDATE posts SET job_id=%s WHERE post_id=%s", (job_id, post_id))
+        return {
+            "ok": True,
+            "post_id": post_id,
+            "job_id": job_id,
+            "status": "PROCESSING",
+            "attempts": post.get("processing_attempts", 1),
+        }
+    except Exception as exc:
+        execute(
+            """UPDATE posts
+               SET processing_status='UPLOADED',
+                   processing_lease_token=NULL,
+                   processing_lease_expires_at=NULL,
+                   processing_error=%s
+               WHERE post_id=%s""",
+            (f"redrive_dispatch_failed: {exc}", post_id),
+        )
+        return {"ok": False, "error": "job_dispatch_failed", "detail": str(exc)}
+
+
+def reap_stale_media_jobs(stale_seconds: int = 300) -> dict[str, Any]:
+    """Find posts stuck in UPLOADED or PROCESSING longer than stale_seconds, respect max attempts, and redrive them."""
+    from datetime import datetime, timedelta, timezone
+
+    stale_seconds = max(30, min(int(stale_seconds), 86400))
+    threshold = datetime.now(timezone.utc) - timedelta(seconds=stale_seconds)
+
+    stale_posts = fetch_all(
+        """SELECT post_id, child_id, source_media_path, is_reel, is_story,
+                  processing_status, processing_started_at, created_at,
+                  processing_attempts, max_processing_attempts
+           FROM posts
+           WHERE processing_status IN ('UPLOADED', 'PROCESSING')
+             AND (processing_lease_token IS NULL OR processing_lease_expires_at < NOW())
+             AND (processing_started_at < %s OR (processing_started_at IS NULL AND created_at < %s))
+           ORDER BY post_id ASC LIMIT 50""",
+        (threshold, threshold),
+    )
+
+    redriven = []
+    failed = []
+    from services.job_queue import enqueue_media_job
+
+    for p in (stale_posts or []):
+        post_id = int(p["post_id"])
+        child_id = int(p["child_id"])
+        object_key = p["source_media_path"]
+        attempts = int(p.get("processing_attempts") or 0)
+        max_attempts = int(p.get("max_processing_attempts") or 3)
+
+        if attempts >= max_attempts:
+            execute(
+                """UPDATE posts
+                   SET processing_status='FAILED', processing_error='max_attempts_exceeded_stale_reap',
+                       processing_completed_at=NOW(), processing_lease_token=NULL,
+                       processing_lease_expires_at=NULL
+                   WHERE post_id=%s AND processing_status NOT IN ('ALLOWED', 'BLOCKED', 'FAILED')""",
+                (post_id,),
+            )
+            failed.append({"post_id": post_id, "error": "max_attempts_exceeded"})
+            continue
+
+        if not object_key:
+            continue
+
+        acquired, lease_token, post_data = claim_media_job_lease(post_id, lease_seconds=300, is_reap=True)
+        if not acquired or not post_data:
+            continue
+
+        kind = "reel" if p.get("is_reel") else ("story" if p.get("is_story") else "post")
+        try:
+            job_id = enqueue_media_job(post_id, child_id, object_key, kind, lease_token=lease_token)
+            execute("UPDATE posts SET job_id=%s WHERE post_id=%s", (job_id, post_id))
+            redriven.append({"post_id": post_id, "job_id": job_id, "attempts": post_data.get("processing_attempts", attempts + 1)})
+        except Exception as exc:
+            execute(
+                """UPDATE posts
+                   SET processing_status='UPLOADED',
+                       processing_lease_token=NULL,
+                       processing_lease_expires_at=NULL,
+                       processing_error=%s
+                   WHERE post_id=%s""",
+                (f"reap_dispatch_failed: {exc}", post_id),
+            )
+            failed.append({"post_id": post_id, "error": str(exc)})
+
+    return {"ok": True, "count": len(redriven), "redriven": redriven, "failed": failed}
+
+
+
