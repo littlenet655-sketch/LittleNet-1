@@ -184,11 +184,15 @@ def _require_mobile(*roles):
     return decorator
 
 
-def _child_gate(feature: str | None = None):
-    uid = int(g.mobile_user["user_id"])
+def _face_enrolled(uid: int) -> bool:
+    """Single definition of the Agent A Facenet512 enrollment check.
+
+    A child is enrolled only when a validated Facenet512 embedding is stored.
+    Missing rows, wrong models, and invalid embeddings all fail closed.
+    """
     face = fetch_one("SELECT embedding, model_name FROM face_profiles WHERE child_id=%s LIMIT 1", (uid,))
     if not face or not face.get("embedding") or face.get("model_name") != "Facenet512":
-        return jsonify(error="face_enrollment_required", gate="face"), 428
+        return False
     try:
         from safety.face_service import _validated_embedding
         emb = face["embedding"]
@@ -197,6 +201,20 @@ def _child_gate(feature: str | None = None):
             emb = json.loads(emb)
         _validated_embedding(emb)
     except Exception:
+        return False
+    return True
+
+
+def _onboarding_state(uid: int) -> dict:
+    """Authoritative gate state for a child: face first, then quiz."""
+    face_required = not _face_enrolled(uid)
+    quiz_required = bool(feed_quiz_state(uid).get("required") or needs_onboarding_quiz(uid))
+    return {"face_required": face_required, "quiz_required": quiz_required}
+
+
+def _child_gate(feature: str | None = None):
+    uid = int(g.mobile_user["user_id"])
+    if not _face_enrolled(uid):
         return jsonify(error="face_enrollment_required", gate="face"), 428
     if needs_onboarding_quiz(uid):
 
@@ -368,23 +386,7 @@ def _mobile_login_response(user, method="PASSWORD"):
         response["biometric_key"] = face_prof["biometric_key"]
     if user["role"] == "CHILD":
         uid = int(user["user_id"])
-        face_row = fetch_one("SELECT embedding FROM face_profiles WHERE child_id=%s", (uid,))
-        face_enrolled = False
-        if face_row and face_row.get("embedding"):
-            try:
-                from safety.face_service import _validated_embedding
-                emb = face_row["embedding"]
-                if isinstance(emb, str):
-                    import json
-                    emb = json.loads(emb)
-                _validated_embedding(emb)
-                face_enrolled = True
-            except Exception:
-                face_enrolled = False
-        response["onboarding"] = {
-            "face_required": not face_enrolled,
-            "quiz_required": bool(feed_quiz_state(uid).get("required") or needs_onboarding_quiz(uid)),
-        }
+        response["onboarding"] = _onboarding_state(uid)
     return jsonify(_clean(response))
 
 
@@ -929,7 +931,10 @@ def register_mobile_api(bp):
     @bp.route("/api/mobile/v1/me")
     @_require_mobile("CHILD", "PARENT", "ADMIN")
     def mobile_me():
-        return jsonify(ok=True, user=_mobile_user_payload(g.mobile_user))
+        payload = {"ok": True, "user": _mobile_user_payload(g.mobile_user)}
+        if str(g.mobile_user.get("role")) == "CHILD":
+            payload["onboarding"] = _onboarding_state(int(g.mobile_user["user_id"]))
+        return jsonify(_clean(payload))
 
     @bp.route("/api/mobile/v1/media")
     @_require_mobile("CHILD", "PARENT", "ADMIN")

@@ -1,13 +1,16 @@
-import type { LoginResponse, SessionUser } from '../api/auth';
+import type { LoginResponse, OnboardingState, SessionUser } from '../api/auth';
 import type { StorageBackend } from './backends';
 
 const TOKEN_KEY = 'littlenet.auth.token';
 const USER_KEY = 'littlenet.auth.user';
+const ONBOARDING_KEY = 'littlenet.auth.onboarding';
 const PENDING_DEST_KEY = 'littlenet.quiz.pending_destination';
 
 export interface PersistedSession {
   token: string;
   user: SessionUser;
+  /** Last-known authoritative gates. Server state overrides this whenever reachable. */
+  onboarding: OnboardingState | null;
 }
 
 export type InitialRoute = 'auth' | 'child' | 'child_face' | 'child_quiz' | 'parent' | 'admin';
@@ -25,35 +28,68 @@ export async function clearPendingDestination(storage: StorageBackend): Promise<
   await storage.removeItem(PENDING_DEST_KEY);
 }
 
-export async function persistSession(storage: StorageBackend, response: LoginResponse): Promise<PersistedSession> {
-  const session: PersistedSession = { token: response.token, user: response.user };
-  await storage.setItem(TOKEN_KEY, session.token);
-  await storage.setItem(USER_KEY, JSON.stringify(session.user));
-  return session;
+function parseOnboarding(raw: string | null): OnboardingState | null {
+  if (!raw) return null;
+  try {
+    const value = JSON.parse(raw) as Partial<OnboardingState>;
+    if (typeof value.face_required !== 'boolean' || typeof value.quiz_required !== 'boolean') return null;
+    return { face_required: value.face_required, quiz_required: value.quiz_required };
+  } catch {
+    return null;
+  }
+}
+
+export async function persistSession(
+  storage: StorageBackend,
+  session: { token: string; user: SessionUser; onboarding?: OnboardingState | null },
+): Promise<PersistedSession> {
+  const next: PersistedSession = { token: session.token, user: session.user, onboarding: session.onboarding ?? null };
+  await storage.setItem(TOKEN_KEY, next.token);
+  await storage.setItem(USER_KEY, JSON.stringify(next.user));
+  if (next.onboarding) {
+    await storage.setItem(ONBOARDING_KEY, JSON.stringify(next.onboarding));
+  } else {
+    await storage.removeItem(ONBOARDING_KEY);
+  }
+  return next;
+}
+
+/** Accepts the login payload shape directly. */
+export async function persistLoginResponse(storage: StorageBackend, response: LoginResponse): Promise<PersistedSession> {
+  return persistSession(storage, { token: response.token, user: response.user, onboarding: response.onboarding ?? null });
 }
 
 export async function restoreSession(storage: StorageBackend): Promise<PersistedSession | null> {
-  const [token, rawUser] = await Promise.all([storage.getItem(TOKEN_KEY), storage.getItem(USER_KEY)]);
+  const [token, rawUser, rawOnboarding] = await Promise.all([
+    storage.getItem(TOKEN_KEY),
+    storage.getItem(USER_KEY),
+    storage.getItem(ONBOARDING_KEY),
+  ]);
   if (!token || !rawUser) return null;
   try {
     const user = JSON.parse(rawUser) as SessionUser;
     if (typeof user.user_id !== 'number' || typeof user.role !== 'string') return null;
-    return { token, user };
+    return { token, user, onboarding: parseOnboarding(rawOnboarding) };
   } catch {
     return null;
   }
 }
 
 export async function clearSession(storage: StorageBackend): Promise<void> {
-  await Promise.all([storage.removeItem(TOKEN_KEY), storage.removeItem(USER_KEY), storage.removeItem(PENDING_DEST_KEY)]);
+  await Promise.all([
+    storage.removeItem(TOKEN_KEY),
+    storage.removeItem(USER_KEY),
+    storage.removeItem(ONBOARDING_KEY),
+    storage.removeItem(PENDING_DEST_KEY),
+  ]);
 }
 
 /**
- * Cold-start routing from a restored session plus the login payload gates.
+ * Cold-start routing from a restored session plus authoritative gates.
  * Server state is authoritative; this only restores the last-known route so a
  * relaunch preserves face/quiz gates instead of dropping the child at home.
  */
-export function decideInitialRoute(session: PersistedSession | null, onboarding?: { face_required: boolean; quiz_required: boolean }): InitialRoute {
+export function decideInitialRoute(session: PersistedSession | null, onboarding?: { face_required: boolean; quiz_required: boolean } | null): InitialRoute {
   if (!session) return 'auth';
   if (session.user.role === 'PARENT') return 'parent';
   if (session.user.role === 'ADMIN') return 'admin';

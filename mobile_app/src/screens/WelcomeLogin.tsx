@@ -70,7 +70,7 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
           <Field label="Password" secureTextEntry value={password} onChangeText={setPassword} />
           {error ? <Notice message={error} /> : null}
           <Button label={busy ? 'Logging in…' : 'Log in'} onPress={submit} loading={busy} disabled={busy} />
-          <Button label="I forgot my password" variant="secondary" onPress={() => navigation.navigate('Welcome')} />
+          <Button label="I forgot my password" variant="secondary" onPress={() => navigation.navigate('ForgotPassword')} />
         </Card>
       </ScrollView>
     </Screen>

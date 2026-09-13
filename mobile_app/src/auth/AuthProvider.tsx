@@ -1,50 +1,69 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { fetchMe, logout as apiLogout } from '../api/auth';
-import type { LoginResponse, SessionUser } from '../api/auth';
+import type { LoginResponse, OnboardingState, SessionUser } from '../api/auth';
 import { ApiError, setUnauthorizedHandler } from '../api/client';
-import { clearSession, persistSession, restoreSession } from './session';
+import { invalidateLocalSession, userInitiatedSignOut } from './controller';
+import { clearSession, persistLoginResponse, persistSession, restoreSession } from './session';
 import type { PersistedSession } from './session';
 import { secureStoreBackend } from './storage';
+import { invalidateSessionQueries } from '../query/client';
 
 interface AuthState {
   status: 'loading' | 'signedOut' | 'signedIn';
   session: PersistedSession | null;
-  onboarding: { face_required: boolean; quiz_required: boolean } | null;
+  onboarding: OnboardingState | null;
   signIn: (response: LoginResponse) => Promise<void>;
+  /** User-initiated: one server attempt, then local invalidation. */
   signOut: () => Promise<void>;
-  refreshMe: () => Promise<void>;
+  /** Authoritative refresh from /me. Throws on failure so gates never clear optimistically. */
+  refreshMe: () => Promise<PersistedSession>;
 }
 
 const AuthContext = createContext<AuthState | null>(null);
 
+const controllerDeps = {
+  storage: secureStoreBackend,
+  serverLogout: apiLogout,
+  clearQueries: invalidateSessionQueries,
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthState['status']>('loading');
   const [session, setSession] = useState<PersistedSession | null>(null);
-  const [onboarding, setOnboarding] = useState<AuthState['onboarding']>(null);
+  const sessionRef = useRef<PersistedSession | null>(null);
+
+  const applySession = useCallback((next: PersistedSession | null) => {
+    sessionRef.current = next;
+    setSession(next);
+  }, []);
+
+  /** Local-only: no network, safe to call from the centralized 401 handler. */
+  const invalidateLocal = useCallback(async () => {
+    sessionRef.current = null;
+    setSession(null);
+    setStatus('signedOut');
+    await invalidateLocalSession(controllerDeps);
+  }, []);
 
   const signOut = useCallback(async () => {
-    const token = session?.token;
+    const token = sessionRef.current?.token ?? null;
+    sessionRef.current = null;
     setSession(null);
-    setOnboarding(null);
     setStatus('signedOut');
-    try {
-      if (token) await apiLogout(token);
-    } catch {
-      // Logout is best-effort; local tokens are already cleared.
-    }
-    await clearSession(secureStoreBackend);
-  }, [session?.token]);
+    await userInitiatedSignOut(controllerDeps, token);
+  }, []);
 
-  // Centralized 401 -> safe return to login.
+  // Centralized 401 -> LOCAL invalidation only. Never a network request.
   useEffect(() => {
     setUnauthorizedHandler(() => {
-      void signOut();
+      void invalidateLocal();
     });
     return () => setUnauthorizedHandler(null);
-  }, [signOut]);
+  }, [invalidateLocal]);
 
-  // Cold-start restoration: tokens + cached user, then server revalidation.
+  // Cold-start restoration with authoritative onboarding: server state from
+  // /me overrides the cache whenever reachable; the cache only renders offline.
   useEffect(() => {
     let active = true;
     (async () => {
@@ -54,21 +73,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setStatus('signedOut');
         return;
       }
+      sessionRef.current = restored;
       setSession(restored);
-      setStatus('signedIn');
       try {
         const me = await fetchMe(restored.token);
         if (!active) return;
-        setSession({ token: restored.token, user: me.user });
-        await persistSession(secureStoreBackend, { ok: true, token: restored.token, auth_method: 'RESTORED', user: me.user });
+        const next: PersistedSession = {
+          token: restored.token,
+          user: me.user,
+          onboarding: me.onboarding ?? restored.onboarding,
+        };
+        sessionRef.current = next;
+        setSession(next);
+        await persistSession(secureStoreBackend, next);
+        setStatus('signedIn');
       } catch (error) {
         if (!active) return;
         if (error instanceof ApiError && error.status === 401) {
           await clearSession(secureStoreBackend);
+          sessionRef.current = null;
           setSession(null);
           setStatus('signedOut');
+          return;
         }
-        // Other failures keep the cached session (offline launch).
+        // Offline/other failure: keep the cached session and cached gates.
+        setStatus('signedIn');
       }
     })();
     return () => {
@@ -76,24 +105,35 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const signIn = useCallback(async (response: LoginResponse) => {
-    const next = await persistSession(secureStoreBackend, response);
+  const signIn = useCallback(
+    async (response: LoginResponse) => {
+      const next = await persistLoginResponse(secureStoreBackend, response);
+      applySession(next);
+      setStatus('signedIn');
+    },
+    [applySession],
+  );
+
+  const refreshMe = useCallback(async (): Promise<PersistedSession> => {
+    const current = sessionRef.current;
+    if (!current) throw new Error('No session to refresh.');
+    // A 401 here triggers local invalidation via the handler, then throws:
+    // callers must stay gated and offer retry.
+    const me = await fetchMe(current.token);
+    const next: PersistedSession = {
+      token: current.token,
+      user: me.user,
+      onboarding: me.onboarding ?? current.onboarding,
+    };
+    sessionRef.current = next;
     setSession(next);
-    setOnboarding(response.onboarding ?? null);
-    setStatus('signedIn');
+    await persistSession(secureStoreBackend, next);
+    return next;
   }, []);
 
-  const refreshMe = useCallback(async () => {
-    if (!session) return;
-    const me = await fetchMe(session.token);
-    const next: PersistedSession = { token: session.token, user: me.user };
-    setSession(next);
-    await persistSession(secureStoreBackend, { ok: true, token: next.token, auth_method: 'REFRESH', user: next.user });
-  }, [session]);
-
   const value = useMemo<AuthState>(
-    () => ({ status, session, onboarding, signIn, signOut, refreshMe }),
-    [status, session, onboarding, signIn, signOut, refreshMe],
+    () => ({ status, session, onboarding: session?.onboarding ?? null, signIn, signOut, refreshMe }),
+    [status, session, signIn, signOut, refreshMe],
   );
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

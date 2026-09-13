@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://backend.test.invalid';
 
 import { ApiError, setUnauthorizedHandler } from '../src/api/client';
-import { answerQuiz, createChild, enrollChildFace, faceLogin, fetchQuiz, registerParent, resendParentEmail, verifyParentEmail, verifyParentLiveness } from '../src/api/auth';
+import { answerQuiz, createChild, enrollChildFace, faceLogin, fetchQuiz, registerParent, requestPasswordReset, resendParentEmail, resetPassword, verifyParentEmail, verifyParentLiveness } from '../src/api/auth';
 
 interface SeenRequest {
   url: string;
@@ -102,6 +102,39 @@ describe('child face enrollment and login contracts', () => {
     assert.ok(err instanceof ApiError);
     assert.equal((err as ApiError).gate, null);
     assert.match((err as ApiError).message, /Liveness/);
+  });
+});
+
+describe('password reset contracts', () => {
+  it('requests a code with the identifier and completes with code + new password', async () => {
+    stubFetch();
+    nextStatus = 200;
+    nextPayload = { ok: true, user_id: 11, masked_email: 'd***@example.com', is_parent_proxy: false, message: 'Verification code sent.' };
+    const requested = await requestPasswordReset('dad_rio');
+    assert.equal(seen[0]?.url, 'https://backend.test.invalid/api/mobile/v1/auth/forgot-password');
+    assert.deepEqual(bodyJson(), { identifier: 'dad_rio' });
+    assert.equal(requested.user_id, 11);
+
+    nextPayload = { ok: true, message: 'Password reset successfully.' };
+    const done = await resetPassword(11, '654321', 'brandnewpass1');
+    assert.equal(seen[1]?.url, 'https://backend.test.invalid/api/mobile/v1/auth/reset-password');
+    assert.deepEqual(bodyJson(1), { user_id: 11, code: '654321', new_password: 'brandnewpass1' });
+    assert.equal(done.ok, true);
+  });
+
+  it('surfaces unknown-account and expired-code errors verbatim', async () => {
+    stubFetch();
+    nextStatus = 400;
+    nextPayload = { ok: false, error: 'No LittleNet account found matching that username or email.' };
+    await assert.rejects(
+      requestPasswordReset('ghost'),
+      (err: unknown) => err instanceof Error && err.message.includes('No LittleNet account found'),
+    );
+    nextPayload = { ok: false, error: 'The verification code has expired. Please request a new one.' };
+    await assert.rejects(
+      resetPassword(11, '000000', 'brandnewpass1'),
+      (err: unknown) => err instanceof Error && err.message.includes('expired'),
+    );
   });
 });
 

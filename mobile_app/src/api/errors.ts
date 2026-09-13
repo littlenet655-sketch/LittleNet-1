@@ -91,6 +91,8 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
   switch (code) {
     case 'network_unreachable':
       return 'No connection to LittleNet. Check your internet and try again.';
+    case 'request_cancelled':
+      return 'Request cancelled.';
     case 'invalid_credentials':
       return 'That username/email and password did not match. Try again.';
     case 'wrong_mode':

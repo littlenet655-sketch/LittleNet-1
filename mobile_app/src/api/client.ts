@@ -42,9 +42,24 @@ export const routes = {
 type UnauthorizedHandler = () => void;
 let unauthorizedHandler: UnauthorizedHandler | null = null;
 
-/** Centralized 401 handling: AuthProvider registers sign-out here. */
+/** Centralized 401 handling: AuthProvider registers LOCAL invalidation here (never a network call). */
 export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
   unauthorizedHandler = handler;
+}
+
+let suppressUnauthorizedDepth = 0;
+
+/**
+ * Runs fn with the centralized 401 handler suppressed. Used exactly once per
+ * user-initiated sign-out so an expired token on /logout cannot recurse.
+ */
+export async function withoutUnauthorizedHandler<T>(fn: () => Promise<T>): Promise<T> {
+  suppressUnauthorizedDepth += 1;
+  try {
+    return await fn();
+  } finally {
+    suppressUnauthorizedDepth -= 1;
+  }
 }
 
 export interface RequestOptions extends RequestInit {
@@ -65,8 +80,14 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
 
   let attempt = 0;
   for (;;) {
+    if (options.signal?.aborted) {
+      throw parseErrorResponse(0, { error: 'request_cancelled' });
+    }
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const onCallerAbort = (): void => controller.abort();
+    // Caller abort and timeout share one controller: either aborts the request.
+    options.signal?.addEventListener('abort', onCallerAbort, { once: true });
     try {
       const headers = new Headers(options.headers);
       headers.set('Accept', 'application/json');
@@ -79,7 +100,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
       const payload: unknown = await response.json().catch(() => ({}));
       if (!response.ok) {
         const err = parseErrorResponse(response.status, payload);
-        if (response.status === 401) unauthorizedHandler?.();
+        if (response.status === 401 && suppressUnauthorizedDepth === 0) unauthorizedHandler?.();
         if (shouldRetryRequest(method, attempt, response.status)) {
           attempt += 1;
           await sleep(retryDelayMs(attempt));
@@ -90,6 +111,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
       return payload as T;
     } catch (error) {
       if (error instanceof ApiError) throw error;
+      if (options.signal?.aborted) {
+        // Caller cancellation is intentional: never retry, never misreport.
+        throw parseErrorResponse(0, { error: 'request_cancelled' });
+      }
       const aborted = error instanceof DOMException && error.name === 'AbortError';
       const networkError = parseErrorResponse(0, { error: aborted ? 'request_timeout' : 'network_unreachable' });
       if (shouldRetryRequest(method, attempt, 0)) {
@@ -100,6 +125,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
       throw networkError;
     } finally {
       clearTimeout(timer);
+      options.signal?.removeEventListener('abort', onCallerAbort);
     }
   }
 }

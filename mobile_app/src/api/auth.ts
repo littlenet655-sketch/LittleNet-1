@@ -8,6 +8,9 @@ export interface ChildOnboardingState {
   quiz_required: boolean;
 }
 
+/** Authoritative gate state. Absent for PARENT/ADMIN. */
+export type OnboardingState = ChildOnboardingState;
+
 export interface SessionUser {
   user_id: number;
   username: string;
@@ -27,7 +30,7 @@ export interface LoginResponse {
   auth_method: string;
   user: SessionUser;
   biometric_key?: string;
-  onboarding?: ChildOnboardingState;
+  onboarding?: OnboardingState;
 }
 
 export interface ParentRegisterInput {
@@ -65,7 +68,7 @@ export function logout(token: string): Promise<{ ok: boolean }> {
   return post<{ ok: boolean }>(routes.logout, {}, token);
 }
 
-export function fetchMe(token: string): Promise<{ ok: boolean; user: SessionUser }> {
+export function fetchMe(token: string): Promise<{ ok: boolean; user: SessionUser; onboarding?: OnboardingState | null }> {
   return apiRequest(routes.me, {}, token);
 }
 

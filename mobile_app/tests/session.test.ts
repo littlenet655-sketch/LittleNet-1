@@ -27,10 +27,11 @@ function loginResponse(role: 'CHILD' | 'PARENT' | 'ADMIN', quizRequired = false)
 describe('auth restoration and logout', () => {
   it('persists and restores a session across a cold start', async () => {
     const storage = memoryBackend();
-    await persistSession(storage, loginResponse('CHILD'));
+    await persistSession(storage, { ...loginResponse('CHILD'), onboarding: { face_required: false, quiz_required: true } });
     const restored = await restoreSession(storage);
     assert.equal(restored?.token, 'token-123');
     assert.equal(restored?.user.username, 'kid_rio');
+    assert.deepEqual(restored?.onboarding, { face_required: false, quiz_required: true });
   });
 
   it('rejects corrupt cached users instead of crashing', async () => {
@@ -38,9 +39,17 @@ describe('auth restoration and logout', () => {
     assert.equal(await restoreSession(storage), null);
   });
 
-  it('logout clears tokens, user, and quiz destinations', async () => {
+  it('rejects corrupt cached gates and fails closed', async () => {
     const storage = memoryBackend();
-    await persistSession(storage, loginResponse('CHILD'));
+    await persistSession(storage, { ...loginResponse('CHILD'), onboarding: { face_required: false, quiz_required: false } });
+    storage.data['littlenet.auth.onboarding'] = '{broken';
+    const restored = await restoreSession(storage);
+    assert.equal(restored?.onboarding, null);
+  });
+
+  it('logout clears tokens, user, gates, and quiz destinations', async () => {
+    const storage = memoryBackend();
+    await persistSession(storage, { ...loginResponse('CHILD'), onboarding: { face_required: true, quiz_required: true } });
     await savePendingDestination(storage, 'KidsHome');
     await clearSession(storage);
     assert.equal(await restoreSession(storage), null);

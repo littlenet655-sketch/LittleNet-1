@@ -3,7 +3,8 @@ import { ScrollView } from 'react-native';
 import { registerParent, resendParentEmail, verifyParentEmail, verifyParentLiveness } from '../api/auth';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
-import { captureLivePhoto } from '../camera/livePhoto';
+import { CameraCapture } from '../camera/CameraCapture';
+import type { CapturedPhoto } from '../camera/livePhoto';
 import type { AuthScreenProps } from '../navigation/types';
 import { BrandHeader, Button, Card, Field, GateNotice, Notice, Screen, errorText } from '../ui/components';
 
@@ -108,16 +109,16 @@ export function GuardianLivenessScreen({ route }: AuthScreenProps<'GuardianLiven
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
 
-  async function submit() {
+  async function onCapture(photo: CapturedPhoto) {
     setBusy(true);
     setError(null);
     try {
-      const photo = await captureLivePhoto();
       const response = await verifyParentLiveness(pendingToken, photo.base64);
       await signIn(response);
       // RootNavigator routes the now-ACTIVE parent to ParentStack.
     } catch (err) {
       setError(err);
+      throw err;
     } finally {
       setBusy(false);
     }
@@ -133,7 +134,7 @@ export function GuardianLivenessScreen({ route }: AuthScreenProps<'GuardianLiven
           {error instanceof ApiError && error.status === 503 ? (
             <Notice tone="info" message="The verification service is busy. Wait a moment and retry — your email step is saved." />
           ) : null}
-          <Button label={busy ? 'Checking…' : 'Take live selfie'} onPress={submit} loading={busy} disabled={busy} />
+          <CameraCapture label="Take live selfie" busyLabel="Checking…" busy={busy} onCapture={onCapture} />
         </Card>
       </ScrollView>
     </Screen>
