@@ -1,0 +1,80 @@
+/**
+ * Post/reel/story media selection for ordinary creation.
+ * Uses normal Expo gallery + camera capture. CameraCapture stays reserved
+ * for Agent B face/liveness security flows only.
+ */
+import * as ImagePicker from 'expo-image-picker';
+import { File } from 'expo-file-system';
+
+export interface PickedMedia {
+  uri: string;
+  fileName: string;
+  mimeType: string;
+  fileSize?: number;
+  width?: number;
+  height?: number;
+  duration?: number | null;
+}
+
+function extOf(name: string, fallback: string): string {
+  const parts = name.split('.');
+  return parts.length > 1 ? (parts[parts.length - 1] ?? fallback).toLowerCase() : fallback;
+}
+
+const MIME_EXTENSIONS: Record<string, readonly string[]> = {
+  'image/jpeg': ['jpg', 'jpeg'],
+  'image/png': ['png'],
+  'image/webp': ['webp'],
+  'video/mp4': ['mp4', 'm4v'],
+  'video/quicktime': ['mov'],
+};
+
+export function validateMediaIdentity(fileName: string, mimeType: string): void {
+  const extension = extOf(fileName, '');
+  const allowed = MIME_EXTENSIONS[mimeType.toLowerCase()];
+  if (!allowed?.includes(extension)) throw new Error('The selected file type does not match its filename. Choose another file.');
+}
+
+export function localMediaSize(uri: string): number {
+  const file = new File(uri);
+  if (!file.exists || !Number.isSafeInteger(file.size) || file.size <= 0) {
+    throw new Error('Could not determine the selected file size. Choose the file again.');
+  }
+  return file.size;
+}
+
+function toPicked(asset: ImagePicker.ImagePickerAsset, kind: 'image' | 'video'): PickedMedia {
+  const isVideo = kind === 'video' || asset.type === 'video';
+  const ext = extOf(asset.fileName ?? asset.uri, isVideo ? 'mp4' : 'jpg');
+  const mimeType = asset.mimeType ?? (isVideo ? 'video/mp4' : ext === 'png' ? 'image/png' : ext === 'webp' ? 'image/webp' : 'image/jpeg');
+  return {
+    uri: asset.uri,
+    fileName: asset.fileName ?? `littlenet.${ext}`,
+    mimeType,
+    fileSize: asset.fileSize,
+    width: asset.width,
+    height: asset.height,
+    duration: asset.duration ?? null,
+  };
+}
+
+export async function pickGalleryMedia(kind: 'image' | 'video'): Promise<PickedMedia | null> {
+  const result = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: kind === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
+    quality: 0.9,
+  });
+  if (result.canceled || !result.assets?.[0]) return null;
+  return toPicked(result.assets[0], kind);
+}
+
+export async function capturePostMedia(kind: 'image' | 'video'): Promise<PickedMedia | null> {
+  const camera = await ImagePicker.requestCameraPermissionsAsync();
+  if (!camera.granted) throw new Error('Camera access is needed to take a photo or video.');
+  const result = await ImagePicker.launchCameraAsync({
+    mediaTypes: kind === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
+    quality: 0.9,
+    videoMaxDuration: 60,
+  });
+  if (result.canceled || !result.assets?.[0]) return null;
+  return toPicked(result.assets[0], kind);
+}

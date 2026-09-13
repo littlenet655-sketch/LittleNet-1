@@ -4,17 +4,17 @@ import type { AdminScreenProps, ChildScreenProps } from '../navigation/types';
 import { BrandHeader, Button, Card, Notice, Screen } from '../ui/components';
 
 /**
- * Kids home placeholder owned by Agent C. The foundation guarantees auth,
- * gates, and query wiring; Agent C builds feed/stories/reels/discover here.
+ * Kids entry now forwards to the real product shell (Agent C KidsTabs).
  */
-export function KidsHomeScreen(_props: ChildScreenProps<'KidsHome'>) {
+export function KidsHomeScreen({ navigation }: ChildScreenProps<'KidsHome'>) {
   const { session, signOut } = useAuth();
   return (
     <Screen>
       <ScrollView>
-        <BrandHeader title={`Hi, ${session?.user.full_name ?? 'friend'}!`} subtitle="You passed every safety gate. The Kids feed lands here next." />
+        <BrandHeader title={`Hi, ${session?.user.full_name ?? 'friend'}!`} subtitle="Your safe feed is ready." />
         <Card>
           <Notice tone="ok" message="Face ✓   Quiz ✓   You are ready to explore." />
+          <Button label="Open my feed" onPress={() => (navigation as unknown as { replace: (r: string, p: object) => void }).replace('KidsTabs', { tab: 'FeedTab' })} />
           <Button label="Log out" variant="secondary" onPress={() => void signOut()} />
         </Card>
       </ScrollView>

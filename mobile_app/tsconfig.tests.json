@@ -1,8 +1,8 @@
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "CommonJS",
-    "moduleResolution": "Node",
+    "module": "Node16",
+    "moduleResolution": "Node16",
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
@@ -11,5 +11,5 @@
     "rootDir": ".",
     "types": ["node"]
   },
-  "include": ["tests/**/*.ts", "src/api/**/*.ts", "src/auth/session.ts", "src/auth/backends.ts", "src/navigation/gates.ts"]
+  "include": ["tests/**/*.ts", "src/api/**/*.ts", "src/auth/session.ts", "src/auth/backends.ts", "src/navigation/gates.ts", "src/kids/social.ts", "src/quiz/decision.ts"]
 }
