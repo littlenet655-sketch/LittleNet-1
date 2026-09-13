@@ -5,45 +5,52 @@ import { useAuth } from '../auth/AuthProvider';
 import { queryClient } from '../query/client';
 import { invalidateSocialCaches, kidsKeys } from '../query/keys';
 import { toggleLike, toggleSave } from '../api/kidsSocial';
-import { isPubliclyVisible } from './social';
+import { isPubliclyVisible, runSocialPostAction, socialPostTarget } from './social';
 import { Avatar, CategoryBadge, TimeAgo } from '../ui/social';
 import { colors, radius, spacing, type } from '../ui/tokens';
 
-export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen: () => void; onProfile: () => void }) {
+export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?: () => void; onProfile?: () => void }) {
   const { session } = useAuth();
   if (!isPubliclyVisible(item)) return null;
+  const socialTarget = socialPostTarget(item);
+  const isVideo = item.media_type?.toUpperCase() === 'VIDEO';
+  const previewUrl = isVideo ? item.poster_url : item.media_url;
 
   async function onLike() {
-    if (!session) return;
+    if (!session || !socialTarget) return;
+    const postId = socialTarget.postId;
     const update = (old: InfiniteData<FeedPage> | undefined, liked: boolean, likes: number) => old ? ({
       ...old,
-      pages: old.pages.map((page) => ({ ...page, items: page.items.map((post) => post.post_id === item.post_id ? { ...post, viewer_liked: liked, likes } : post) })),
+      pages: old.pages.map((page) => ({ ...page, items: page.items.map((post) => post.source_type === 'SOCIAL' && post.post_id === postId ? { ...post, viewer_liked: liked, likes } : post) })),
     }) : old;
     const optimisticLiked = !item.viewer_liked;
     const optimisticLikes = (item.likes ?? 0) + (item.viewer_liked ? -1 : 1);
     queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.feed }, (old) => update(old, optimisticLiked, optimisticLikes));
     queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) => update(old, optimisticLiked, optimisticLikes));
     try {
-      const result = await toggleLike(session.token, item.post_id);
+      const result = await runSocialPostAction(item, (id) => toggleLike(session.token, id));
+      if (!result) return;
       queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.feed }, (old) => update(old, result.liked, result.likes));
       queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) => update(old, result.liked, result.likes));
-      await invalidateSocialCaches([item.post_id]);
+      await invalidateSocialCaches([postId]);
     } catch {
       await queryClient.invalidateQueries({ queryKey: kidsKeys.feed });
     }
   }
 
   async function onSave() {
-    if (!session) return;
+    if (!session || !socialTarget) return;
+    const postId = socialTarget.postId;
     try {
-      const result = await toggleSave(session.token, item.post_id);
+      const result = await runSocialPostAction(item, (id) => toggleSave(session.token, id));
+      if (!result) return;
       const update = (old: InfiniteData<FeedPage> | undefined) => old ? ({
         ...old,
-        pages: old.pages.map((page) => ({ ...page, items: page.items.map((post) => post.post_id === item.post_id ? { ...post, viewer_saved: result.saved } : post) })),
+        pages: old.pages.map((page) => ({ ...page, items: page.items.map((post) => post.source_type === 'SOCIAL' && post.post_id === postId ? { ...post, viewer_saved: result.saved } : post) })),
       }) : old;
       queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.feed }, update);
       queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, update);
-      await invalidateSocialCaches([item.post_id]);
+      await invalidateSocialCaches([postId]);
     } catch {
       await queryClient.invalidateQueries({ queryKey: kidsKeys.saved });
     }
@@ -51,7 +58,7 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen: 
 
   return (
     <View style={styles.card}>
-      <Pressable onPress={onProfile} style={styles.row}>
+      <Pressable onPress={onProfile} disabled={!onProfile} style={styles.row}>
         <Avatar uri={item.avatar_url} name={item.full_name} />
         <View style={styles.meta}>
           <Text style={styles.name}>{item.full_name ?? 'Friend'}</Text>
@@ -59,9 +66,10 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen: 
         </View>
         <CategoryBadge label={item.content_category} />
       </Pressable>
+      {item.title ? <Text style={styles.title}>{item.title}</Text> : null}
       {item.caption ? <Text style={styles.caption}>{item.caption}</Text> : null}
-      {item.media_url && item.media_type?.toUpperCase() !== 'VIDEO' ? <Image source={{ uri: item.media_url }} style={styles.media} /> : null}
-      <View style={styles.actions}>
+      {previewUrl ? <Pressable onPress={onOpen} disabled={!onOpen}><Image source={{ uri: previewUrl }} style={styles.media} /></Pressable> : isVideo ? <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}><Text style={styles.videoLabel}>Video</Text></Pressable> : null}
+      {socialTarget ? <View style={styles.actions}>
         <Pressable onPress={() => void onLike()} style={styles.action}>
           <Text style={styles.actionText}>{item.viewer_liked ? '♥ Liked' : '♡ Like'} ({item.likes ?? 0})</Text>
         </Pressable>
@@ -71,7 +79,7 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen: 
         <Pressable onPress={onOpen} style={styles.action}>
           <Text style={styles.actionText}>Comments ({item.comments_count ?? 0})</Text>
         </Pressable>
-      </View>
+      </View> : null}
     </View>
   );
 }
@@ -81,8 +89,10 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   meta: { flex: 1 },
   name: { fontWeight: '800', color: colors.ink },
+  title: { marginTop: 8, color: colors.ink, fontSize: type.body, fontWeight: '800' },
   caption: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 22 },
   media: { marginTop: 10, width: '100%', height: 300, borderRadius: radius.md, backgroundColor: colors.line },
+  videoLabel: { margin: 'auto', color: colors.muted, fontWeight: '700' },
   actions: { flexDirection: 'row', marginTop: 8 },
   action: { paddingVertical: 8, paddingRight: 16 },
   actionText: { color: colors.brandDark, fontWeight: '700' },

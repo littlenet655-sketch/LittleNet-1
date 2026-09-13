@@ -17,9 +17,25 @@ describe('reactive child gate routing (face -> quiz -> home)', () => {
     assert.equal(resolveChildRoute({ face_required: true, quiz_required: false }, false), 'FaceEnroll');
   });
 
-  it('face enrollment success transitions to Quiz when required, else KidsHome', () => {
-    assert.equal(resolveChildRoute({ face_required: false, quiz_required: true }, false), 'Quiz');
-    assert.equal(resolveChildRoute({ face_required: false, quiz_required: false }, false), 'KidsHome');
+  it('preserves ungated product routes', () => {
+    const clear = { face_required: false, quiz_required: false };
+    assert.equal(resolveChildRoute(clear, false, 'KidsTabs'), 'KidsTabs');
+    assert.equal(resolveChildRoute(clear, false, 'FeedTab'), 'FeedTab');
+    assert.equal(resolveChildRoute(clear, false, 'ReelsTab'), 'ReelsTab');
+    assert.equal(resolveChildRoute(clear, false, 'Chat'), 'Chat');
+  });
+
+  it('forces active gates from every product route', () => {
+    for (const route of ['KidsTabs', 'FeedTab', 'ReelsTab', 'Chat'] as const) {
+      assert.equal(resolveChildRoute({ face_required: true, quiz_required: true }, false, route), 'FaceEnroll');
+      assert.equal(resolveChildRoute({ face_required: false, quiz_required: true }, false, route), 'Quiz');
+    }
+  });
+
+  it('enters the product once after a gate clears', () => {
+    const clear = { face_required: false, quiz_required: false };
+    assert.equal(resolveChildRoute(clear, false, 'FaceEnroll'), 'KidsTabs');
+    assert.equal(resolveChildRoute(clear, false, 'Quiz'), 'KidsTabs');
   });
 
   it('failed enrollment (still face_required) stays gated', () => {

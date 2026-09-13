@@ -11,6 +11,7 @@ export interface FeedItem {
   media_url?: string | null;
   poster_url?: string | null;
   playback_expires_at?: number | null;
+  title?: string;
   caption?: string;
   content_category?: string;
   likes?: number;
@@ -22,6 +23,16 @@ export interface FeedItem {
   is_safe?: boolean;
   viewer_liked?: boolean;
   viewer_saved?: boolean;
+}
+
+export interface StoryItem {
+  post_id: number;
+  full_name?: string;
+  avatar_url?: string | null;
+  media_type?: string;
+  media_url?: string | null;
+  poster_url?: string | null;
+  caption?: string;
 }
 
 export interface FeedPage {
@@ -48,6 +59,6 @@ export function fetchReelsV2(token: string, cursor: number, limit = 10, sessionI
   return get<FeedPage>(`${routes.reelsV2}?${p.toString()}`, token, signal);
 }
 
-export function fetchKidsHome(token: string): Promise<{ ok: boolean; stories: unknown[] }> {
+export function fetchKidsHome(token: string): Promise<{ ok: boolean; stories: StoryItem[] }> {
   return get(routes.kidsHome, token);
 }

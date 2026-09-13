@@ -6,7 +6,7 @@ process.env.EXPO_PUBLIC_API_BASE_URL = 'https://backend.test.invalid';
 import { setUnauthorizedHandler } from '../src/api/client';
 import { fetchFeedV2 } from '../src/api/kidsFeed';
 import { addComment, toggleLike, toggleSave } from '../src/api/kidsSocial';
-import { dedupeFeed, isPubliclyVisible, isTerminalStage, processingStage, shouldLoadReel, shouldPlayReel } from '../src/kids/social';
+import { dedupeFeed, isPubliclyVisible, isTerminalStage, processingStage, runSocialPostAction, shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget } from '../src/kids/social';
 
 let seen: Array<{ url: string; init: RequestInit }> = [];
 let nextPayload: unknown = { ok: true };
@@ -64,6 +64,26 @@ describe('agentC feed pagination/dedupe/refresh', () => {
     assert.equal(processingStage('BLOCKED', 'BLOCKED'), 'blocked');
     assert.equal(isTerminalStage('allowed'), true);
     assert.equal(isTerminalStage('processing'), false);
+  });
+
+  it('never routes curated identities through social actions or screens', async () => {
+    stub();
+    const curated = { source_type: 'CURATED' as const, source_id: 7, post_id: 7, child_id: 9 };
+    await runSocialPostAction(curated, (id) => toggleLike('tok', id));
+    await runSocialPostAction(curated, (id) => toggleSave('tok', id));
+    assert.equal(seen.length, 0);
+    assert.equal(socialPostTarget(curated), null);
+    assert.equal(socialProfileTarget(curated), null);
+  });
+
+  it('keeps social actions and navigation targets enabled', async () => {
+    stub();
+    nextPayload = { ok: true, liked: true, likes: 1 };
+    const social = { source_type: 'SOCIAL' as const, source_id: 7, post_id: 7, child_id: 9 };
+    await runSocialPostAction(social, (id) => toggleLike('tok', id));
+    assert.ok(seen[0]?.url.endsWith('/api/mobile/v1/kids/posts/7/like'));
+    assert.deepEqual(socialPostTarget(social), { postId: 7 });
+    assert.deepEqual(socialProfileTarget(social), { targetId: 9 });
   });
 
   it('selects one foreground reel and bounds adjacent loading', () => {

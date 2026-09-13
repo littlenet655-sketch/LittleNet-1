@@ -4,7 +4,7 @@ import { useVideoPlayer, VideoView } from 'expo-video';
 import type { FeedItem } from '../../api/kidsFeed';
 import { ApiError } from '../../api/client';
 import { PostCard } from '../../kids/PostCard';
-import { shouldLoadReel, shouldPlayReel } from '../../kids/social';
+import { shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget } from '../../kids/social';
 import { useFeed } from '../../kids/useFeed';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
@@ -95,17 +95,20 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         maxToRenderPerBatch={3}
         initialNumToRender={2}
         removeClippedSubviews
-        renderItem={({ item, index }) => (
-          <View style={styles.page}>
+        renderItem={({ item, index }) => {
+          const post = socialPostTarget(item);
+          const profile = socialProfileTarget(item);
+          const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
+          return <View style={styles.page}>
             <ReelVideo item={item} active={shouldPlayReel(index, activeIndex, foreground)} nearby={shouldLoadReel(index, activeIndex)} />
             <PostCard
               item={item}
-              onOpen={() => (navigation as unknown as { navigate: (r: string, p: object) => void }).navigate('PostDetail', { postId: item.post_id })}
-              onProfile={() => (navigation as unknown as { navigate: (r: string, p: object) => void }).navigate('OtherProfile', { targetId: item.child_id ?? 0 })}
+              onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}
+              onProfile={profile ? () => nav.navigate('OtherProfile', profile) : undefined}
             />
             <Pressable onPress={() => setActiveIndex(index)}><Text style={styles.tap}>Play this reel</Text></Pressable>
-          </View>
-        )}
+          </View>;
+        }}
       />
     </Screen>
   );

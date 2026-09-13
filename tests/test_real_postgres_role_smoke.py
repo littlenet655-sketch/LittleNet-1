@@ -5,6 +5,7 @@ separate job with a disposable PostgreSQL service so Child/Parent/Admin browser 
 React Native bearer-API guards are exercised against the actual production migration
 chain instead of mocks.
 """
+import json
 import os
 
 import pytest
@@ -60,15 +61,16 @@ def _seed_role_fixture():
         """,
         (CHILD_ID, PARENT_ID, ADMIN_ID, CHILD_ID, PARENT_ID, ADMIN_ID),
     )
-    # Seed a syntactically valid, non-empty embedding. This fixture only proves
+    # Seed a schema-valid embedding. This fixture only proves
     # authenticated role guards; real face/liveness behavior is covered separately.
+    embedding = json.dumps([0.05] * 512)
     _db_exec(
         """
         INSERT INTO face_profiles(child_id,embedding,model_name)
-        VALUES(%s,'[1.0]'::jsonb,'CI')
-        ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding;
+        VALUES(%s,%s::jsonb,'Facenet512')
+        ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding, model_name=EXCLUDED.model_name;
         """,
-        (CHILD_ID,),
+        (CHILD_ID, embedding),
     )
     _db_exec(
         """

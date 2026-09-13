@@ -55,21 +55,19 @@ function AuthNavigator() {
 function ChildGateSync() {
   const navigation = useNavigation<NavigationProp<ChildStackParamList>>();
   const { session } = useAuth();
-  const target = resolveChildRoute(session?.onboarding, session?.user.quiz_required ?? true);
 
   useEffect(() => {
     const state = navigation.getState();
     const index = state?.index ?? 0;
-    const current = state?.routes[index]?.name;
+    const current = state?.routes[index]?.name as keyof ChildStackParamList | undefined;
+    if (!current) return;
+    const target = resolveChildRoute(session?.onboarding, session?.user.quiz_required ?? true, current);
     if (current === target) return;
-    if (target === 'Quiz' && current === 'Quiz') return;
-    const currentParams =
-      current === 'Quiz' ? (state?.routes[index]?.params as ChildStackParamList['Quiz']) : undefined;
     navigation.reset({
       index: 0,
-      routes: [{ name: target, params: target === 'Quiz' ? currentParams : undefined } as never],
+      routes: [{ name: target } as never],
     });
-  }, [navigation, target]);
+  }, [navigation, session?.onboarding, session?.user.quiz_required]);
 
   return null;
 }
@@ -128,7 +126,7 @@ function AdminNavigator() {
 
 /**
  * Role-aware cold-start routing: unauthenticated -> AuthStack, CHILD ->
- * ChildStack (reactively pinned to face/quiz/home by ChildGateSync),
+ * ChildStack (reactively forced to face/quiz only while a gate is active),
  * PARENT -> ParentStack, ADMIN -> AdminStack.
  */
 export function RootNavigator() {

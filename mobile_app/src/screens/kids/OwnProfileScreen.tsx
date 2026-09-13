@@ -86,6 +86,7 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         {list.map((post) => (
           <Pressable key={post.post_id} onPress={() => nav.navigate('PostDetail', { postId: post.post_id })}>
             <Card>
+              {post.media_type?.toUpperCase() === 'VIDEO' && post.poster_url ? <Image source={{ uri: post.poster_url }} style={styles.thumb} /> : null}
               {post.media_url && post.media_type?.toUpperCase() !== 'VIDEO' ? <Image source={{ uri: post.media_url }} style={styles.thumb} /> : null}
               <Text style={styles.caption}>{post.caption || `Post ${post.post_id}`}</Text>
             </Card>

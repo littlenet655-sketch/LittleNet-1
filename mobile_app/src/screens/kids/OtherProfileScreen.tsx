@@ -4,6 +4,7 @@ import { ApiError } from '../../api/client';
 import { fetchOtherProfile } from '../../api/kidsProfiles';
 import { blockUser, muteUser, submitReport, toggleFollow, type PostDetail } from '../../api/kidsSocial';
 import { useAuth } from '../../auth/AuthProvider';
+import { canMessageRelationship } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { invalidateSocialCaches } from '../../query/keys';
 import { Avatar } from '../../ui/social';
@@ -64,8 +65,9 @@ export function OtherProfileScreen({ route, navigation }: ChildScreenProps<'Othe
           <Text style={styles.rel}>{rel.connected ? 'Connected' : rel.pending ? 'Request pending' : 'Not connected'}</Text>
           <View style={styles.btns}>
             <Button label={rel.connected || rel.pending ? 'Unfollow' : 'Follow'} disabled={busy} onPress={() => void act((t) => toggleFollow(t, targetId))} />
-            <Button label="Message" variant="secondary" onPress={() => nav.navigate('Chat', { peerId: targetId })} />
+            <Button label="Message" variant="secondary" disabled={!canMessageRelationship(rel)} onPress={() => nav.navigate('Chat', { peerId: targetId })} />
           </View>
+          {!canMessageRelationship(rel) ? <Text style={styles.rel}>Messaging is available after the friendship is approved.</Text> : null}
           <View style={styles.btns}>
             <Button label="Mute" variant="secondary" disabled={busy} onPress={() => void act((t) => muteUser(t, targetId, 'mute'))} />
             <Button label="Block" variant="secondary" disabled={busy} onPress={() => void act((t) => blockUser(t, targetId, 'block'))} />

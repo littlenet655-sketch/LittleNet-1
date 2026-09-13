@@ -2,6 +2,7 @@ import { FlatList, RefreshControl } from 'react-native';
 import { ApiError } from '../../api/client';
 import { PostCard } from '../../kids/PostCard';
 import { useFeed } from '../../kids/useFeed';
+import { socialPostTarget, socialProfileTarget } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsOnline } from '../../query/client';
 import { BrandHeader, DisabledFeature, EmptyState, ErrorState, GateNotice, LoadingState, OfflineBanner, Screen, Skeleton } from '../../ui/components';
@@ -22,13 +23,12 @@ export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         refreshControl={<RefreshControl refreshing={feed.refreshing} onRefresh={feed.refresh} />}
         ListHeaderComponent={<><BrandHeader title="LittleNet" subtitle="Kind posts from friends." /><OfflineBanner online={online} />{feed.error ? <GateNotice error={feed.error} /> : null}</>}
         ListEmptyComponent={<EmptyState title="Nothing here yet" body="When friends share kind posts, they will appear here." />}
-        renderItem={({ item }) => (
-          <PostCard
-            item={item}
-            onOpen={() => (navigation as unknown as { navigate: (r: string, p: object) => void }).navigate('PostDetail', { postId: item.post_id })}
-            onProfile={() => (navigation as unknown as { navigate: (r: string, p: object) => void }).navigate('OtherProfile', { targetId: item.child_id ?? 0 })}
-          />
-        )}
+        renderItem={({ item }) => {
+          const post = socialPostTarget(item);
+          const profile = socialProfileTarget(item);
+          const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
+          return <PostCard item={item} onOpen={post ? () => nav.navigate('PostDetail', post) : undefined} onProfile={profile ? () => nav.navigate('OtherProfile', profile) : undefined} />;
+        }}
         onEndReached={feed.loadMore}
         onEndReachedThreshold={0.5}
       />

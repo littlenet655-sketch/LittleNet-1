@@ -8,7 +8,7 @@ import { blockUser, fetchPostDetail, muteUser, submitReport, toggleFollow } from
 import { fetchOtherProfile } from '../src/api/kidsProfiles';
 import { fetchChat, markNotificationsRead, sendChatText, sharePostToChat } from '../src/api/kidsChat';
 import { completeUpload, fetchProcessingStatus, redriveProcessing, requestUploadSession } from '../src/api/kidsUpload';
-import { CHAT_BLOCKED_COPY, createSearchGuard, dedupeChat, moderationCopy, shouldStopPolling } from '../src/kids/social';
+import { canMessageRelationship, CHAT_BLOCKED_COPY, createSearchGuard, dedupeChat, isConversationUnread, moderationCopy, shouldStopPolling } from '../src/kids/social';
 
 let seen: Array<{ url: string; init: RequestInit }> = [];
 let nextPayload: unknown = { ok: true };
@@ -92,5 +92,13 @@ describe('agentC relationships/upload/chat/notifications', () => {
     nextPayload = { ok: true, post: { post_id: 1, media_url: 'https://cdn/x.jpg' }, comments: [] };
     const d = await fetchPostDetail('tok', 1);
     assert.ok(!JSON.stringify(d).includes('quarantine'));
+  });
+
+  it('uses authoritative message capability and conversation unread state', () => {
+    assert.equal(canMessageRelationship({ can_message: false }), false);
+    assert.equal(canMessageRelationship({ can_message: true }), true);
+    assert.equal(isConversationUnread({ peer_id: 9, last_message: { sender_child_id: 9, is_seen: false } }), true);
+    assert.equal(isConversationUnread({ peer_id: 9, last_message: { sender_child_id: 7, is_seen: false } }), false);
+    assert.equal(isConversationUnread({ peer_id: 9, last_message: { sender_child_id: 9, is_seen: true } }), false);
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { addComment, fetchPostDetail, toggleLike, toggleSave, type CommentItem, type PostDetail } from '../../api/kidsSocial';
 import { useAuth } from '../../auth/AuthProvider';
+import { VideoMedia } from '../../kids/VideoMedia';
 import type { ChildScreenProps } from '../../navigation/types';
 import { invalidateSocialCaches } from '../../query/keys';
 import { Avatar } from '../../ui/social';
@@ -70,7 +71,8 @@ export function PostDetailScreen({ route }: ChildScreenProps<'PostDetail'>) {
             <Text style={styles.name}>{post.full_name ?? 'Friend'}</Text>
           </View>
           {post.caption ? <Text style={styles.caption}>{post.caption}</Text> : null}
-          {post.media_url ? <Image source={{ uri: post.media_url }} style={styles.media} /> : null}
+          {post.media_url && post.media_type?.toUpperCase() === 'VIDEO' ? <VideoMedia source={post.media_url} posterUrl={post.poster_url} height={320} /> : null}
+          {post.media_url && post.media_type?.toUpperCase() !== 'VIDEO' ? <Image source={{ uri: post.media_url }} style={styles.media} /> : null}
           <View style={styles.row}>
             <Button label={post.viewer_liked ? 'Liked' : 'Like'} onPress={() => void onLike()} />
             <Button label={post.viewer_saved ? 'Saved' : 'Save'} variant="secondary" onPress={() => {

@@ -1,7 +1,11 @@
 import type { GateKind } from '../api/errors';
 import type { OnboardingState } from '../api/auth';
 
-export type ChildRoute = 'FaceEnroll' | 'Quiz' | 'KidsHome';
+export type ChildRoute =
+  | 'FaceEnroll' | 'Quiz' | 'KidsHome' | 'KidsTabs'
+  | 'FeedTab' | 'DiscoverTab' | 'CreateTab' | 'ReelsTab' | 'ProfileTab'
+  | 'Stories' | 'NotificationsTab' | 'Conversations' | 'Chat'
+  | 'PostDetail' | 'OtherProfile' | 'ProcessingStatus';
 
 /** Face gate always wins: a child without enrollment must never reach quiz or home. */
 export function childNextRoute(faceRequired: boolean, quizRequired: boolean): ChildRoute {
@@ -27,7 +31,10 @@ export function screenForGate(gate: GateKind): 'FaceEnroll' | 'Quiz' | 'OtpVerif
 export function resolveChildRoute(
   onboarding: OnboardingState | null | undefined,
   _fallbackQuizRequired: boolean,
+  current: ChildRoute = 'KidsHome',
 ): ChildRoute {
   if (!onboarding) return 'FaceEnroll';
-  return childNextRoute(onboarding.face_required, onboarding.quiz_required);
+  if (onboarding.face_required) return 'FaceEnroll';
+  if (onboarding.quiz_required) return 'Quiz';
+  return current === 'FaceEnroll' || current === 'Quiz' ? 'KidsTabs' : current;
 }

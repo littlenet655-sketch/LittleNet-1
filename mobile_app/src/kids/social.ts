@@ -53,6 +53,27 @@ export function isTerminalStage(stage: ProcessingStage): boolean {
   return stage === 'allowed' || stage === 'blocked' || stage === 'review' || stage === 'retryable' || stage === 'failed';
 }
 
+export interface SocialFeedIdentity extends KeyedItem {
+  child_id?: number;
+}
+
+export function socialPostTarget(item: SocialFeedIdentity): { postId: number } | null {
+  return item.source_type === 'SOCIAL' && Number.isInteger(item.post_id) && Number(item.post_id) > 0
+    ? { postId: Number(item.post_id) }
+    : null;
+}
+
+export function socialProfileTarget(item: SocialFeedIdentity): { targetId: number } | null {
+  return item.source_type === 'SOCIAL' && Number.isInteger(item.child_id) && Number(item.child_id) > 0
+    ? { targetId: Number(item.child_id) }
+    : null;
+}
+
+export async function runSocialPostAction<T>(item: SocialFeedIdentity, action: (postId: number) => Promise<T>): Promise<T | undefined> {
+  const target = socialPostTarget(item);
+  return target ? action(target.postId) : undefined;
+}
+
 export function moderationCopy(stage: ProcessingStage): string {
   if (stage === 'review') return 'Your post is waiting for a safety check. Only you can see it for now.';
   if (stage === 'blocked') return 'This post could not be shared. Try posting something else.';
@@ -106,6 +127,23 @@ export function shouldLoadReel(index: number, activeIndex: number): boolean {
 /** Exactly one reel may play, and never while the app is inactive. */
 export function shouldPlayReel(index: number, activeIndex: number, foreground: boolean): boolean {
   return foreground && index === activeIndex;
+}
+
+export interface ConversationPreview {
+  peer_id: number;
+  last_message?: { sender_child_id?: number; is_seen?: boolean } | null;
+}
+
+export function canMessageRelationship(relationship: { can_message?: boolean } | null | undefined): boolean {
+  return relationship?.can_message === true;
+}
+
+export function isConversationUnread(conversation: {
+  peer_id: number;
+  last_message?: { sender_child_id?: number; is_seen?: boolean } | null;
+}): boolean {
+  return conversation.last_message?.sender_child_id === conversation.peer_id
+    && conversation.last_message.is_seen === false;
 }
 
 /** Stale-query guard: only the latest search response may render. */
