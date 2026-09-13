@@ -26,6 +26,7 @@ scratch/
 node_modules/
 mobile_app/.expo/
 mobile_app/dist/
+mobile_app/test-dist/
 mobile_app/.env
 mobile_app/.env.*
 !mobile_app/.env.example
