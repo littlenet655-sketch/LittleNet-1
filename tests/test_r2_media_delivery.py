@@ -102,3 +102,67 @@ def test_r2_objects_are_uploaded_with_no_store_metadata():
     source = _text('services/object_storage.py')
     assert '"CacheControl": "private, no-store, max-age=0"' in source
     assert 'R2_REFERENCE_PREFIX = "uploads/r2/"' in source
+
+
+def test_normalize_r2_origin_variants():
+    # bare account ID -> https://ID.r2.cloudflarestorage.com
+    assert storage.normalize_r2_origin("ID") == "https://ID.r2.cloudflarestorage.com"
+    assert storage.normalize_r2_origin("acct-12345") == "https://acct-12345.r2.cloudflarestorage.com"
+
+    # full URL -> unchanged normalized origin
+    assert storage.normalize_r2_origin("https://ID.r2.cloudflarestorage.com") == "https://ID.r2.cloudflarestorage.com"
+    assert storage.normalize_r2_origin("https://ID.r2.cloudflarestorage.com/") == "https://ID.r2.cloudflarestorage.com"
+    assert storage.normalize_r2_origin("https://acct-12345.r2.cloudflarestorage.com") == "https://acct-12345.r2.cloudflarestorage.com"
+
+    # host form -> https://host
+    assert storage.normalize_r2_origin("ID.r2.cloudflarestorage.com") == "https://ID.r2.cloudflarestorage.com"
+    assert storage.normalize_r2_origin("ID.r2.cloudflarestorage.com/") == "https://ID.r2.cloudflarestorage.com"
+    assert storage.normalize_r2_origin("acct-12345.r2.cloudflarestorage.com") == "https://acct-12345.r2.cloudflarestorage.com"
+
+    # empty -> empty origin
+    assert storage.normalize_r2_origin("") == ""
+    assert storage.normalize_r2_origin("   ") == ""
+    assert storage.normalize_r2_origin(None) == ""
+
+
+def test_app_csp_origin_construction(monkeypatch):
+    from app import create_app
+
+    # Verify bare account ID -> https://ID.r2.cloudflarestorage.com
+    monkeypatch.setenv("R2_ACCOUNT_ID", "dummy-acct")
+    app = create_app()
+    with app.test_client() as client:
+        resp = client.get("/login/")
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "https://dummy-acct.r2.cloudflarestorage.com" in csp
+        assert "https://https://" not in csp
+        assert ".r2.cloudflarestorage.com.r2.cloudflarestorage.com" not in csp
+
+    # Verify full URL -> unchanged normalized origin
+    monkeypatch.setenv("R2_ACCOUNT_ID", "https://dummy-acct.r2.cloudflarestorage.com")
+    app = create_app()
+    with app.test_client() as client:
+        resp = client.get("/login/")
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "https://dummy-acct.r2.cloudflarestorage.com" in csp
+        assert "https://https://" not in csp
+        assert ".r2.cloudflarestorage.com.r2.cloudflarestorage.com" not in csp
+
+    # Verify host form -> https://host
+    monkeypatch.setenv("R2_ACCOUNT_ID", "dummy-acct.r2.cloudflarestorage.com")
+    app = create_app()
+    with app.test_client() as client:
+        resp = client.get("/login/")
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "https://dummy-acct.r2.cloudflarestorage.com" in csp
+        assert "https://https://" not in csp
+        assert ".r2.cloudflarestorage.com.r2.cloudflarestorage.com" not in csp
+
+    # Verify empty -> empty origin
+    monkeypatch.setenv("R2_ACCOUNT_ID", "")
+    app = create_app()
+    with app.test_client() as client:
+        resp = client.get("/login/")
+        csp = resp.headers.get("Content-Security-Policy", "")
+        assert "https://https://" not in csp
+        assert ".r2.cloudflarestorage.com.r2.cloudflarestorage.com" not in csp
