@@ -206,6 +206,13 @@ def test_real_postgres_child_parent_admin_routes_and_live_status_guards():
         event_id = int(event["event_id"])
         admin_headers = _mobile_headers(ADMIN_ID, "ADMIN", "CI Admin")
 
+        admin_queue = client.get("/api/mobile/v1/admin/reviews", headers=admin_headers)
+        assert admin_queue.status_code == 200
+        assert any(int(item["event_id"]) == event_id for item in admin_queue.get_json()["events"])
+        admin_detail = client.get(f"/api/mobile/v1/admin/reviews/{event_id}", headers=admin_headers)
+        assert admin_detail.status_code == 200
+        assert int(admin_detail.get_json()["event"]["event_id"]) == event_id
+
         other_parent_headers = _mobile_headers(OTHER_PARENT_ID, "PARENT", "CI Other Parent")
         other_queue = client.get("/api/mobile/v1/parent/safety", headers=other_parent_headers)
         assert other_queue.status_code == 200

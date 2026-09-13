@@ -5,7 +5,13 @@ Status values:
 - **FAIL** — journey was executed and failed.
 - **UNVERIFIED** — code may exist, but the journey has not been executed end-to-end.
 
-> This file intentionally starts conservative. Source-presence checks, typechecking, and route existence are not enough to mark a user journey PASS.
+> This matrix is intentionally conservative. Source-presence checks, typechecking, and route existence are not enough to mark a user journey PASS.
+
+Verified on 2026-09-13 against commit `9bab489` or its implementation parent `dfc6328`:
+
+- [LittleNet CI](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34760960598): source audit, 347 backend tests, dependency/security checks, and Gitleaks passed.
+- [Disposable PostgreSQL role E2E](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34760962652): fresh schema/migrations and authenticated Child/Parent/Admin smoke passed.
+- [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34760578750): 77 tests, typecheck, Android export, and Expo dependency check passed.
 
 | Journey | Status | Required evidence |
 |---|---|---|
@@ -53,20 +59,20 @@ Status values:
 | Text chat | UNVERIFIED | send/read/pagination/moderation |
 | Shared-post chat | UNVERIFIED | visibility + moderation |
 | Media chat | UNVERIFIED | only if a fail-closed native moderated contract is implemented |
-| Parent dashboard | UNVERIFIED | child summaries |
+| Parent dashboard | PASS | Disposable PostgreSQL bearer journey returned the owned child summary and asserted its identity fields. |
 | Parent safety queue | UNVERIFIED | ownership + preview authorization |
 | Screen-time limit | UNVERIFIED | child lock enforcement |
 | Quiet hours | UNVERIFIED | child lock enforcement |
-| Feature controls | UNVERIFIED | reels/stories/posting/discover/chat enforcement |
+| Feature controls | PASS | Disposable PostgreSQL journey disabled messaging, observed the Child route fail with `disabled_by_parent`, then restored it. Other switches remain covered by source/unit contracts, not a device run. |
 | Category controls | UNVERIFIED | feed/post enforcement |
 | Follow approvals | UNVERIFIED | parent authorization |
-| Admin moderation | UNVERIFIED | queue/detail/resolve/audit |
-| Fresh PostgreSQL bootstrap | UNVERIFIED | empty DB -> schema + all migrations |
-| Full backend suite | UNVERIFIED | exact pass/fail/error count |
-| Route uniqueness | UNVERIFIED | no duplicate mobile method/path registrations |
-| React Native unit/component suite | UNVERIFIED | exact pass/fail count |
-| React Native typecheck | UNVERIFIED | `npm run typecheck` |
-| Android Expo export | UNVERIFIED | `npm run export:android` |
+| Admin moderation | PASS | Disposable PostgreSQL journey covered queue, detail, ESCALATE, final APPROVE, two review rows, and dedicated admin audit output. |
+| Fresh PostgreSQL bootstrap | PASS | Role E2E created an empty PostgreSQL 16 service and applied the schema plus production migration chain before testing. |
+| Full backend suite | PASS | CI: 347 passed, 2 skipped, 0 failed/errors. |
+| Route uniqueness | PASS | `tools/audit_all.py`: 130 routes discovered and no duplicate Android root or mobile method/path registration failure. |
+| React Native unit/component suite | PASS | CI: 77 passed, 0 failed/skipped/cancelled across 19 suites. |
+| React Native typecheck | PASS | CI `npm run typecheck` completed successfully. |
+| Android Expo export | PASS | CI bundled 965 modules and exported `mobile_app/dist`. This is not an APK/device run. |
 | Android critical E2E | UNVERIFIED | device/emulator journey evidence |
 | Modal idle cost guard | UNVERIFIED | zero idle containers after scaledown |
 | Routine health does not wake GPU | UNVERIFIED | billing/container evidence |

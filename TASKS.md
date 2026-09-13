@@ -7,6 +7,6 @@
 - [x] Add Parent/Admin mobile and backend integration tests.
 - [x] Verify Parent controls and approvals affect Child routes immediately.
 - [x] Remove stale mobile architecture and placeholder wording.
-- [ ] Update architecture, setup, demo, recovery, limitations, and E2E evidence docs.
-- [ ] Run mobile, backend, disposable PostgreSQL, security, dependency, and Android checks.
+- [x] Update architecture, setup, demo, recovery, limitations, and E2E evidence docs.
+- [x] Run mobile, backend, disposable PostgreSQL, security, dependency, and Android checks.
 - [ ] Commit, push only `agent-d/final-parent-admin-e2e`, and open one PR to `chatgpt/submission-foundation-fixes`.
