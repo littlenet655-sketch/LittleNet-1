@@ -1,9 +1,11 @@
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from app import app
 from mobile.api import _issue_token
+from services.audit import log as audit_log
 
 
 @pytest.fixture
@@ -28,6 +30,12 @@ def active_user(user_id=101, role="PARENT"):
         "age": None,
         "account_status": "ACTIVE",
     }
+
+
+def test_audit_log_serializes_database_datetime_values():
+    with patch("services.audit.execute") as execute:
+        audit_log(202, "PARENT_CONTROLS_UPDATED", {"quiet_start": datetime(2026, 9, 13, 21, 0)})
+    assert '"quiet_start": "2026-09-13 21:00:00"' in execute.call_args.args[1][2]
 
 
 def test_parent_safety_queue_uses_canonical_approved_ownership(client):
