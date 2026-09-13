@@ -86,14 +86,15 @@ export async function clearSession(storage: StorageBackend): Promise<void> {
 
 /**
  * Cold-start routing from a restored session plus authoritative gates.
- * Server state is authoritative; this only restores the last-known route so a
- * relaunch preserves face/quiz gates instead of dropping the child at home.
+ * For CHILD, unknown/missing onboarding ALWAYS fails closed to child_face:
+ * a stale cached quiz flag must never bypass unknown face-enrollment state.
  */
 export function decideInitialRoute(session: PersistedSession | null, onboarding?: { face_required: boolean; quiz_required: boolean } | null): InitialRoute {
   if (!session) return 'auth';
   if (session.user.role === 'PARENT') return 'parent';
   if (session.user.role === 'ADMIN') return 'admin';
-  if (onboarding?.face_required) return 'child_face';
-  if (onboarding?.quiz_required || session.user.quiz_required) return 'child_quiz';
+  if (!onboarding) return 'child_face';
+  if (onboarding.face_required) return 'child_face';
+  if (onboarding.quiz_required) return 'child_quiz';
   return 'child';
 }

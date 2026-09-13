@@ -20,14 +20,14 @@ export function screenForGate(gate: GateKind): 'FaceEnroll' | 'Quiz' | 'OtpVerif
 
 /**
  * Reactive child route from authoritative gates.
- * Order: face -> quiz -> home. Unknown gate state fails closed:
- * a stale cached quiz flag may show Quiz, but unknown face state
- * always shows FaceEnroll so a restart can never bypass it.
+ * Order: face -> quiz -> home. Unknown/missing onboarding ALWAYS fails
+ * closed to FaceEnroll: a stale cached quiz flag must never bypass unknown
+ * face-enrollment state.
  */
 export function resolveChildRoute(
   onboarding: OnboardingState | null | undefined,
-  fallbackQuizRequired: boolean,
+  _fallbackQuizRequired: boolean,
 ): ChildRoute {
-  if (!onboarding) return fallbackQuizRequired ? 'Quiz' : 'FaceEnroll';
+  if (!onboarding) return 'FaceEnroll';
   return childNextRoute(onboarding.face_required, onboarding.quiz_required);
 }

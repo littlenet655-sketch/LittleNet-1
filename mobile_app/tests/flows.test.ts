@@ -28,8 +28,9 @@ describe('reactive child gate routing (face -> quiz -> home)', () => {
 
   it('restart never bypasses an unknown face gate (fails closed)', () => {
     assert.equal(resolveChildRoute(null, false), 'FaceEnroll');
+    assert.equal(resolveChildRoute(null, true), 'FaceEnroll');
     assert.equal(resolveChildRoute(undefined, false), 'FaceEnroll');
-    assert.equal(resolveChildRoute(null, true), 'Quiz');
+    assert.equal(resolveChildRoute(undefined, true), 'FaceEnroll');
   });
 
   it('routes backend gates to their resolving screens', () => {
