@@ -61,3 +61,22 @@ export async function invalidateSessionQueries(): Promise<void> {
   await queryClient.invalidateQueries();
   queryClient.clear();
 }
+
+/** Central query keys for the Kids product (Agent C). */
+export const kidsKeys = {
+  me: ['me'],
+  home: ['kids', 'home'],
+  feed: ['kids', 'feed'],
+  reels: ['kids', 'reels'],
+  discover: (q: string) => ['kids', 'discover', q],
+  ownProfile: ['kids', 'profile', 'me'],
+  profile: (id: number) => ['kids', 'profile', id],
+  post: (id: number) => ['kids', 'post', id],
+  comments: (id: number) => ['kids', 'comments', id],
+  saved: ['kids', 'saved'],
+  connections: ['kids', 'connections'],
+  notifications: ['kids', 'notifications'],
+  conversations: ['kids', 'conversations'],
+  chat: (peerId: number) => ['kids', 'chat', peerId],
+  processing: (postId: number) => ['kids', 'processing', postId],
+} as const;

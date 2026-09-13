@@ -44,7 +44,7 @@ from child.service import (
 )
 from childMessage.service import conversation, messages
 from config import Config
-from database.connection import execute, fetch_all, fetch_one, get_db_connection
+from database.connection import execute, execute_count, fetch_all, fetch_one, get_db_connection
 from extensions import csrf, limiter
 from parent.service import children, owns, pending_follows
 from quiz.service import (
@@ -1107,6 +1107,31 @@ def register_mobile_api(bp):
             out.append(_clean(item))
         return jsonify(ok=True, notifications=out)
 
+    @bp.route("/api/mobile/v1/kids/notifications/read", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_notifications_read():
+        # Smallest safe authoritative mark-read: CHILD bearer only, own rows
+        # only, idempotent. Reuses the same notifications table as the web
+        # child surface (child/routes.py notifications_read).
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get("notification_ids", None)
+        if raw_ids is None:
+            execute("UPDATE notifications SET is_read=TRUE WHERE user_id=%s", (uid,))
+            return jsonify(ok=True, marked="all")
+        try:
+            ids = [int(x) for x in (raw_ids or [])]
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_notification_ids"), 400
+        if not ids:
+            return jsonify(ok=True, marked=0)
+        marked = execute_count(
+            "UPDATE notifications SET is_read=TRUE WHERE user_id=%s AND notification_id = ANY(%s) AND is_read=FALSE",
+            (uid, ids),
+        )
+        return jsonify(ok=True, marked=marked)
+
     @bp.route("/api/mobile/v1/kids/messages")
     @_require_mobile("CHILD")
     def mobile_kids_messages():
@@ -1953,6 +1978,7 @@ def register_mobile_api(bp):
             media_url=_asset_url(post.get("media_path")),
             poster_url=_asset_url(post.get("poster_path")),
             error=post.get("processing_error"),
+            retryable=st == "UPLOADED" and bool(post.get("processing_error")),
         )
 
 

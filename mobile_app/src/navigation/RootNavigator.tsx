@@ -5,6 +5,19 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthProvider';
 import { FaceEnrollScreen, FaceLoginScreen } from '../screens/ChildFace';
 import { KidsHomeScreen, AdminHomeScreen } from '../screens/HomePlaceholders';
+import { KidsTabsHost } from '../screens/kids/KidsTabsHost';
+import { FeedScreen } from '../screens/kids/FeedScreen';
+import { StoriesScreen } from '../screens/kids/StoriesScreen';
+import { ReelsScreen } from '../screens/kids/ReelsScreen';
+import { DiscoverScreen } from '../screens/kids/DiscoverScreen';
+import { OwnProfileScreen } from '../screens/kids/OwnProfileScreen';
+import { OtherProfileScreen } from '../screens/kids/OtherProfileScreen';
+import { PostDetailScreen } from '../screens/kids/PostDetailScreen';
+import { NotificationsScreen } from '../screens/kids/NotificationsScreen';
+import { ConversationsScreen } from '../screens/kids/ConversationsScreen';
+import { ChatScreen } from '../screens/kids/ChatScreen';
+import { CreateScreen } from '../screens/kids/CreateScreen';
+import { ProcessingStatusScreen } from '../screens/kids/ProcessingScreen';
 import { CreateChildScreen, ParentHomeScreen } from '../screens/Parent';
 import { GuardianLivenessScreen, OtpVerifyScreen, ParentRegisterScreen } from '../screens/ParentOnboarding';
 import { ForgotPasswordScreen, ResetPasswordScreen } from '../screens/PasswordReset';
@@ -42,21 +55,19 @@ function AuthNavigator() {
 function ChildGateSync() {
   const navigation = useNavigation<NavigationProp<ChildStackParamList>>();
   const { session } = useAuth();
-  const target = resolveChildRoute(session?.onboarding, session?.user.quiz_required ?? true);
 
   useEffect(() => {
     const state = navigation.getState();
     const index = state?.index ?? 0;
-    const current = state?.routes[index]?.name;
+    const current = state?.routes[index]?.name as keyof ChildStackParamList | undefined;
+    if (!current) return;
+    const target = resolveChildRoute(session?.onboarding, session?.user.quiz_required ?? true, current);
     if (current === target) return;
-    if (target === 'Quiz' && current === 'Quiz') return;
-    const currentParams =
-      current === 'Quiz' ? (state?.routes[index]?.params as ChildStackParamList['Quiz']) : undefined;
     navigation.reset({
       index: 0,
-      routes: [{ name: target, params: target === 'Quiz' ? currentParams : undefined } as never],
+      routes: [{ name: target } as never],
     });
-  }, [navigation, target]);
+  }, [navigation, session?.onboarding, session?.user.quiz_required]);
 
   return null;
 }
@@ -67,13 +78,26 @@ function ChildNavigator() {
       <ChildStack.Screen name="FaceEnroll" component={withGateSync(FaceEnrollScreen)} options={{ title: 'Face setup' }} />
       <ChildStack.Screen name="Quiz" component={withGateSync(QuizScreen)} options={{ title: 'Safety quiz' }} />
       <ChildStack.Screen name="KidsHome" component={withGateSync(KidsHomeScreen)} options={{ title: 'Home' }} />
+      <ChildStack.Screen name="KidsTabs" component={withGateSync(KidsTabsHost)} options={{ title: 'LittleNet' }} />
+      <ChildStack.Screen name="FeedTab" component={withGateSync(FeedScreen)} options={{ title: 'Home' }} />
+      <ChildStack.Screen name="DiscoverTab" component={withGateSync(DiscoverScreen)} options={{ title: 'Discover' }} />
+      <ChildStack.Screen name="CreateTab" component={withGateSync(CreateScreen)} options={{ title: 'Create' }} />
+      <ChildStack.Screen name="ReelsTab" component={withGateSync(ReelsScreen)} options={{ title: 'Reels' }} />
+      <ChildStack.Screen name="ProfileTab" component={withGateSync(OwnProfileScreen)} options={{ title: 'Profile' }} />
+      <ChildStack.Screen name="Stories" component={withGateSync(StoriesScreen)} options={{ title: 'Stories' }} />
+      <ChildStack.Screen name="NotificationsTab" component={withGateSync(NotificationsScreen)} options={{ title: 'Notifications' }} />
+      <ChildStack.Screen name="Conversations" component={withGateSync(ConversationsScreen)} options={{ title: 'Messages' }} />
+      <ChildStack.Screen name="Chat" component={withGateSync(ChatScreen)} options={{ title: 'Chat' }} />
+      <ChildStack.Screen name="PostDetail" component={withGateSync(PostDetailScreen)} options={{ title: 'Post' }} />
+      <ChildStack.Screen name="OtherProfile" component={withGateSync(OtherProfileScreen)} options={{ title: 'Profile' }} />
+      <ChildStack.Screen name="ProcessingStatus" component={withGateSync(ProcessingStatusScreen)} options={{ title: 'Safety check' }} />
     </ChildStack.Navigator>
   );
 }
 
 /** Mounts the gate sync inside the active child screen (navigators accept only Screens). */
-function withGateSync<P extends object>(Component: React.ComponentType<P>): React.ComponentType<P> {
-  return function GatedScreen(props: P) {
+function withGateSync(Component: React.ComponentType<any>): React.ComponentType<any> {
+  return function GatedScreen(props: any) {
     return (
       <>
         <ChildGateSync />
@@ -102,7 +126,7 @@ function AdminNavigator() {
 
 /**
  * Role-aware cold-start routing: unauthenticated -> AuthStack, CHILD ->
- * ChildStack (reactively pinned to face/quiz/home by ChildGateSync),
+ * ChildStack (reactively forced to face/quiz only while a gate is active),
  * PARENT -> ParentStack, ADMIN -> AdminStack.
  */
 export function RootNavigator() {

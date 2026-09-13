@@ -15,6 +15,19 @@ export type ChildStackParamList = {
   FaceEnroll: undefined;
   Quiz: { returnTo?: string } | undefined;
   KidsHome: undefined;
+  KidsTabs: { tab?: string } | undefined;
+  FeedTab: undefined;
+  DiscoverTab: undefined;
+  CreateTab: undefined;
+  ReelsTab: undefined;
+  ProfileTab: undefined;
+  Stories: undefined;
+  NotificationsTab: undefined;
+  Conversations: undefined;
+  Chat: { peerId: number; postId?: number };
+  PostDetail: { postId: number };
+  OtherProfile: { targetId: number };
+  ProcessingStatus: { postId: number };
 };
 
 export type ParentStackParamList = {

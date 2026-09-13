@@ -105,3 +105,14 @@ def execute(sql, params=(), returning=False):
     except Exception:
         conn.rollback();raise
     finally:conn.close()
+
+
+def execute_count(sql, params=()):
+    """Execute one mutation and return PostgreSQL's authoritative affected-row count."""
+    conn=get_db_connection()
+    try:
+        with conn.cursor() as cur:cur.execute(sql,params);count=cur.rowcount
+        conn.commit();return count
+    except Exception:
+        conn.rollback();raise
+    finally:conn.close()
