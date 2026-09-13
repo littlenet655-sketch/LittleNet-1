@@ -14,6 +14,9 @@
     "ios": {
       "bundleIdentifier": "com.littlenet.app",
       "supportsTablet": true
-    }
+    },
+    "plugins": [
+      "expo-secure-store"
+    ]
   }
 }

@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "test-dist",
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["tests/**/*.ts", "src/api/**/*.ts", "src/auth/session.ts", "src/auth/backends.ts", "src/navigation/gates.ts"]
+}
