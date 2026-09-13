@@ -93,10 +93,6 @@ export function createChild(token: string, input: CreateChildInput): Promise<{ o
   return post(routes.parentCreateChild, { ...input }, token);
 }
 
-export function fetchParentDashboard(token: string): Promise<{ ok: boolean; children: unknown[]; unread: number; pending: unknown }> {
-  return apiRequest(routes.parentDashboard, {}, token);
-}
-
 /** Child face enrollment with a fresh live camera photo (base64 JSON). */
 export function enrollChildFace(token: string, photoB64: string): Promise<{ ok: boolean; biometric_key: string; quiz_required: boolean }> {
   return post(routes.childFaceEnroll, { photo_b64: photoB64 }, token);

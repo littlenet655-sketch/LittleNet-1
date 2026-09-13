@@ -32,11 +32,25 @@ export type ChildStackParamList = {
 
 export type ParentStackParamList = {
   ParentHome: undefined;
+  Children: undefined;
+  ChildSummary: { childId: number };
   CreateChild: undefined;
+  ParentSafety: undefined;
+  ParentReview: { eventId: number };
+  ScreenTime: { childId?: number } | undefined;
+  ParentControls: { childId?: number } | undefined;
+  FollowRequests: undefined;
+  ParentActivity: { childId?: number } | undefined;
+  ParentNotifications: undefined;
+  ParentSettings: undefined;
 };
 
 export type AdminStackParamList = {
   AdminHome: undefined;
+  AdminReviews: undefined;
+  AdminReview: { eventId: number };
+  AdminUsers: undefined;
+  AdminAudit: undefined;
 };
 
 export type AuthScreenProps<Route extends keyof AuthStackParamList> = NativeStackScreenProps<AuthStackParamList, Route>;

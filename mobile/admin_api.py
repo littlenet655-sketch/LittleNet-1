@@ -1,15 +1,17 @@
 from __future__ import annotations
 
+import json
+
 from flask import g, jsonify, request
 
 from database.connection import fetch_all, fetch_one, get_db_connection
 from extensions import csrf, limiter
-from mobile.api import _clean, _require_mobile
+from mobile.api import _asset_url, _clean, _require_mobile, _resolve_parent_review
 from mobile.stitch_api import register_mobile_stitch_api
 
 
 def register_mobile_admin_api(bp):
-    # Register the additional native Flutter screen contracts on the same
+    # Register the additional React Native screen contracts on the same
     # bearer-token blueprint. Keeping this here avoids a second app blueprint
     # and preserves the existing /api/mobile/v1/* authentication boundary.
     register_mobile_stitch_api(bp)
@@ -34,7 +36,7 @@ def register_mobile_admin_api(bp):
             cid = event.get('content_id')
             if cid and ctype in {'IMAGE', 'VIDEO', 'TEXT'}:
                 preview = fetch_one(
-                    'SELECT media_type,media_path,caption,moderation_status FROM posts WHERE post_id=%s',
+                    'SELECT media_type,media_path,source_media_path,poster_path,caption,moderation_status FROM posts WHERE post_id=%s',
                     (cid,),
                 )
             elif cid and ctype == 'COMMENT':
@@ -53,6 +55,16 @@ def register_mobile_admin_api(bp):
                        FROM users WHERE user_id=%s""",
                     (cid,),
                 )
+            if preview:
+                preview = dict(preview)
+                source_ref = preview.pop('source_media_path', None)
+                published_ref = preview.pop('media_path', None)
+                media_ref = source_ref or published_ref
+                poster_ref = preview.pop('poster_path', None)
+                if media_ref:
+                    preview['media_url'] = _asset_url(media_ref)
+                if poster_ref:
+                    preview['poster_url'] = _asset_url(poster_ref)
             return jsonify(ok=True, event=_clean(event), preview=_clean(preview))
 
         data = request.get_json(silent=True) or {}
@@ -60,19 +72,18 @@ def register_mobile_admin_api(bp):
         if requested not in {'APPROVE', 'BLOCK', 'ESCALATE'}:
             return jsonify(error='invalid_action'), 400
 
-        conn = get_db_connection()
-        try:
-            cur = conn.cursor()
-            cur.execute(
-                "SELECT * FROM moderation_events WHERE event_id=%s AND status='OPEN' FOR UPDATE",
-                (event_id,),
-            )
-            locked = cur.fetchone()
-            if not locked:
-                conn.rollback()
-                return jsonify(error='review_already_resolved'), 409
-
-            if requested == 'ESCALATE':
+        if requested == 'ESCALATE':
+            conn = get_db_connection()
+            try:
+                cur = conn.cursor()
+                cur.execute(
+                    "SELECT * FROM moderation_events WHERE event_id=%s AND decision='REVIEW' AND status='OPEN' FOR UPDATE",
+                    (event_id,),
+                )
+                locked = cur.fetchone()
+                if not locked:
+                    conn.rollback()
+                    return jsonify(error='review_already_resolved'), 409
                 # Production migration 20260908093000 makes moderation_reviews
                 # append-only and permits ESCALATE. Record the escalation while
                 # deliberately leaving the event OPEN for a later final decision.
@@ -85,56 +96,28 @@ def register_mobile_admin_api(bp):
                         str(data.get('notes') or 'Escalated by moderator'),
                     ),
                 )
+                cur.execute(
+                    """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                       VALUES(%s,'MODERATION_ESCALATE','MODERATION_EVENT',%s,%s::jsonb)""",
+                    (g.mobile_user['user_id'], event_id, json.dumps({'child_id': locked['child_id']})),
+                )
                 conn.commit()
                 return jsonify(ok=True, action='ESCALATE', status='OPEN')
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                conn.close()
 
-            db_status = 'ALLOWED' if requested == 'APPROVE' else 'BLOCKED'
-            safe = requested == 'APPROVE'
-            ctype = locked.get('content_type')
-            cid = locked.get('content_id')
-            if cid and ctype in {'IMAGE', 'VIDEO', 'TEXT'}:
-                cur.execute(
-                    'UPDATE posts SET moderation_status=%s,is_safe=%s WHERE post_id=%s',
-                    (db_status, safe, cid),
-                )
-            elif cid and ctype == 'COMMENT':
-                cur.execute(
-                    'UPDATE comments SET moderation_status=%s WHERE comment_id=%s',
-                    (db_status, cid),
-                )
-            elif cid and ctype == 'MESSAGE':
-                cur.execute(
-                    'UPDATE child_messages SET moderation_status=%s WHERE child_message_id=%s',
-                    (db_status, cid),
-                )
-            elif cid and ctype == 'USER' and requested == 'BLOCK':
-                # A confirmed child-safety user report must have an enforcement
-                # effect, not merely resolve the moderation event.
-                cur.execute(
-                    "UPDATE users SET account_status='SUSPENDED' WHERE user_id=%s AND role='CHILD'",
-                    (cid,),
-                )
-
-            cur.execute(
-                'INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)',
-                (
-                    event_id,
-                    g.mobile_user['user_id'],
-                    requested,
-                    str(data.get('notes') or '') or None,
-                ),
-            )
-            cur.execute(
-                "UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s",
-                (event_id,),
-            )
-            conn.commit()
-            return jsonify(ok=True, action=requested, status='RESOLVED')
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
+        ok, result = _resolve_parent_review(
+            int(g.mobile_user['user_id']),
+            event_id,
+            requested,
+            is_admin=True,
+            notes=str(data.get('notes') or '') or None,
+        )
+        status = 200 if ok else 404 if result == 'not_found' else 400
+        return jsonify(ok=ok, action=result if ok else requested, status='RESOLVED' if ok else result), status
 
     @bp.route('/api/mobile/v1/admin/users')
     @_require_mobile('ADMIN')
@@ -164,10 +147,20 @@ def register_mobile_admin_api(bp):
         conn = get_db_connection()
         try:
             cur = conn.cursor()
+            cur.execute("SELECT role,account_status FROM users WHERE user_id=%s AND role<>'ADMIN' FOR UPDATE", (target_user_id,))
+            target = cur.fetchone()
+            if not target:
+                conn.rollback()
+                return jsonify(error='user_not_found'), 404
             cur.execute("UPDATE users SET account_status=%s WHERE user_id=%s", (new_status, target_user_id))
             cur.execute(
-                "INSERT INTO activity_logs(child_id, activity_type, activity_data) VALUES(%s, 'ADMIN_USER_STATUS_CHANGE', %s::jsonb)",
-                (target_user_id, __import__('json').dumps({'admin_id': g.mobile_user['user_id'], 'new_status': new_status}))
+                """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                   VALUES(%s,'USER_STATUS','USER',%s,%s::jsonb)""",
+                (
+                    g.mobile_user['user_id'],
+                    target_user_id,
+                    json.dumps({'from': target['account_status'], 'to': new_status, 'role': target['role']}),
+                ),
             )
             conn.commit()
             return jsonify(ok=True, user_id=target_user_id, status=new_status)
@@ -181,7 +174,10 @@ def register_mobile_admin_api(bp):
     @_require_mobile('ADMIN')
     def mobile_admin_audit():
         rows = fetch_all(
-            """SELECT * FROM activity_logs ORDER BY created_at DESC LIMIT 100"""
+            """SELECT a.audit_id,a.admin_id,u.full_name AS admin_name,a.action,
+                      a.target_type,a.target_id,a.details,a.created_at
+               FROM admin_audit_logs a JOIN users u ON u.user_id=a.admin_id
+               ORDER BY a.created_at DESC LIMIT 100"""
         )
         return jsonify(ok=True, events=_clean(rows))
 

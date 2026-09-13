@@ -4,7 +4,7 @@ import type { NavigationProp } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthProvider';
 import { FaceEnrollScreen, FaceLoginScreen } from '../screens/ChildFace';
-import { KidsHomeScreen, AdminHomeScreen } from '../screens/HomePlaceholders';
+import { KidsHomeScreen } from '../screens/KidsHome';
 import { KidsTabsHost } from '../screens/kids/KidsTabsHost';
 import { FeedScreen } from '../screens/kids/FeedScreen';
 import { StoriesScreen } from '../screens/kids/StoriesScreen';
@@ -18,7 +18,27 @@ import { ConversationsScreen } from '../screens/kids/ConversationsScreen';
 import { ChatScreen } from '../screens/kids/ChatScreen';
 import { CreateScreen } from '../screens/kids/CreateScreen';
 import { ProcessingStatusScreen } from '../screens/kids/ProcessingScreen';
-import { CreateChildScreen, ParentHomeScreen } from '../screens/Parent';
+import { CreateChildScreen } from '../screens/Parent';
+import {
+  ParentActivityScreen,
+  ParentChildSummaryScreen,
+  ParentChildrenScreen,
+  ParentControlsScreen,
+  ParentFollowRequestsScreen,
+  ParentHomeScreen,
+  ParentNotificationsScreen,
+  ParentReviewScreen,
+  ParentSafetyScreen,
+  ParentScreenTimeScreen,
+  ParentSettingsScreen,
+} from '../screens/parent/ParentScreens';
+import {
+  AdminAuditScreen,
+  AdminHomeScreen,
+  AdminReviewScreen,
+  AdminReviewsScreen,
+  AdminUsersScreen,
+} from '../screens/admin/AdminScreens';
 import { GuardianLivenessScreen, OtpVerifyScreen, ParentRegisterScreen } from '../screens/ParentOnboarding';
 import { ForgotPasswordScreen, ResetPasswordScreen } from '../screens/PasswordReset';
 import { QuizScreen } from '../screens/Quiz';
@@ -111,7 +131,17 @@ function ParentNavigator() {
   return (
     <ParentStack.Navigator initialRouteName="ParentHome">
       <ParentStack.Screen name="ParentHome" component={ParentHomeScreen} options={{ title: 'Parent dashboard' }} />
+      <ParentStack.Screen name="Children" component={ParentChildrenScreen} options={{ title: 'Children' }} />
+      <ParentStack.Screen name="ChildSummary" component={ParentChildSummaryScreen} options={{ title: 'Child summary' }} />
       <ParentStack.Screen name="CreateChild" component={CreateChildScreen} options={{ title: 'Add a child' }} />
+      <ParentStack.Screen name="ParentSafety" component={ParentSafetyScreen} options={{ title: 'Safety review' }} />
+      <ParentStack.Screen name="ParentReview" component={ParentReviewScreen} options={{ title: 'Review detail' }} />
+      <ParentStack.Screen name="ScreenTime" component={ParentScreenTimeScreen} options={{ title: 'Screen time' }} />
+      <ParentStack.Screen name="ParentControls" component={ParentControlsScreen} options={{ title: 'Controls' }} />
+      <ParentStack.Screen name="FollowRequests" component={ParentFollowRequestsScreen} options={{ title: 'Follow requests' }} />
+      <ParentStack.Screen name="ParentActivity" component={ParentActivityScreen} options={{ title: 'Activity' }} />
+      <ParentStack.Screen name="ParentNotifications" component={ParentNotificationsScreen} options={{ title: 'Notifications' }} />
+      <ParentStack.Screen name="ParentSettings" component={ParentSettingsScreen} options={{ title: 'Settings' }} />
     </ParentStack.Navigator>
   );
 }
@@ -120,6 +150,10 @@ function AdminNavigator() {
   return (
     <AdminStack.Navigator>
       <AdminStack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Moderation' }} />
+      <AdminStack.Screen name="AdminReviews" component={AdminReviewsScreen} options={{ title: 'Moderation queue' }} />
+      <AdminStack.Screen name="AdminReview" component={AdminReviewScreen} options={{ title: 'Review detail' }} />
+      <AdminStack.Screen name="AdminUsers" component={AdminUsersScreen} options={{ title: 'User lookup' }} />
+      <AdminStack.Screen name="AdminAudit" component={AdminAuditScreen} options={{ title: 'Audit history' }} />
     </AdminStack.Navigator>
   );
 }

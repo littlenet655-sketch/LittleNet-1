@@ -20,6 +20,7 @@ pytestmark = pytest.mark.skipif(
 CHILD_ID = 9101
 PARENT_ID = 9102
 ADMIN_ID = 9103
+OTHER_PARENT_ID = 9104
 
 
 def _db_exec(sql, params=()):
@@ -52,14 +53,15 @@ def _db_fetchone(sql, params=()):
 def _seed_role_fixture():
     _db_exec(
         """
-        DELETE FROM users WHERE user_id IN (%s,%s,%s);
+        DELETE FROM users WHERE user_id IN (%s,%s,%s,%s);
         INSERT INTO users(user_id,username,full_name,email,password_hash,role,age,dob,account_status)
         VALUES
           (%s,'ci_child','CI Child','ci-child@example.invalid','x','CHILD',12,'2014-01-01','ACTIVE'),
           (%s,'ci_parent','CI Parent','ci-parent@example.invalid','x','PARENT',NULL,'1985-01-01','ACTIVE'),
-          (%s,'ci_admin','CI Admin','ci-admin@example.invalid','x','ADMIN',NULL,'1980-01-01','ACTIVE');
+          (%s,'ci_admin','CI Admin','ci-admin@example.invalid','x','ADMIN',NULL,'1980-01-01','ACTIVE'),
+          (%s,'ci_other_parent','CI Other Parent','ci-other-parent@example.invalid','x','PARENT',NULL,'1982-01-01','ACTIVE');
         """,
-        (CHILD_ID, PARENT_ID, ADMIN_ID, CHILD_ID, PARENT_ID, ADMIN_ID),
+        (CHILD_ID, PARENT_ID, ADMIN_ID, OTHER_PARENT_ID, CHILD_ID, PARENT_ID, ADMIN_ID, OTHER_PARENT_ID),
     )
     # Seed a schema-valid embedding. This fixture only proves
     # authenticated role guards; real face/liveness behavior is covered separately.
@@ -144,6 +146,48 @@ def test_real_postgres_child_parent_admin_routes_and_live_status_guards():
         )
         assert parent_mobile.status_code == 200, parent_mobile.get_data(as_text=True)[:500]
         assert any(int(k["user_id"]) == CHILD_ID for k in parent_mobile.get_json()["children"])
+        child_summary = next(k for k in parent_mobile.get_json()["children"] if int(k["user_id"]) == CHILD_ID)
+        assert child_summary["username"] == "ci_child"
+
+        parent_headers = _mobile_headers(PARENT_ID, "PARENT", "CI Parent")
+        disabled = client.put(
+            f"/api/mobile/v1/parent/controls/{CHILD_ID}",
+            headers=parent_headers,
+            json={"allow_messaging": False},
+        )
+        assert disabled.status_code == 200, disabled.get_data(as_text=True)[:500]
+        child_messages = client.get(
+            "/api/mobile/v1/kids/messages",
+            headers=_mobile_headers(CHILD_ID, "CHILD", "CI Child"),
+        )
+        assert child_messages.status_code == 403
+        assert child_messages.get_json()["error"] == "disabled_by_parent"
+        enabled = client.put(
+            f"/api/mobile/v1/parent/controls/{CHILD_ID}",
+            headers=parent_headers,
+            json={"allow_messaging": True},
+        )
+        assert enabled.status_code == 200, enabled.get_data(as_text=True)[:500]
+
+        time_limit = client.put(
+            f"/api/mobile/v1/parent/time-limit/{CHILD_ID}",
+            headers=parent_headers,
+            json={"daily_limit_minutes": 75, "strict_mode": True},
+        )
+        assert time_limit.status_code == 200
+        assert time_limit.get_json()["limit"]["daily_limit_minutes"] == 75
+
+        _db_exec(
+            """INSERT INTO parent_notifications(parent_id,child_id,notification_type,notification_message)
+               VALUES(%s,%s,'CI_NOTICE','CI parent notification')""",
+            (PARENT_ID, CHILD_ID),
+        )
+        marked_read = client.post("/api/mobile/v1/parent/notifications", headers=parent_headers, json={})
+        assert marked_read.status_code == 200
+        assert all(item["is_read"] for item in marked_read.get_json()["notifications"])
+        activity = client.get(f"/api/mobile/v1/parent/activity/{CHILD_ID}", headers=parent_headers)
+        assert activity.status_code == 200
+        assert any(item["activity_type"] == "PARENT_CONTROLS_UPDATED" for item in activity.get_json()["events"])
 
         admin_mobile = client.get(
             "/api/mobile/v1/admin/dashboard",
@@ -161,6 +205,17 @@ def test_real_postgres_child_parent_admin_routes_and_live_status_guards():
         )
         event_id = int(event["event_id"])
         admin_headers = _mobile_headers(ADMIN_ID, "ADMIN", "CI Admin")
+
+        other_parent_headers = _mobile_headers(OTHER_PARENT_ID, "PARENT", "CI Other Parent")
+        other_queue = client.get("/api/mobile/v1/parent/safety", headers=other_parent_headers)
+        assert other_queue.status_code == 200
+        assert all(int(item["event_id"]) != event_id for item in other_queue.get_json()["events"])
+        cross_parent = client.post(
+            f"/api/mobile/v1/parent/safety/{event_id}",
+            headers=other_parent_headers,
+            json={"action": "APPROVE"},
+        )
+        assert cross_parent.status_code == 403
 
         escalated = client.post(
             f"/api/mobile/v1/admin/reviews/{event_id}",
@@ -182,11 +237,13 @@ def test_real_postgres_child_parent_admin_routes_and_live_status_guards():
             (event_id,),
         )
         assert reviews["n"] == 2
+        admin_audit = client.get("/api/mobile/v1/admin/audit", headers=admin_headers)
+        assert admin_audit.status_code == 200
+        assert any(item["action"] == "MODERATION_APPROVE" for item in admin_audit.get_json()["events"])
 
         # Live account status is authoritative; stale browser and bearer sessions
         # must stop working immediately after suspension.
         _login(client, PARENT_ID, "PARENT", "CI Parent")
-        parent_headers = _mobile_headers(PARENT_ID, "PARENT", "CI Parent")
         _db_exec("UPDATE users SET account_status='SUSPENDED' WHERE user_id=%s", (PARENT_ID,))
         suspended = client.get(f"/parent/usage-report/?child_id={CHILD_ID}", follow_redirects=False)
         assert suspended.status_code in {302, 403}
