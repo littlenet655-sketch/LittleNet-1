@@ -7,13 +7,35 @@
     "scheme": "littlenet",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
+    "icon": "../static/icons/app_logo.png",
+    "splash": {
+      "image": "../static/icons/app_logo.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#FFF9F2"
+    },
     "android": {
       "package": "com.littlenet.app",
-      "versionCode": 1
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "../static/icons/app_logo.png",
+        "backgroundColor": "#FFF9F2"
+      }
     },
     "ios": {
       "bundleIdentifier": "com.littlenet.app",
       "supportsTablet": true
-    }
+    },
+    "plugins": [
+      "expo-secure-store",
+      "expo-video",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "LittleNet uses a selected photo only when you choose to create a post.",
+          "cameraPermission": "LittleNet uses the camera for live face checks and content you choose to create.",
+          "microphonePermission": false
+        }
+      ]
+    ]
   }
 }

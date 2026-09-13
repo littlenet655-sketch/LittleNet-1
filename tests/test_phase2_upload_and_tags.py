@@ -1,6 +1,7 @@
 """Comprehensive test suite for Phase 2: Direct Upload, Manual Hashtags, and Background Processing."""
 import json
 import uuid
+from pathlib import Path
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import patch, MagicMock
@@ -93,9 +94,9 @@ def _setup_child_and_parent(child_id: int, username: str):
         (child_id,),
     )
     execute(
-        """INSERT INTO face_profiles(child_id, embedding)
-           VALUES(%s, '[]'::jsonb) ON CONFLICT DO NOTHING""",
-        (child_id,),
+        """INSERT INTO face_profiles(child_id, embedding, model_name)
+           VALUES(%s, %s::jsonb, 'Facenet512') ON CONFLICT DO NOTHING""",
+        (child_id, json.dumps([0.05] * 512)),
     )
     execute(
         """INSERT INTO child_quiz_progress(child_id, quiz_required)
@@ -240,7 +241,7 @@ def test_upload_complete_and_ownership_security(client, app):
 
     # Check post in DB
     post = fetch_one("SELECT * FROM posts WHERE post_id=%s", (post_id,))
-    assert post["processing_status"] == "UPLOADED"
+    assert post["processing_status"] == "PROCESSING"
     assert post["is_safe"] is False
     assert post["moderation_status"] == "PENDING"
     assert post["source_media_path"] == obj_key
@@ -256,6 +257,56 @@ def test_upload_complete_and_ownership_security(client, app):
     assert resp_repeat.json["idempotent"] is True
 
 
+def test_upload_complete_dispatch_failure_marks_uploaded_and_retryable(client, app):
+    with app.app_context():
+        execute(
+            """INSERT INTO users(user_id, username, full_name, email, password_hash, role, age, dob, account_status)
+               VALUES(996, 'kid_dispatch_err', 'Kid Dispatch', 'kiddisp@test.com', 'scrypt:test', 'CHILD', 10, '2014-01-01', 'ACTIVE')
+               ON CONFLICT DO NOTHING"""
+        )
+        u_id = str(uuid.uuid4())
+        obj_key = f"uploads/r2/quarantine/996/{u_id}/source.mp4"
+        execute(
+            """INSERT INTO upload_sessions(upload_id, child_id, object_key, media_type, kind, expected_size_bytes, mime_type, extension, status, expires_at)
+               VALUES(%s, 996, %s, 'VIDEO', 'REEL', 50000, 'video/mp4', 'mp4', 'PENDING', NOW() + INTERVAL '10 minutes')""",
+            (u_id, obj_key),
+        )
+
+    token = _issue_token({"user_id": 996, "role": "CHILD"})
+    with patch("services.job_queue.enqueue_media_job", side_effect=RuntimeError("Modal worker connection timeout")):
+        resp = client.post(
+            f"/api/mobile/v2/uploads/{u_id}/complete",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"caption": "Dispatch test reel"},
+        )
+        assert resp.status_code == 503
+        assert resp.json["ok"] is False
+        assert resp.json["error"] == "job_dispatch_failed"
+        assert resp.json["retryable"] is True
+        post_id = resp.json["post_id"]
+
+    # Verify post in DB is UPLOADED with dispatch_failed error
+    post = fetch_one("SELECT * FROM posts WHERE post_id=%s", (post_id,))
+    assert post["processing_status"] == "UPLOADED"
+    assert "dispatch_failed" in (post["processing_error"] or "")
+
+    # Now retry complete call with enqueue_media_job succeeding
+    with patch("services.job_queue.enqueue_media_job", return_value="job_retry_996"):
+        resp_retry = client.post(
+            f"/api/mobile/v2/uploads/{u_id}/complete",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"caption": "Dispatch test reel"},
+        )
+        assert resp_retry.status_code == 200
+        assert resp_retry.json["ok"] is True
+        assert resp_retry.json["status"] == "PROCESSING"
+        assert resp_retry.json.get("retry_dispatched") is True
+
+    # Verify post is now PROCESSING
+    post_after = fetch_one("SELECT * FROM posts WHERE post_id=%s", (post_id,))
+    assert post_after["processing_status"] == "PROCESSING"
+
+
 def test_quarantine_not_feed_visible(app):
     from services.social import visible_posts
 
@@ -263,10 +314,12 @@ def test_quarantine_not_feed_visible(app):
         _setup_child_and_parent(995, "feedkid")
 
         # Insert a post in quarantine / processing
+        quarantine_key = f"uploads/r2/quarantine/995/{uuid.uuid4().hex}/source.mp4"
         post = execute(
             """INSERT INTO posts(child_id, media_type, source_media_path, caption, is_safe, moderation_status, processing_status, content_category, is_story, is_reel)
-               VALUES(995, 'VIDEO', 'uploads/r2/quarantine/995/123/source.mp4', 'Secret quarantine', FALSE, 'PENDING', 'PROCESSING', 'Other', FALSE, FALSE)
+               VALUES(995, 'VIDEO', %s, 'Secret quarantine', FALSE, 'PENDING', 'PROCESSING', 'Other', FALSE, FALSE)
                RETURNING post_id""",
+            (quarantine_key,),
             returning=True,
         )
         pid = post["post_id"]
@@ -281,43 +334,70 @@ def test_media_processor_allow_review_block(app):
     with app.app_context():
         _setup_child_and_parent(996, "prockid")
 
-        # Case 1: ALLOW
-        post_allow = execute(
-            """INSERT INTO posts(child_id, media_type, source_media_path, caption, is_safe, moderation_status, processing_status, content_category)
-               VALUES(996, 'IMAGE', 'uploads/r2/quarantine/996/allow/source.jpg', 'Nice science drawing', FALSE, 'PENDING', 'UPLOADED', 'Science')
-               RETURNING post_id""",
-            returning=True,
-        )
-        pid_allow = post_allow["post_id"]
+        u1 = uuid.uuid4().hex
+        u2 = uuid.uuid4().hex
+        allow_key = f"uploads/r2/quarantine/996/{u1}/source.jpg"
+        block_key = f"uploads/r2/quarantine/996/{u2}/source.jpg"
 
-        with patch("services.media_processor.evaluate") as mock_eval:
-            mock_eval.return_value = ({"adult_score": 0.01, "violence_score": 0.0, "risk_score": 5.0}, None)
-            res = process_media_job(pid_allow, 996, "uploads/r2/quarantine/996/allow/source.jpg", "post")
-            assert res["status"] == "ALLOWED"
+        import io
+        from PIL import Image
+        buf = io.BytesIO()
+        Image.new("RGB", (10, 10), color="blue").save(buf, format="JPEG")
+        valid_jpg_bytes = buf.getvalue()
 
-            updated = fetch_one("SELECT * FROM posts WHERE post_id=%s", (pid_allow,))
-            assert updated["is_safe"] is True
-            assert updated["moderation_status"] == "ALLOWED"
-            assert updated["processing_status"] == "ALLOWED"
+        allow_file = Path(allow_key)
+        allow_file.parent.mkdir(parents=True, exist_ok=True)
+        allow_file.write_bytes(valid_jpg_bytes)
 
-        # Case 2: BLOCK
-        post_block = execute(
-            """INSERT INTO posts(child_id, media_type, source_media_path, caption, is_safe, moderation_status, processing_status, content_category)
-               VALUES(996, 'IMAGE', 'uploads/r2/quarantine/996/block/source.jpg', 'Bad content', FALSE, 'PENDING', 'UPLOADED', 'Other')
-               RETURNING post_id""",
-            returning=True,
-        )
-        pid_block = post_block["post_id"]
+        block_file = Path(block_key)
+        block_file.parent.mkdir(parents=True, exist_ok=True)
+        block_file.write_bytes(valid_jpg_bytes)
 
-        with patch("services.media_processor.evaluate") as mock_eval:
-            mock_eval.return_value = ({"adult_score": 0.95, "violence_score": 0.0, "risk_score": 95.0}, None)
-            res = process_media_job(pid_block, 996, "uploads/r2/quarantine/996/block/source.jpg", "post")
-            assert res["status"] == "BLOCKED"
+        try:
+            # Case 1: ALLOW
+            post_allow = execute(
+                """INSERT INTO posts(child_id, media_type, source_media_path, caption, is_safe, moderation_status, processing_status, content_category)
+                   VALUES(996, 'IMAGE', %s, 'Nice science drawing', FALSE, 'PENDING', 'UPLOADED', 'Science')
+                   RETURNING post_id""",
+                (allow_key,),
+                returning=True,
+            )
+            pid_allow = post_allow["post_id"]
 
-            updated = fetch_one("SELECT * FROM posts WHERE post_id=%s", (pid_block,))
-            assert updated["is_safe"] is False
-            assert updated["moderation_status"] == "BLOCKED"
-            assert updated["processing_status"] == "BLOCKED"
+            with patch("services.media_processor.evaluate") as mock_eval:
+                mock_eval.return_value = ({"adult_score": 0.01, "violence_score": 0.0, "risk_score": 5.0}, None)
+                res = process_media_job(pid_allow, 996, allow_key, "post")
+                assert res["status"] == "ALLOWED"
+
+                updated = fetch_one("SELECT * FROM posts WHERE post_id=%s", (pid_allow,))
+                assert updated["is_safe"] is True
+                assert updated["moderation_status"] == "ALLOWED"
+                assert updated["processing_status"] == "ALLOWED"
+
+            # Case 2: BLOCK
+            post_block = execute(
+                """INSERT INTO posts(child_id, media_type, source_media_path, caption, is_safe, moderation_status, processing_status, content_category)
+                   VALUES(996, 'IMAGE', %s, 'Bad content', FALSE, 'PENDING', 'UPLOADED', 'Other')
+                   RETURNING post_id""",
+                (block_key,),
+                returning=True,
+            )
+            pid_block = post_block["post_id"]
+
+            with patch("services.media_processor.evaluate") as mock_eval:
+                mock_eval.return_value = ({"adult_score": 0.95, "violence_score": 0.0, "risk_score": 95.0}, None)
+                res = process_media_job(pid_block, 996, block_key, "post")
+                assert res["status"] == "BLOCKED"
+
+                updated = fetch_one("SELECT * FROM posts WHERE post_id=%s", (pid_block,))
+                assert updated["is_safe"] is False
+                assert updated["moderation_status"] == "BLOCKED"
+                assert updated["processing_status"] == "BLOCKED"
+        finally:
+            if allow_file.exists():
+                allow_file.unlink()
+            if block_file.exists():
+                block_file.unlink()
 
 
 def test_processing_status_endpoint(client, app):

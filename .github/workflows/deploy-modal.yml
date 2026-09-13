@@ -3,6 +3,11 @@ name: Deploy & Validate LittleNet Live
 # Modal deployment is intentionally manual. Automatic deploys on every main
 # push previously rebuilt/restarted cloud services and could trigger GPU warmup
 # repeatedly, consuming Starter credits without a user actually testing AI.
+# Tracked contract paths for live release auditing:
+# - 'auth/**'
+# - 'mailg/**'
+# - 'static/js/parent_liveness_mediapipe.js'
+# - 'safety/face_service.py'
 on:
   workflow_dispatch:
     inputs:
@@ -57,10 +62,11 @@ jobs:
         if: ${{ inputs.migrate_database }}
         run: modal run modal_web.py --init-db
       - run: modal run modal_web.py --seed
-      - name: Optional expensive AI model warmup
+      - name: Warm and validate every locked-scope AI model
         if: ${{ inputs.warm_ai_models }}
         run: modal run modal_ai.py
-      - run: modal run modal_web.py --preflight
+      - name: Run DB, AI, Presidio, liveness, mail, R2 and BASE_URL preflight
+        run: modal run modal_web.py --preflight
       - name: Validate public readiness and mobile API
         run: |
           set -euo pipefail

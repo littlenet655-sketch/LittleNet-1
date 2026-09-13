@@ -10,6 +10,7 @@ on:
     paths:
       - 'mobile_app/**'
       - '.github/workflows/react-native.yml'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -30,4 +31,6 @@ jobs:
           cache-dependency-path: mobile_app/package-lock.json
       - run: npm ci
       - run: npm run typecheck
+      - run: npm test
       - run: npm run export:android
+      - run: npx expo install --check

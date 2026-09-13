@@ -72,7 +72,7 @@ def test_parent_child_face_enroll_success_and_cleanup(client):
     with patch("mobile.api.fetch_one", return_value={"user_id": 101, "role": "PARENT", "account_status": "ACTIVE"}), \
          patch("mobile.api.owns", return_value=True), \
          patch("mobile.api.enroll", side_effect=mock_enroll), \
-         patch("mobile.api.execute", return_value=None), \
+         patch("mobile.api.execute", return_value=None) as execute, \
          patch("mobile.api.needs_onboarding_quiz", return_value=True):
 
         data = {"photo": _dummy_image_file()}
@@ -88,6 +88,8 @@ def test_parent_child_face_enroll_success_and_cleanup(client):
         assert payload["child_id"] == 202
         assert payload["face_enrolled"] is True
         assert payload["quiz_required"] is True
+        assert "UPDATE face_profiles" in execute.call_args.args[0]
+        assert "'[]'" not in execute.call_args.args[0]
 
         # Ensure temp file was cleaned up
         assert len(recorded_path) == 1

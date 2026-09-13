@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import base64
+import json
 import os
 import random
 import secrets
 import tempfile
 import uuid
+from pathlib import Path
 from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from functools import wraps
@@ -43,7 +45,7 @@ from child.service import (
 )
 from childMessage.service import conversation, messages
 from config import Config
-from database.connection import execute, fetch_all, fetch_one, get_db_connection
+from database.connection import execute, execute_count, fetch_all, fetch_one, get_db_connection
 from extensions import csrf, limiter
 from parent.service import children, owns, pending_follows
 from quiz.service import (
@@ -88,6 +90,7 @@ from services.social import (
     visible_posts,
     visible_profile_posts,
 )
+from services.audit import log
 from services.usage import close_session, heartbeat, lock_state, minutes_today, online_state, start_session
 
 
@@ -183,12 +186,40 @@ def _require_mobile(*roles):
     return decorator
 
 
+def _face_enrolled(uid: int) -> bool:
+    """Single definition of the Agent A Facenet512 enrollment check.
+
+    A child is enrolled only when a validated Facenet512 embedding is stored.
+    Missing rows, wrong models, and invalid embeddings all fail closed.
+    """
+    face = fetch_one("SELECT embedding, model_name FROM face_profiles WHERE child_id=%s LIMIT 1", (uid,))
+    if not face or not face.get("embedding") or face.get("model_name") != "Facenet512":
+        return False
+    try:
+        from safety.face_service import _validated_embedding
+        emb = face["embedding"]
+        if isinstance(emb, str):
+            import json
+            emb = json.loads(emb)
+        _validated_embedding(emb)
+    except Exception:
+        return False
+    return True
+
+
+def _onboarding_state(uid: int) -> dict:
+    """Authoritative gate state for a child: face first, then quiz."""
+    face_required = not _face_enrolled(uid)
+    quiz_required = bool(feed_quiz_state(uid).get("required") or needs_onboarding_quiz(uid))
+    return {"face_required": face_required, "quiz_required": quiz_required}
+
+
 def _child_gate(feature: str | None = None):
     uid = int(g.mobile_user["user_id"])
-    face = fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1", (uid,))
-    if not face:
+    if not _face_enrolled(uid):
         return jsonify(error="face_enrollment_required", gate="face"), 428
     if needs_onboarding_quiz(uid):
+
         return jsonify(error="onboarding_quiz_required", gate="quiz"), 428
     if feature and not feature_allowed(uid, feature):
         return jsonify(error="disabled_by_parent", feature=feature), 403
@@ -357,16 +388,27 @@ def _mobile_login_response(user, method="PASSWORD"):
         response["biometric_key"] = face_prof["biometric_key"]
     if user["role"] == "CHILD":
         uid = int(user["user_id"])
-        response["onboarding"] = {
-            "face_required": not bool(fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s", (uid,))),
-            "quiz_required": bool(feed_quiz_state(uid).get("required") or needs_onboarding_quiz(uid)),
-        }
+        response["onboarding"] = _onboarding_state(uid)
     return jsonify(_clean(response))
 
 
 def _media_allowed(uid: int, role: str, ref: str) -> bool:
-    p = fetch_one("SELECT post_id,child_id,moderation_status,is_safe FROM posts WHERE media_path=%s OR story_music_path=%s", (ref, ref))
+    p = fetch_one(
+        """SELECT post_id, child_id, moderation_status, is_safe, source_media_path, media_path, poster_path
+           FROM posts
+           WHERE media_path=%s OR story_music_path=%s OR poster_path=%s OR source_media_path=%s""",
+        (ref, ref, ref, ref),
+    )
     if p:
+        mod_status = (p.get("moderation_status") or "").upper()
+        if mod_status == "BLOCKED":
+            return False
+        if ref == p.get("source_media_path") or mod_status == "REVIEW":
+            if role == "ADMIN":
+                return True
+            if role == "PARENT":
+                return owns(uid, p["child_id"])
+            return False
         if role == "ADMIN":
             return True
         if role == "PARENT":
@@ -433,7 +475,13 @@ def _merge_signals(*signals):
     return out
 
 
-def _resolve_parent_review(parent_id: int, event_id: int, requested: str):
+def _resolve_parent_review(
+    reviewer_id: int,
+    event_id: int,
+    requested: str,
+    is_admin: bool = False,
+    notes: str | None = None,
+):
     requested = requested.upper()
     if requested not in {"APPROVE", "BLOCK"}:
         return False, "invalid_action"
@@ -442,22 +490,145 @@ def _resolve_parent_review(parent_id: int, event_id: int, requested: str):
         cur = conn.cursor()
         cur.execute("SELECT * FROM moderation_events WHERE event_id=%s AND decision='REVIEW' AND status='OPEN' FOR UPDATE", (event_id,))
         event = cur.fetchone()
-        if not event or not owns(parent_id, event["child_id"]):
+        if not event:
             conn.rollback()
             return False, "not_found"
+        if not is_admin and not owns(reviewer_id, event["child_id"]):
+            conn.rollback()
+            return False, "forbidden"
+
         status = "ALLOWED" if requested == "APPROVE" else "BLOCKED"
+        p_row = None
+        kind = "post"
+        pub_media = None
+        pub_poster = None
         if event["content_type"] in {"IMAGE", "VIDEO", "AUDIO", "TEXT"} and event.get("content_id"):
-            cur.execute("UPDATE posts SET moderation_status=%s,is_safe=%s WHERE post_id=%s", (status, requested == "APPROVE", event["content_id"]))
+            post_id = int(event["content_id"])
+            cur.execute("SELECT * FROM posts WHERE post_id=%s FOR UPDATE", (post_id,))
+            p_row = cur.fetchone()
+            if p_row and p_row.get("source_media_path"):
+                kind = "reel" if p_row.get("is_reel") else ("story" if p_row.get("is_story") else "post")
+                media_type = p_row.get("media_type") or "IMAGE"
+                if requested == "APPROVE":
+                    from services.media_processor import sanitize_and_promote_media
+                    try:
+                        pub_media, pub_poster = sanitize_and_promote_media(
+                            post_id, int(p_row["child_id"]), p_row["source_media_path"], kind, media_type
+                        )
+                        cur.execute(
+                            """UPDATE posts
+                               SET media_path=%s, poster_path=%s, moderation_status='ALLOWED',
+                                   processing_status='ALLOWED', is_safe=TRUE, processing_completed_at=NOW(),
+                                   processing_lease_token=NULL, processing_lease_expires_at=NULL
+                               WHERE post_id=%s""",
+                            (pub_media, pub_poster, post_id),
+                        )
+                    except Exception as exc:
+                        # Fail-closed: do not publish unsanitized media; compensate if published
+                        if pub_media:
+                            try:
+                                from services.object_storage import object_storage
+                                if object_storage.enabled():
+                                    object_storage.delete_reference(pub_media)
+                                    if pub_poster:
+                                        object_storage.delete_reference(pub_poster)
+                                else:
+                                    Path(pub_media).unlink(missing_ok=True)
+                                    if pub_poster:
+                                        Path(pub_poster).unlink(missing_ok=True)
+                            except Exception:
+                                pass
+                        cur.execute(
+                            """UPDATE posts
+                               SET moderation_status='BLOCKED', processing_status='FAILED',
+                                   processing_error=%s, is_safe=FALSE, processing_completed_at=NOW(),
+                                   processing_lease_token=NULL, processing_lease_expires_at=NULL
+                               WHERE post_id=%s""",
+                            (f"sanitization_failed: {exc}", post_id),
+                        )
+                        cur.execute(
+                            "INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)",
+                            (event_id, reviewer_id, "BLOCK", "Sanitization failed closed."),
+                        )
+                        cur.execute("UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s", (event_id,))
+                        if is_admin:
+                            cur.execute(
+                                """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                                   VALUES(%s,'MODERATION_BLOCK','MODERATION_EVENT',%s,%s::jsonb)""",
+                                (reviewer_id, event_id, json.dumps({"result": "sanitization_failed"})),
+                            )
+                        conn.commit()
+                        return False, "sanitization_failed"
+                else:  # BLOCK
+                    cur.execute(
+                        """UPDATE posts
+                           SET moderation_status='BLOCKED', processing_status='BLOCKED',
+                               is_safe=FALSE, media_path=NULL, processing_completed_at=NOW(),
+                               processing_lease_token=NULL, processing_lease_expires_at=NULL
+                           WHERE post_id=%s""",
+                        (post_id,),
+                    )
+            else:
+                cur.execute(
+                    """UPDATE posts
+                       SET moderation_status=%s, processing_status=%s, is_safe=%s,
+                           processing_lease_token=NULL, processing_lease_expires_at=NULL
+                       WHERE post_id=%s""",
+                    (status, status, requested == "APPROVE", post_id),
+                )
         elif event["content_type"] == "COMMENT" and event.get("content_id"):
             cur.execute("UPDATE comments SET moderation_status=%s WHERE comment_id=%s", (status, event["content_id"]))
         elif event["content_type"] == "MESSAGE" and event.get("content_id"):
             cur.execute("UPDATE child_messages SET moderation_status=%s WHERE child_message_id=%s", (status, event["content_id"]))
-        cur.execute("INSERT INTO moderation_reviews(event_id,reviewer_id,action) VALUES(%s,%s,%s)", (event_id, parent_id, requested))
+        elif event["content_type"] == "USER" and event.get("content_id") and is_admin and requested == "BLOCK":
+            cur.execute(
+                "UPDATE users SET account_status='SUSPENDED' WHERE user_id=%s AND role='CHILD'",
+                (event["content_id"],),
+            )
+
+        cur.execute(
+            "INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)",
+            (event_id, reviewer_id, requested, notes),
+        )
         cur.execute("UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s", (event_id,))
+        if is_admin:
+            cur.execute(
+                """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                   VALUES(%s,%s,'MODERATION_EVENT',%s,%s::jsonb)""",
+                (
+                    reviewer_id,
+                    f"MODERATION_{requested}",
+                    event_id,
+                    json.dumps({"child_id": event["child_id"], "content_type": event["content_type"]}),
+                ),
+            )
+        # Commit DB state FIRST before external notifications and storage mutations
         conn.commit()
+
+        if p_row and p_row.get("source_media_path"):
+            post_id = int(p_row["post_id"])
+            from services.media_processor import block_and_cleanup_quarantine, _notify_approved_followers
+            if requested == "APPROVE":
+                _notify_approved_followers(post_id, int(p_row["child_id"]), kind)
+            block_and_cleanup_quarantine(post_id, p_row["source_media_path"])
+
         return True, requested
     except Exception:
         conn.rollback()
+        if requested == "APPROVE" and pub_media:
+            # Compensate orphan published object on commit failure
+            try:
+                from services.object_storage import object_storage
+                if object_storage.enabled():
+                    object_storage.delete_reference(pub_media)
+                    if pub_poster:
+                        object_storage.delete_reference(pub_poster)
+                else:
+                    Path(pub_media).unlink(missing_ok=True)
+                    if pub_poster:
+                        Path(pub_poster).unlink(missing_ok=True)
+            except Exception:
+                pass
         raise
     finally:
         conn.close()
@@ -523,7 +694,8 @@ def register_mobile_api(bp):
         try:
             ok, reason, _ = verify(user["user_id"], path)
             if not ok:
-                return jsonify(error="face_login_failed", reason=reason), 401
+                code = 404 if reason == "not_enrolled" else 401
+                return jsonify(error="face_login_failed", reason=reason), code
             return _mobile_login_response(user, "FACE")
         finally:
             try:
@@ -647,7 +819,7 @@ def register_mobile_api(bp):
         if not user:
             return jsonify(error="user_not_found"), 404
 
-        return _mobile_login_response(user, "FACE_ON_DEVICE_CHALLENGE")
+        return _mobile_login_response(user, "DEVICE_BIOMETRIC_CHALLENGE")
 
     @bp.route("/api/mobile/v1/music/curated", methods=["GET"])
     def mobile_curated_music():
@@ -795,7 +967,10 @@ def register_mobile_api(bp):
     @bp.route("/api/mobile/v1/me")
     @_require_mobile("CHILD", "PARENT", "ADMIN")
     def mobile_me():
-        return jsonify(ok=True, user=_mobile_user_payload(g.mobile_user))
+        payload = {"ok": True, "user": _mobile_user_payload(g.mobile_user)}
+        if str(g.mobile_user.get("role")) == "CHILD":
+            payload["onboarding"] = _onboarding_state(int(g.mobile_user["user_id"]))
+        return jsonify(_clean(payload))
 
     @bp.route("/api/mobile/v1/media")
     @_require_mobile("CHILD", "PARENT", "ADMIN")
@@ -831,22 +1006,22 @@ def register_mobile_api(bp):
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            try:
-                enroll(g.mobile_user["user_id"], path)
-            except Exception:
-                pass
+            uid = int(g.mobile_user["user_id"])
+            enroll(uid, path)
             b_key = secrets.token_hex(32)
             execute(
-                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
-                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
-                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
-                (g.mobile_user["user_id"], b_key),
+                """UPDATE face_profiles
+                   SET biometric_key=COALESCE(face_profiles.biometric_key, %s)
+                   WHERE child_id=%s""",
+                (b_key, uid),
             )
             return jsonify(
                 ok=True,
                 biometric_key=b_key,
-                quiz_required=bool(needs_onboarding_quiz(g.mobile_user["user_id"])),
+                quiz_required=bool(needs_onboarding_quiz(uid)),
             )
+        except ValueError as exc:
+            return jsonify(error=str(exc) or "face_enrollment_failed"), 400
         except Exception:
             return jsonify(error="face_enrollment_failed"), 400
         finally:
@@ -967,6 +1142,31 @@ def register_mobile_api(bp):
             item["actor_avatar_url"] = _asset_url(item.pop("actor_avatar", None))
             out.append(_clean(item))
         return jsonify(ok=True, notifications=out)
+
+    @bp.route("/api/mobile/v1/kids/notifications/read", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_notifications_read():
+        # Smallest safe authoritative mark-read: CHILD bearer only, own rows
+        # only, idempotent. Reuses the same notifications table as the web
+        # child surface (child/routes.py notifications_read).
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        raw_ids = data.get("notification_ids", None)
+        if raw_ids is None:
+            execute("UPDATE notifications SET is_read=TRUE WHERE user_id=%s", (uid,))
+            return jsonify(ok=True, marked="all")
+        try:
+            ids = [int(x) for x in (raw_ids or [])]
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_notification_ids"), 400
+        if not ids:
+            return jsonify(ok=True, marked=0)
+        marked = execute_count(
+            "UPDATE notifications SET is_read=TRUE WHERE user_id=%s AND notification_id = ANY(%s) AND is_read=FALSE",
+            (uid, ids),
+        )
+        return jsonify(ok=True, marked=marked)
 
     @bp.route("/api/mobile/v1/kids/messages")
     @_require_mobile("CHILD")
@@ -1469,11 +1669,16 @@ def register_mobile_api(bp):
 
         mime_type = str(data.get("mime_type") or data.get("content_type") or "").lower().strip()
         if not mime_type:
-            mime_type = f"image/{ext}" if media_type == "IMAGE" else f"video/{ext}"
+            if media_type == "IMAGE":
+                mime_type = "image/jpeg" if ext in {"jpg", "jpeg"} else f"image/{ext}"
+            else:
+                mime_type = "video/mp4" if ext == "mp4" else f"video/{ext}"
+        elif mime_type == "image/jpg":
+            mime_type = "image/jpeg"
 
         if media_type == "IMAGE":
             valid_exts = {"jpg", "jpeg", "png", "webp"}
-            valid_mimes = {"image/jpeg", "image/png", "image/webp"}
+            valid_mimes = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
         else:
             valid_exts = {"mp4", "mov", "webm", "mkv"}
             valid_mimes = {"video/mp4", "video/quicktime", "video/webm", "video/x-matroska"}
@@ -1565,19 +1770,37 @@ def register_mobile_api(bp):
     @_require_mobile("CHILD")
     def mobile_v2_upload_complete(upload_id):
         uid = int(g.mobile_user["user_id"])
-        session_row = fetch_one("SELECT * FROM upload_sessions WHERE upload_id=%s", (upload_id,))
-        if not session_row:
-            return jsonify(error="upload_session_not_found"), 404
+        conn = get_db_connection()
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT * FROM upload_sessions WHERE upload_id=%s FOR UPDATE", (upload_id,))
+            session_row = cur.fetchone()
+            if not session_row:
+                conn.rollback()
+                return jsonify(error="upload_session_not_found"), 404
 
-        if int(session_row["child_id"]) != uid:
-            return jsonify(error="forbidden_upload_owner_mismatch"), 403
+            if int(session_row["child_id"]) != uid:
+                conn.rollback()
+                return jsonify(error="forbidden_upload_owner_mismatch"), 403
 
-        if session_row["status"] == "CONSUMED":
-            existing = fetch_one(
-                "SELECT post_id, processing_status, moderation_status FROM posts WHERE source_media_path=%s LIMIT 1",
-                (session_row["object_key"],),
+            cur.execute(
+                "SELECT post_id, processing_status, moderation_status, processing_error FROM posts WHERE upload_id=%s OR source_media_path=%s LIMIT 1",
+                (upload_id, session_row["object_key"]),
             )
-            if existing:
+            existing = cur.fetchone()
+
+            if session_row["status"] == "CONSUMED" and existing:
+                if existing["processing_status"] == "UPLOADED" and "dispatch_failed" in (existing.get("processing_error") or ""):
+                    conn.rollback()
+                    from services.job_queue import enqueue_media_job
+                    try:
+                        job_id = enqueue_media_job(existing["post_id"], uid, session_row["object_key"], session_row["kind"].upper())
+                        execute("UPDATE posts SET processing_status='PROCESSING', job_id=%s, processing_error=NULL WHERE post_id=%s", (job_id, existing["post_id"]))
+                        return jsonify(ok=True, post_id=existing["post_id"], status="PROCESSING", retry_dispatched=True)
+                    except Exception as exc:
+                        return jsonify(ok=False, error="job_dispatch_failed", retryable=True, post_id=existing["post_id"], upload_id=upload_id), 503
+
+                conn.rollback()
                 return jsonify(
                     ok=True,
                     post_id=existing["post_id"],
@@ -1585,106 +1808,179 @@ def register_mobile_api(bp):
                     idempotent=True,
                 )
 
-        if session_row["expires_at"] and session_row["expires_at"] < datetime.utcnow():
-            execute("UPDATE upload_sessions SET status='EXPIRED' WHERE upload_id=%s", (upload_id,))
-            return jsonify(error="upload_session_expired"), 400
+            exp = session_row.get("expires_at")
+            if exp:
+                now = datetime.now(timezone.utc)
+                if hasattr(exp, "tzinfo") and exp.tzinfo is None:
+                    exp = exp.replace(tzinfo=timezone.utc)
+                elif not hasattr(exp, "tzinfo"):
+                    exp = datetime.fromisoformat(str(exp)).replace(tzinfo=timezone.utc)
+                if exp < now:
+                    cur.execute("UPDATE upload_sessions SET status='EXPIRED' WHERE upload_id=%s", (upload_id,))
+                    conn.commit()
+                    return jsonify(error="upload_session_expired"), 400
 
-        from services import object_storage
 
-        if object_storage.enabled():
-            meta = object_storage.head_object(session_row["object_key"])
-            if not meta or meta.get("content_length", 0) <= 0:
-                return jsonify(error="media_object_missing_in_quarantine"), 400
+            from services import object_storage
 
-        data = request.get_json(silent=True) or request.form or {}
-        caption = str(data.get("caption") or "").strip()
-        category = str(data.get("content_category") or "Other")
-        category = category if category in SAFE_CATEGORIES else "Other"
-        if category not in effective_categories(uid):
-            return jsonify(error="category_disabled_by_parent"), 403
+            if object_storage.enabled():
+                meta = object_storage.head_object(session_row["object_key"])
+                if not meta or meta.get("content_length", 0) <= 0:
+                    conn.rollback()
+                    return jsonify(error="media_object_missing_in_quarantine"), 400
 
-        audience_raw = data.get("audience_age_group")
-        if audience_raw is not None and str(audience_raw) not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
-            return jsonify(error="invalid_audience_age_group"), 400
-        audience = str(audience_raw or "ALL")
+                actual_bytes = int(meta["content_length"])
+                expected_bytes = int(session_row["expected_size_bytes"])
+                if actual_bytes != expected_bytes:
+                    conn.rollback()
+                    return jsonify(
+                        error="media_size_mismatch",
+                        actual_bytes=actual_bytes,
+                        expected_bytes=expected_bytes,
+                    ), 400
 
-        if caption and scan_pii(caption).get("detected"):
-            parent_notify(uid, "CONTENT_BLOCKED", "Personal contact information cannot be shared in captions", "/parent/safety/")
-            return jsonify(error="caption_pii_blocked"), 400
+                actual_mime = (meta.get("content_type") or "").strip().lower()
+                expected_mime = (session_row.get("mime_type") or "").strip().lower()
+                if actual_mime and expected_mime and actual_mime != expected_mime:
+                    conn.rollback()
+                    return jsonify(
+                        error="media_mime_mismatch",
+                        actual_mime=actual_mime,
+                        expected_mime=expected_mime,
+                    ), 400
+            else:
+                mock_dir = Path("uploads/mock_quarantine") / str(session_row["child_id"]) / upload_id
+                mock_file = mock_dir / f"source.{session_row['extension']}"
+                if mock_file.is_file():
+                    actual_bytes = mock_file.stat().st_size
+                    expected_bytes = int(session_row["expected_size_bytes"])
+                    if actual_bytes != expected_bytes:
+                        conn.rollback()
+                        return jsonify(
+                            error="media_size_mismatch",
+                            actual_bytes=actual_bytes,
+                            expected_bytes=expected_bytes,
+                        ), 400
 
-        raw_tags = data.get("tags") or []
-        if isinstance(raw_tags, str):
-            raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
+            data = request.get_json(silent=True) or request.form or {}
+            caption = str(data.get("caption") or "").strip()
+            category = str(data.get("content_category") or "Other")
+            category = category if category in SAFE_CATEGORIES else "Other"
+            if category not in effective_categories(uid):
+                conn.rollback()
+                return jsonify(error="category_disabled_by_parent"), 403
 
-        from services.tag_service import validate_and_normalize_tags, save_post_tags
+            audience_raw = data.get("audience_age_group")
+            if audience_raw is not None and str(audience_raw) not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
+                conn.rollback()
+                return jsonify(error="invalid_audience_age_group"), 400
+            audience = str(audience_raw or "ALL")
 
-        validated_tags, tag_err = validate_and_normalize_tags(raw_tags, uid)
-        if tag_err:
-            return jsonify(error=tag_err), 400
+            if caption and scan_pii(caption).get("detected"):
+                parent_notify(uid, "CONTENT_BLOCKED", "Personal contact information cannot be shared in captions", "/parent/safety/")
+                conn.rollback()
+                return jsonify(error="caption_pii_blocked"), 400
 
-        kind = session_row["kind"].upper()
-        media_type = session_row["media_type"].upper()
+            raw_tags = data.get("tags") or []
+            if isinstance(raw_tags, str):
+                raw_tags = [t.strip() for t in raw_tags.split(",") if t.strip()]
 
-        location_name = str(data.get("location_name") or "").strip()[:120] or None
-        music_id = data.get("music_id")
-        music_row = None
-        if kind == "STORY" and music_id:
-            try:
-                music_row = fetch_one("SELECT * FROM curated_music WHERE music_id=%s AND is_active=TRUE", (int(music_id),))
-            except Exception:
-                music_row = None
-        s_music_id = music_row["music_id"] if music_row else None
-        s_music_title = music_row["title"] if music_row else None
-        s_music_artist = music_row["artist"] if music_row else None
-        s_music_url = music_row["audio_url"] if music_row else None
-        s_music_start = int(data.get("music_start") or 0)
-        s_music_dur = int(data.get("music_duration") or (music_row["duration_seconds"] if music_row else 30))
+            from services.tag_service import validate_and_normalize_tags, save_post_tags
 
-        post_row = execute(
-            """INSERT INTO posts(child_id, media_type, source_media_path, caption, content_category,
-                               audience_age_group, is_story, is_reel, is_safe, moderation_status,
-                               processing_status, processing_started_at, location_name,
-                               story_music_id, story_music_title, story_music_artist, story_music_url, story_music_start, story_music_duration)
-               VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'UPLOADED', NOW(), %s, %s, %s, %s, %s, %s, %s)
-               RETURNING post_id""",
-            (
-                uid,
-                media_type,
-                session_row["object_key"],
-                caption,
-                category,
-                audience,
-                kind == "STORY",
-                kind == "REEL",
-                location_name,
-                s_music_id,
-                s_music_title,
-                s_music_artist,
-                s_music_url,
-                s_music_start,
-                s_music_dur,
-            ),
-            returning=True,
-        )
-        post_id = post_row["post_id"]
+            validated_tags, tag_err = validate_and_normalize_tags(raw_tags, uid)
+            if tag_err:
+                conn.rollback()
+                return jsonify(error=tag_err), 400
 
-        if validated_tags:
-            save_post_tags(post_id, validated_tags)
+            kind = session_row["kind"].upper()
+            media_type = session_row["media_type"].upper()
 
-        execute(
-            "UPDATE upload_sessions SET status='CONSUMED', consumed_at=NOW() WHERE upload_id=%s",
-            (upload_id,),
-        )
+            location_name = str(data.get("location_name") or "").strip()[:120] or None
+            music_id = data.get("music_id")
+            music_row = None
+            if kind == "STORY" and music_id:
+                try:
+                    cur.execute("SELECT * FROM curated_music WHERE music_id=%s AND is_active=TRUE", (int(music_id),))
+                    music_row = cur.fetchone()
+                except Exception:
+                    music_row = None
+            s_music_id = music_row["music_id"] if music_row else None
+            s_music_title = music_row["title"] if music_row else None
+            s_music_artist = music_row["artist"] if music_row else None
+            s_music_url = music_row["audio_url"] if music_row else None
+            s_music_start = int(data.get("music_start") or 0)
+            s_music_dur = int(data.get("music_duration") or (music_row["duration_seconds"] if music_row else 30))
+
+            if existing:
+                post_id = existing["post_id"]
+            else:
+                cur.execute(
+                    """INSERT INTO posts(child_id, media_type, source_media_path, caption, content_category,
+                                       audience_age_group, is_story, is_reel, is_safe, moderation_status,
+                                       processing_status, processing_started_at, location_name,
+                                       story_music_id, story_music_title, story_music_artist, story_music_url,
+                                       story_music_start, story_music_duration, upload_id, processing_attempts, last_attempt_at)
+                       VALUES(%s, %s, %s, %s, %s, %s, %s, %s, FALSE, 'PENDING', 'PROCESSING', NOW(), %s, %s, %s, %s, %s, %s, %s, %s, 1, NOW())
+                       RETURNING post_id""",
+                    (
+                        uid,
+                        media_type,
+                        session_row["object_key"],
+                        caption,
+                        category,
+                        audience,
+                        kind == "STORY",
+                        kind == "REEL",
+                        location_name,
+                        s_music_id,
+                        s_music_title,
+                        s_music_artist,
+                        s_music_url,
+                        s_music_start,
+                        s_music_dur,
+                        upload_id,
+                    ),
+                )
+                post_row = cur.fetchone()
+                post_id = post_row["post_id"]
+
+            cur.execute(
+                "UPDATE upload_sessions SET status='CONSUMED', consumed_at=NOW() WHERE upload_id=%s",
+                (upload_id,),
+            )
+            conn.commit()
+
+            if validated_tags:
+                save_post_tags(post_id, validated_tags)
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
         from services.job_queue import enqueue_media_job
 
-        enqueue_media_job(post_id, uid, session_row["object_key"], kind)
+        try:
+            job_id = enqueue_media_job(post_id, uid, session_row["object_key"], kind)
+            execute("UPDATE posts SET job_id=%s WHERE post_id=%s", (job_id, post_id))
+            return jsonify(
+                ok=True,
+                post_id=post_id,
+                status="PROCESSING",
+            )
+        except Exception as exc:
+            execute(
+                "UPDATE posts SET processing_status='UPLOADED', processing_error=%s WHERE post_id=%s",
+                (f"dispatch_failed: {exc}", post_id),
+            )
+            return jsonify(
+                ok=False,
+                error="job_dispatch_failed",
+                retryable=True,
+                post_id=post_id,
+                upload_id=upload_id,
+            ), 503
 
-        return jsonify(
-            ok=True,
-            post_id=post_id,
-            status="PROCESSING",
-        )
 
     @bp.route("/api/mobile/v2/posts/<int:post_id>/processing-status", methods=["GET"])
     @_require_mobile("CHILD", "PARENT")
@@ -1718,7 +2014,41 @@ def register_mobile_api(bp):
             media_url=_asset_url(post.get("media_path")),
             poster_url=_asset_url(post.get("poster_path")),
             error=post.get("processing_error"),
+            retryable=st == "UPLOADED" and bool(post.get("processing_error")),
         )
+
+
+    @bp.route("/api/mobile/v2/posts/<int:post_id>/redrive", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD", "PARENT", "ADMIN")
+    def mobile_v2_post_redrive(post_id):
+        uid = int(g.mobile_user["user_id"])
+        role = str(g.mobile_user["role"]).upper()
+        post = fetch_one("SELECT child_id, processing_status FROM posts WHERE post_id=%s", (post_id,))
+        if not post:
+            return jsonify(error="post_not_found"), 404
+        if role == "CHILD" and int(post["child_id"]) != uid:
+            return jsonify(error="forbidden_not_post_owner"), 403
+        elif role == "PARENT" and not owns(uid, int(post["child_id"])):
+            return jsonify(error="forbidden_not_child_guardian"), 403
+
+        from services.media_processor import redrive_media_job
+        res = redrive_media_job(post_id)
+        return jsonify(res), (200 if res.get("ok") else 400)
+
+    @bp.route("/api/mobile/v2/maintenance/reap-stale-jobs", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("ADMIN")
+    def mobile_v2_reap_stale_jobs():
+        from services.media_processor import reap_stale_media_jobs
+        try:
+            raw_stale = int(request.args.get("stale_seconds") or 300)
+        except (ValueError, TypeError):
+            raw_stale = 300
+        stale_sec = max(30, min(raw_stale, 86400))
+        res = reap_stale_media_jobs(stale_seconds=stale_sec)
+        return jsonify(res)
+
 
 
     @bp.route("/api/mobile/v1/kids/learning")
@@ -2010,18 +2340,13 @@ def register_mobile_api(bp):
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            try:
-                enroll(child_id, path)
-            except Exception as exc:
-                import logging
-                logging.getLogger(__name__).warning("Face enroll embedding skipped: %s", exc)
-
+            enroll(child_id, path)
             b_key = secrets.token_hex(32)
             execute(
-                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
-                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
-                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key), updated_at=NOW()""",
-                (child_id, b_key),
+                """UPDATE face_profiles
+                   SET biometric_key=COALESCE(face_profiles.biometric_key, %s), updated_at=NOW()
+                   WHERE child_id=%s""",
+                (b_key, child_id),
             )
             return jsonify(
                 ok=True,
@@ -2049,6 +2374,17 @@ def register_mobile_api(bp):
             return jsonify(error="child_not_found"), 404
         if request.method == "PUT":
             data = request.get_json(silent=True) or {}
+            flags = {
+                "allow_reels", "allow_stories", "allow_messaging", "allow_posting", "allow_discover",
+                "quiet_hours_enabled", "educational_only_feed",
+            }
+            if any(key in data and not isinstance(data[key], bool) for key in flags):
+                return jsonify(error="invalid_controls"), 400
+            if "allowed_categories" in data and (
+                not isinstance(data["allowed_categories"], list)
+                or any(not isinstance(category, str) for category in data["allowed_categories"])
+            ):
+                return jsonify(error="invalid_categories"), 400
             current = controls_for_child(child_id)
             merged = dict(current)
             merged.update({k: data[k] for k in data if k in {
@@ -2064,9 +2400,11 @@ def register_mobile_api(bp):
             for category in merged.get("allowed_categories") or SAFE_CATEGORIES:
                 form.add("allowed_categories", category)
             try:
-                save_controls(pid, child_id, form)
+                updated = save_controls(pid, child_id, form)
             except ValueError:
                 return jsonify(error="invalid_quiet_hours"), 400
+            log(child_id, "PARENT_CONTROLS_UPDATED", {"parent_id": pid, "before": current, "after": updated})
+            notify(child_id, "PARENT_CONTROLS", "Parent Mode updated your LittleNet permissions", "/child/dashboard/", pid)
         limit_row = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))
         return jsonify(
             ok=True,
@@ -2115,27 +2453,51 @@ def register_mobile_api(bp):
             return jsonify(error="invalid_limit"), 400
         strict = bool(data.get("strict_mode", True))
         execute("INSERT INTO child_time_limits(child_id,daily_limit_minutes,strict_mode) VALUES(%s,%s,%s) ON CONFLICT(child_id) DO UPDATE SET daily_limit_minutes=EXCLUDED.daily_limit_minutes,strict_mode=EXCLUDED.strict_mode,updated_at=NOW()", (child_id, minutes, strict))
+        log(child_id, "SCREEN_TIME_LIMIT_UPDATED", {"parent_id": pid, "daily_limit_minutes": minutes, "strict_mode": strict})
+        notify(child_id, "SCREEN_TIME", "Parent Mode updated your daily screen-time limit", "/child/dashboard/", pid)
         return jsonify(ok=True, limit=_clean(fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))))
 
     @bp.route("/api/mobile/v1/parent/safety")
     @_require_mobile("PARENT")
     def mobile_parent_safety():
         pid = int(g.mobile_user["user_id"])
-        rows = fetch_all("SELECT e.*,u.full_name FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.decision='REVIEW' AND e.status='OPEN' AND e.child_id IN (SELECT child_id FROM parent_child_map WHERE parent_id=%s) ORDER BY e.created_at DESC", (pid,))
+        rows = fetch_all(
+            """SELECT e.*,u.full_name
+               FROM moderation_events e JOIN users u ON u.user_id=e.child_id
+               WHERE e.decision='REVIEW' AND e.status='OPEN'
+                 AND EXISTS (
+                   SELECT 1 FROM parent_child_map m
+                   JOIN users p ON p.user_id=%s AND p.role='PARENT' AND p.account_status='ACTIVE'
+                   WHERE m.child_id=e.child_id
+                     AND m.approved=TRUE AND m.approval_status='APPROVED'
+                     AND (m.parent_id=%s OR m.verified_parent_id=%s)
+                 )
+               ORDER BY e.created_at DESC""",
+            (pid, pid, pid),
+        )
         out = []
         for event in rows:
             item = dict(event)
             preview = None
             if item.get("content_type") in {"IMAGE", "VIDEO", "TEXT"} and item.get("content_id"):
-                preview = fetch_one("SELECT media_type,media_path,caption FROM posts WHERE post_id=%s", (item["content_id"],))
+                preview = fetch_one(
+                    "SELECT media_type,media_path,source_media_path,poster_path,caption FROM posts WHERE post_id=%s",
+                    (item["content_id"],),
+                )
             elif item.get("content_type") == "COMMENT" and item.get("content_id"):
                 preview = fetch_one("SELECT comment_text FROM comments WHERE comment_id=%s", (item["content_id"],))
             elif item.get("content_type") == "MESSAGE" and item.get("content_id"):
                 preview = fetch_one("SELECT message_type,message_text,media_path,shared_post_id FROM child_messages WHERE child_message_id=%s", (item["content_id"],))
             if preview:
                 preview = dict(preview)
-                if preview.get("media_path"):
-                    preview["media_url"] = _asset_url(preview.pop("media_path"))
+                source_ref = preview.pop("source_media_path", None)
+                published_ref = preview.pop("media_path", None)
+                poster_ref = preview.pop("poster_path", None)
+                media_ref = source_ref or published_ref
+                if media_ref:
+                    preview["media_url"] = _asset_url(media_ref)
+                if poster_ref:
+                    preview["poster_url"] = _asset_url(poster_ref)
             item["preview"] = _clean(preview)
             out.append(_clean(item))
         return jsonify(ok=True, events=out)
@@ -2146,7 +2508,8 @@ def register_mobile_api(bp):
     def mobile_parent_review(event_id):
         action = str((request.get_json(silent=True) or {}).get("action") or "").upper()
         ok, result = _resolve_parent_review(int(g.mobile_user["user_id"]), event_id, action)
-        return jsonify(ok=ok, result=result), (200 if ok else 400)
+        status = 200 if ok else 403 if result == "forbidden" else 404 if result == "not_found" else 400
+        return jsonify(ok=ok, result=result), status
 
     @bp.route("/api/mobile/v1/parent/follow-requests")
     @_require_mobile("PARENT")
@@ -2167,19 +2530,39 @@ def register_mobile_api(bp):
             return jsonify(error="forbidden"), 403
         action = str(data.get("action") or "").lower()
         if action == "approve":
-            execute("UPDATE followers SET approved=TRUE,approval_stage='ACTIVE' WHERE child_id=%s AND following_child_id=%s AND approved=FALSE", (child_id, target_id))
+            changed = execute_count("UPDATE followers SET approved=TRUE WHERE child_id=%s AND following_child_id=%s AND approved=FALSE AND approval_stage IN ('REQUESTED','RECEIVER_PARENT_PENDING')", (child_id, target_id))
         elif action == "reject":
-            execute("DELETE FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=FALSE", (child_id, target_id))
+            changed = execute_count("DELETE FROM followers WHERE child_id=%s AND following_child_id=%s AND approved=FALSE AND approval_stage IN ('REQUESTED','RECEIVER_PARENT_PENDING')", (child_id, target_id))
         else:
             return jsonify(error="invalid_action"), 400
+        if not changed:
+            return jsonify(error="follow_request_not_found"), 404
+        log(child_id, "PARENT_FOLLOW_ACTION", {"parent_id": int(g.mobile_user["user_id"]), "target_id": target_id, "action": action})
         return jsonify(ok=True, action=action)
 
-    @bp.route("/api/mobile/v1/parent/notifications")
+    @bp.route("/api/mobile/v1/parent/notifications", methods=["GET", "POST"])
+    @csrf.exempt
     @_require_mobile("PARENT")
     def mobile_parent_notifications():
         pid = int(g.mobile_user["user_id"])
+        if request.method == "POST":
+            execute("UPDATE parent_notifications SET is_read=TRUE WHERE parent_id=%s AND is_read=FALSE", (pid,))
         rows = fetch_all("SELECT * FROM parent_notifications WHERE parent_id=%s ORDER BY created_at DESC LIMIT 100", (pid,))
         return jsonify(ok=True, notifications=_clean(rows))
+
+    @bp.route("/api/mobile/v1/parent/activity/<int:child_id>")
+    @_require_mobile("PARENT")
+    def mobile_parent_activity(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        rows = fetch_all(
+            """SELECT log_id,activity_type,activity_data,created_at
+               FROM activity_logs WHERE child_id=%s
+               ORDER BY created_at DESC LIMIT 100""",
+            (child_id,),
+        )
+        return jsonify(ok=True, events=_clean(rows))
 
     @bp.route("/api/mobile/v1/admin/dashboard")
     @_require_mobile("ADMIN")
@@ -2195,7 +2578,7 @@ def register_mobile_api(bp):
     @bp.route("/api/mobile/v1/admin/reviews")
     @_require_mobile("ADMIN")
     def mobile_admin_reviews():
-        rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
+        rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.decision='REVIEW' AND e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
         return jsonify(ok=True, events=_clean(rows))
 
     @bp.route("/api/mobile/v2/kids/feed")
