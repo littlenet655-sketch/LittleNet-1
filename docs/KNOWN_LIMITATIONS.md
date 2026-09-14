@@ -10,8 +10,8 @@
 - The activity screen shows event categories and timestamps without exposing private message bodies or unrelated-user content.
 - Modal workspace/app/volume access and zero active containers were verified for `netlittle2`; the bounded AI probe still returned HTTP 401, so AI service authentication/readiness is not claimed.
 - The full synthetic R2 lifecycle passed: signed quarantine upload, private REVIEW delivery, ALLOW sanitization/promotion/readback, BLOCK cleanup, and cleanup of all synthetic objects. This does not validate real-user media.
-- Real Resend inbox delivery remains blocked by the missing `E2E_TEST_EMAIL` secret. The sender contract and fail-closed behavior are covered by CI/tests.
-- EAS authentication is blocked because `EXPO_TOKEN` is absent; therefore no installable preview APK was produced in this run.
+- The approved `E2E_TEST_EMAIL` secret is now present, but a live registration against Modal returned `email_sent=false`; no OTP verification or real inbox evidence can be claimed. The sender contract and fail-closed behavior remain covered by CI/tests.
+- EAS authentication and linking to the existing project passed. Preview APK build `914dc2c5-740b-4f2e-aa2d-40e0ba0566e8` was accepted and was still in progress when this record was updated; an installable artifact and physical-device run remain unverified.
 - The moderation benchmark result is a six-row synthetic calibration sample, not a production accuracy claim: exact-action agreement and macro-F1 were both 0.666667.
 - The previously exposed disposable Neon credential/branch still requires deletion or rotation by an authenticated Neon account owner; this workstation has no authenticated Neon CLI profile, so cleanup is not claimed.
 - `npm audit` reports 16 moderate and no high/critical findings. The incompatible transitive upgrade chains are documented in [DEPENDENCY_AUDIT.md](DEPENDENCY_AUDIT.md); no breaking `--force` downgrade was applied.

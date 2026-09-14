@@ -16,8 +16,8 @@ Verified on 2026-09-14 against commit `4f9da440` and the subsequent external val
 
 | Journey | Status | Required evidence |
 |---|---|---|
-| Parent registration | UNVERIFIED | HTTP/mobile journey + DB row/state assertions |
-| Parent email OTP send/verify/resend | UNVERIFIED | disposable DB + mail provider mock/contract |
+| Parent registration | FAIL | Live Modal request with the approved test inbox returned HTTP 200 and created the pending-registration response, but `email_sent=false`; the journey cannot proceed to OTP. |
+| Parent email OTP send/verify/resend | FAIL | Live Resend-backed registration was attempted with `E2E_TEST_EMAIL`; no OTP was delivered (`email_sent=false`), so verify/resend could not be completed. |
 | Guardian liveness/adult verification | UNVERIFIED | valid + spoof/failure tests |
 | Child creation by verified parent | UNVERIFIED | ownership + duplicate validation |
 | Child face enrollment | UNVERIFIED | real valid embedding persisted; invalid/liveness failure rejected |
@@ -80,10 +80,10 @@ Verified on 2026-09-14 against commit `4f9da440` and the subsequent external val
 | Modal workspace/app/volume access | PASS | Authenticated `netlittle2` inspection found `littlenet-web`, `littlenet-ai`, `littlenet-uploads`, and `littlenet-model-cache`. |
 | Modal AI readiness/authentication | FAIL | Bounded `/healthz` probe was not ready and the synthetic image moderation request returned HTTP 401; no secrets were printed or changed. |
 | Modal idle cost guard | PASS | Active-container list was empty after the bounded probe and idle wait. |
-| Real Resend inbox OTP | BLOCKED | `E2E_TEST_EMAIL` is not present; exact user-only requirement: `NEEDS_USER_SECRET=E2E_TEST_EMAIL`. |
+| Real Resend inbox OTP | FAIL | `E2E_TEST_EMAIL` is present and a live registration was attempted, but the backend returned `email_sent=false`; no OTP verification evidence exists. |
 | Moderation benchmark calibration | PASS | Six-row lawful synthetic calibration sample: exact-action agreement 0.666667, macro-F1 0.666667; ALLOW precision/recall 1.0/1.0, REVIEW 0.5/0.5, BLOCK 0.5/0.5. This is not production accuracy. |
-| EAS authentication | BLOCKED | `EXPO_TOKEN` is not present; `eas-cli whoami --non-interactive` returned `Not logged in`. |
-| EAS preview APK build | BLOCKED | Cannot start the required preview APK build until EAS authentication is supplied. |
+| EAS authentication/project link | PASS | `eas-cli whoami --non-interactive` authenticated as `akshu1245`; the existing project `c4ce834d-fd50-4504-a311-820c3372b6dc` was linked without creating a project. |
+| EAS preview APK build | UNVERIFIED | Existing-project preview build `914dc2c5-740b-4f2e-aa2d-40e0ba0566e8` was accepted and remained `IN_PROGRESS` at the time of this record; artifact/install evidence is still required. |
 | Routine health does not wake GPU | UNVERIFIED | billing/container evidence |
 | Final APK install/launch | UNVERIFIED | installed APK on Android device/emulator |
 
