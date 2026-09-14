@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView } from 'react-native';
+import { ScrollView, StyleSheet, Text } from 'react-native';
 import { answerQuiz, fetchQuiz } from '../api/auth';
 import type { QuizItem } from '../api/auth';
 import { ApiError } from '../api/client';
@@ -9,6 +9,7 @@ import { secureStoreBackend } from '../auth/storage';
 import type { ChildScreenProps } from '../navigation/types';
 import { quizLoadStatus, shouldProceedAfterRefresh } from '../quiz/decision';
 import { BrandHeader, Button, Card, GateNotice, LoadingState, Notice, Screen } from '../ui/components';
+import { colors, type } from '../ui/tokens';
 
 interface QuizScreenParams {
   /** Where to return after a required quiz completes. */
@@ -161,7 +162,7 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
         />
         <Card>
           <Notice tone="info" message={`Category: ${current.category}`} />
-          <BrandHeader title={current.question} />
+          <Text style={styles.question}>{current.question}</Text>
           {current.options.map((option) => (
             <Button key={option} label={option} variant="secondary" onPress={() => void submitAnswer(option)} disabled={busy} />
           ))}
@@ -172,3 +173,7 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
     </Screen>
   );
 }
+
+const styles = StyleSheet.create({
+  question: { color: colors.ink, fontSize: type.title, fontWeight: '700', lineHeight: 26, marginTop: 16, marginBottom: 8 },
+});

@@ -85,7 +85,7 @@ export function OtherProfileScreen({ route, navigation }: ChildScreenProps<'Othe
 }
 
 const styles = StyleSheet.create({
-  bio: { marginTop: 8, color: colors.ink, fontSize: type.body },
-  rel: { marginTop: 6, color: colors.muted },
-  btns: { flexDirection: 'row', gap: 8, marginTop: 8 },
+  bio: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 20 },
+  rel: { marginTop: 6, color: colors.muted, fontSize: 12 },
+  btns: { flexDirection: 'row', gap: 8, marginTop: 8, flex: 1 },
 });

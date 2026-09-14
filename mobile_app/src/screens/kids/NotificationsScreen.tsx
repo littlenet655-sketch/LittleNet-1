@@ -84,8 +84,8 @@ export function NotificationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.line },
-  unread: { backgroundColor: '#FFF4EC' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
+  unread: { backgroundColor: '#F0F8FD' },
   msg: { flex: 1, color: colors.ink },
   dot: { color: colors.brandDark, fontWeight: '800' },
 });

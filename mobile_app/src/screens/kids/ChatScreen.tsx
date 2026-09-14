@@ -99,8 +99,8 @@ export function ChatScreen({ route }: ChildScreenProps<'Chat'>) {
 }
 
 const styles = StyleSheet.create({
-  peer: { fontWeight: '800', color: colors.ink, fontSize: 18 },
-  msg: { color: colors.ink },
+  peer: { fontWeight: '700', color: colors.ink, fontSize: 18, paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
+  msg: { color: colors.ink, fontSize: 14, lineHeight: 20 },
   meta: { color: colors.muted, marginTop: 4 },
-  row: { marginTop: 8 },
+  row: { marginTop: 8, paddingHorizontal: 12, paddingBottom: 8, backgroundColor: colors.surface },
 });

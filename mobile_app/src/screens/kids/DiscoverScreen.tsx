@@ -80,8 +80,8 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 }
 
 const styles = StyleSheet.create({
-  person: { alignItems: 'center', marginRight: 14, width: 90 },
+  person: { alignItems: 'center', marginRight: 14, width: 78, paddingVertical: 8 },
   name: { fontWeight: '700', color: colors.ink, textAlign: 'center' },
   sub: { color: colors.muted },
-  post: { paddingVertical: 8, color: colors.ink },
+  post: { paddingVertical: 14, paddingHorizontal: 12, color: colors.ink, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
 });
