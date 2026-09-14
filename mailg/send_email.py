@@ -4,6 +4,12 @@ import urllib.error
 import urllib.request
 
 
+EXPECTED_RESEND_FROM_EMAIL = 'no-reply@littlenet.in'
+EXPECTED_RESEND_FROM_NAME = 'LittleNet'
+EXPECTED_RESEND_DOMAIN = 'littlenet.in'
+RESEND_API_BASE = 'https://api.resend.com'
+
+
 def _resend_from_email() -> str:
     """Return the configured LittleNet-owned Resend sender address."""
     return (
@@ -15,6 +21,105 @@ def _resend_from_email() -> str:
 
 def _is_sandbox_sender(from_email: str) -> bool:
     return not from_email or from_email.lower().endswith('@resend.dev')
+
+
+def validate_resend_production():
+    """Validate the live Resend contract without sending an email.
+
+    The domains endpoint authenticates the API key and reports the verification
+    state of the LittleNet-owned domain. This deliberately does not send a
+    message, so a release preflight cannot create a demo OTP or claim delivery
+    based on a sandbox sender.
+    """
+    api_key = (os.getenv('RESEND_API_KEY') or '').strip()
+    from_email = _resend_from_email().lower()
+    result = {
+        'ok': False,
+        'configured': bool(api_key),
+        'provider': 'resend' if api_key else None,
+        'mail_mode': 'not_configured',
+        'from_email': from_email or None,
+        'domain': EXPECTED_RESEND_DOMAIN,
+        'domain_status': None,
+        'authentication': False,
+        'is_production_ready': False,
+    }
+
+    if not api_key:
+        result['error'] = 'RESEND_API_KEY is not configured.'
+        return result
+    if from_email != EXPECTED_RESEND_FROM_EMAIL:
+        result['error'] = (
+            'RESEND_FROM_EMAIL must be exactly '
+            f'{EXPECTED_RESEND_FROM_EMAIL} for the LittleNet release.'
+        )
+        return result
+
+    request = urllib.request.Request(
+        f'{RESEND_API_BASE}/domains',
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Accept': 'application/json',
+            'User-Agent': 'LittleNet/1.0',
+        },
+        method='GET',
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.status != 200:
+                result['error'] = f'Resend domain check returned HTTP {response.status}.'
+                return result
+            payload = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        result['error'] = (
+            'Resend authentication was rejected; refresh RESEND_API_KEY '
+            f'(HTTP {exc.code}).'
+            if exc.code in (401, 403)
+            else f'Resend domain check failed with HTTP {exc.code}.'
+        )
+        return result
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        result['error'] = f'Resend domain check could not connect ({type(exc).__name__}).'
+        return result
+    except (ValueError, TypeError, AttributeError):
+        result['error'] = 'Resend domain check returned an invalid response.'
+        return result
+
+    result['authentication'] = True
+    domains = payload.get('data', []) if isinstance(payload, dict) else []
+    if not isinstance(domains, list):
+        result['error'] = 'Resend domain check returned an invalid domain list.'
+        return result
+
+    matching_domain = next(
+        (
+            domain for domain in domains
+            if isinstance(domain, dict)
+            and str(domain.get('name', '')).strip().lower() == EXPECTED_RESEND_DOMAIN
+        ),
+        None,
+    )
+    if matching_domain is None:
+        result['error'] = (
+            f'Resend domain {EXPECTED_RESEND_DOMAIN} is not configured for this API key.'
+        )
+        return result
+
+    domain_status = str(matching_domain.get('status', '')).strip().lower()
+    result['domain_status'] = domain_status or None
+    if domain_status != 'verified':
+        result['error'] = (
+            f'Resend domain {EXPECTED_RESEND_DOMAIN} is not verified '
+            f'(status: {domain_status or "unknown"}).'
+        )
+        return result
+
+    result.update({
+        'ok': True,
+        'mail_mode': 'resend_verified',
+        'is_production_ready': True,
+    })
+    return result
 
 
 def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_name=None):
@@ -52,13 +157,11 @@ def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_nam
                 return True
             print(f'[RESEND WARNING] Unexpected status {response.status}.')
     except urllib.error.HTTPError as exc:
-        error_body = exc.read().decode('utf-8', errors='replace')
-        safe_subject = str(subject).encode('ascii', errors='replace').decode('ascii')
-        print(f'[RESEND WARNING] Delivery of {safe_subject!r} failed: HTTP {exc.code}: {error_body}')
+        # Provider responses can echo credentials or message content. Keep
+        # delivery logs limited to a status code.
+        print(f'[RESEND WARNING] Delivery failed: HTTP {exc.code}.')
     except Exception as exc:
-        safe_subject = str(subject).encode('ascii', errors='replace').decode('ascii')
-        safe_error = str(exc).encode('ascii', errors='replace').decode('ascii')
-        print(f'[RESEND WARNING] Delivery of {safe_subject!r} failed: {safe_error}')
+        print(f'[RESEND WARNING] Delivery failed: {type(exc).__name__}.')
     return False
 
 
@@ -85,3 +188,24 @@ def send_email(receiver, subject, body):
         print('[RESEND CONFIG ERROR] RESEND_API_KEY is not configured.')
         return False
     return _send_via_resend(resend_key, receiver, subject, body)
+
+
+def send_parent_otp_email(receiver, subject, body):
+    """Send a parent OTP with the identity locked to the verified LittleNet sender.
+
+    Parent verification is a release-critical path. It must not inherit a
+    missing, sandbox, or unrelated RESEND_FROM_NAME/RESEND_FROM_EMAIL value
+    from the deployment environment.
+    """
+    resend_key = os.getenv('RESEND_API_KEY')
+    if not resend_key:
+        print('[RESEND CONFIG ERROR] RESEND_API_KEY is not configured.')
+        return False
+    return _send_via_resend(
+        resend_key,
+        receiver,
+        subject,
+        body,
+        from_email=EXPECTED_RESEND_FROM_EMAIL,
+        from_name=EXPECTED_RESEND_FROM_NAME,
+    )
