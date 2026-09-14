@@ -43,9 +43,6 @@ def _merge(*signals):
 
 def _create(content_type,payload,caption,category,is_story=False,is_reel=False,path=None,music_path=None,music_signals=None,audience_age_group='ALL'):
     from safety.pii_service import scan_pii
-    if path and content_type == 'IMAGE':
-        from services.media_sanitizer import sanitize_image_in_place
-        sanitize_image_in_place(path)
     if caption and scan_pii(caption)['detected']:
         from safety.policy import Decision
         _unlink(path);_unlink(music_path)
@@ -58,6 +55,10 @@ def _create(content_type,payload,caption,category,is_story=False,is_reel=False,p
     d=decide(merged,safety_level(session['user_id']),Config.ADULT_HARD_BLOCK_THRESHOLD)
     if d.action=='BLOCK':
         record(session['user_id'],content_type,None,merged,d);parent_notify(session['user_id'],'CONTENT_BLOCKED',d.reason,'/parent/safety/');_unlink(path);_unlink(music_path);return None,d
+
+    if path and content_type == 'IMAGE':
+        from services.media_sanitizer import sanitize_image_in_place
+        sanitize_image_in_place(path)
 
     stored_path=path;stored_music=music_path;persisted=[]
     try:

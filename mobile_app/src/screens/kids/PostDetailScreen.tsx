@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { addComment, blockUser, fetchConnections, fetchPostDetail, muteUser, sharePostToChat, submitReport, toggleLike, toggleSave, type CommentItem, type PostDetail } from '../../api/kidsSocial';
+import { addComment, blockUser, fetchConnections, fetchPostDetail, muteUser, submitReport, toggleLike, toggleSave, type CommentItem, type PostDetail } from '../../api/kidsSocial';
+import { sharePostToChat } from '../../api/kidsChat';
 import { useAuth } from '../../auth/AuthProvider';
 import { VideoMedia } from '../../kids/VideoMedia';
 import type { ChildScreenProps } from '../../navigation/types';

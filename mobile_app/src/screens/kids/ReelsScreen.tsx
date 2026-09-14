@@ -138,7 +138,7 @@ const styles = StyleSheet.create({
   posterOverlay: { ...StyleSheet.absoluteFill, width: '100%', height: '100%' },
   errorOverlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: 'rgba(0,0,0,0.72)' },
   errorText: { color: colors.surface, fontWeight: '700' },
-  paused: { ...StyleSheet.absoluteFillObject, alignItems: 'center', justifyContent: 'center' },
+  paused: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   pauseGlyph: { color: colors.surface, fontSize: 44, fontWeight: '800' },
   pauseLabel: { color: colors.surface, fontWeight: '700' },
   quickActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingVertical: spacing.sm },

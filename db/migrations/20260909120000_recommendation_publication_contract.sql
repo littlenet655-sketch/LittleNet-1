@@ -1,3 +1,5 @@
+-- migrate:up
+
 -- Submission-critical publication freshness and explainable recommendation feedback.
 CREATE TABLE IF NOT EXISTS recommendation_signals (
   signal_id BIGSERIAL PRIMARY KEY,
@@ -17,3 +19,10 @@ CREATE INDEX IF NOT EXISTS idx_recommendation_signals_child_source
 
 ALTER TABLE content_impressions
   ADD COLUMN IF NOT EXISTS replay_count INTEGER NOT NULL DEFAULT 0;
+
+-- migrate:down
+
+ALTER TABLE content_impressions
+  DROP COLUMN IF EXISTS replay_count;
+
+DROP TABLE IF EXISTS recommendation_signals;
