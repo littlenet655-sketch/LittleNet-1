@@ -12,6 +12,7 @@ def test_content_search_indexes_captions_hashtags_and_approved_comments():
     source = text("child/search_routes.py")
     assert "p.caption" in source
     assert "comments c" in source
+    assert "post_tags pt" in source
     assert "c.moderation_status='ALLOWED'" in source
     assert "websearch_to_tsquery('simple'" in source
     assert "regexp_matches" in source
@@ -21,7 +22,10 @@ def test_content_search_indexes_captions_hashtags_and_approved_comments():
 def test_content_search_never_bypasses_child_visibility_policy():
     source = text("child/search_routes.py")
     assert "p.moderation_status='ALLOWED'" in source
+    assert "p.processing_status='ALLOWED'" in source
     assert "p.is_safe=TRUE" in source
+    assert "~* s.tag_regex" in source
+    assert "p.child_id=ANY(%s::int[])" in source
     assert "p.is_story=FALSE" in source
     assert "p.content_category=ANY(%s)" in source
     assert "p.audience_age_group='ALL'" in source
@@ -29,6 +33,16 @@ def test_content_search_never_bypasses_child_visibility_policy():
     assert "hidden_commenters" in source
     assert "blocked_users" in source
     assert "muted_users" in source
+
+
+def test_mobile_explore_uses_db_search_and_discoverable_author_scope():
+    mobile = text("mobile/api.py")
+    social = text("services/social.py")
+    assert "search_visible_posts(uid, q, 30, allowed_author_ids=allowed_author_ids)" in mobile
+    assert "visible_hashtags(uid, q, 10, allowed_author_ids=allowed_author_ids)" in mobile
+    assert "allowed_author_ids = [uid] + discoverable_child_ids(uid)" in mobile
+    assert "allowed_child_ids = discoverable_child_ids(viewer_id)" in social
+    assert "p.child_id = ANY(%s::int[])" in social
 
 
 def test_discover_uses_real_database_hashtags_not_hardcoded_demo_tags():
