@@ -26,6 +26,8 @@ export type ChildStackParamList = {
   Conversations: undefined;
   Chat: { peerId: number; postId?: number };
   PostDetail: { postId: number };
+  SafetyCentre: undefined;
+  ReportHistory: undefined;
   OtherProfile: { targetId: number };
   ProcessingStatus: { postId: number };
 };

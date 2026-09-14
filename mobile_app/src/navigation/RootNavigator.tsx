@@ -18,6 +18,7 @@ import { ConversationsScreen } from '../screens/kids/ConversationsScreen';
 import { ChatScreen } from '../screens/kids/ChatScreen';
 import { CreateScreen } from '../screens/kids/CreateScreen';
 import { ProcessingStatusScreen } from '../screens/kids/ProcessingScreen';
+import { SafetyCentreScreen, ReportHistoryScreen } from '../screens/kids/SafetyScreens';
 import { CreateChildScreen } from '../screens/Parent';
 import {
   ParentActivityScreen,
@@ -109,6 +110,8 @@ function ChildNavigator() {
       <ChildStack.Screen name="Conversations" component={withGateSync(ConversationsScreen)} options={{ title: 'Messages' }} />
       <ChildStack.Screen name="Chat" component={withGateSync(ChatScreen)} options={{ title: 'Chat' }} />
       <ChildStack.Screen name="PostDetail" component={withGateSync(PostDetailScreen)} options={{ title: 'Post' }} />
+      <ChildStack.Screen name="SafetyCentre" component={withGateSync(SafetyCentreScreen)} options={{ title: 'Safety Centre' }} />
+      <ChildStack.Screen name="ReportHistory" component={withGateSync(ReportHistoryScreen)} options={{ title: 'Report history' }} />
       <ChildStack.Screen name="OtherProfile" component={withGateSync(OtherProfileScreen)} options={{ title: 'Profile' }} />
       <ChildStack.Screen name="ProcessingStatus" component={withGateSync(ProcessingStatusScreen)} options={{ title: 'Safety check' }} />
     </ChildStack.Navigator>
