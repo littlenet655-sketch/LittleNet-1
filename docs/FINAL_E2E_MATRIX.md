@@ -12,12 +12,12 @@ Verified on 2026-09-14 against commit `4f9da440` and the subsequent external val
 - [LittleNet CI](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761242142): source audit, 347 backend tests, dependency/security checks, and Gitleaks passed.
 - [Disposable PostgreSQL role E2E](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761243565): fresh schema/migrations and authenticated Child/Parent/Admin smoke passed.
 - [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761244826): 77 tests, typecheck, Android export, and Expo dependency check passed.
-- Modal authentication succeeded for the `netlittle2` workspace; `littlenet-web` and `littlenet-ai` were deployed, both expected volumes were present, and the active-container list was empty before and after the bounded probe.
+- Modal authentication succeeded for the `netlittle2` workspace; `littlenet-web` and `littlenet-ai` were deployed, both expected volumes were present, and the protected AI probe was rerun with the matched live web/AI secret configuration. The existing AI and web apps were redeployed without changing their names or scale-to-zero settings, and the container list was empty after the configured idle window.
 
 | Journey | Status | Required evidence |
 |---|---|---|
-| Parent registration | FAIL | Live Modal request with the approved test inbox returned HTTP 200 and created the pending-registration response, but `email_sent=false`; the journey cannot proceed to OTP. |
-| Parent email OTP send/verify/resend | FAIL | Live Resend-backed registration was attempted with `E2E_TEST_EMAIL`; no OTP was delivered (`email_sent=false`), so verify/resend could not be completed. |
+| Parent registration | PASS | Live Modal request using a unique plus-address of the approved E2E inbox returned HTTP 200, `ok=true`, `email_sent=true`, and a pending token. |
+| Parent email OTP send/verify/resend | PASS | The same live registration returned `email_sent=true`; mobile resend returned HTTP 200 with `ok=true`; Resend reported `littlenet.in` verified and the newest OTP message `last_event=delivered`; the delivered code verified through the mobile API with HTTP 200 and `ok=true`. |
 | Guardian liveness/adult verification | UNVERIFIED | valid + spoof/failure tests |
 | Child creation by verified parent | UNVERIFIED | ownership + duplicate validation |
 | Child face enrollment | UNVERIFIED | real valid embedding persisted; invalid/liveness failure rejected |
@@ -78,9 +78,9 @@ Verified on 2026-09-14 against commit `4f9da440` and the subsequent external val
 | R2 isolated object round-trip | PASS | Submission-readiness prefix upload, HEAD, GET, and DELETE completed with cleanup. |
 | R2 full synthetic media lifecycle | PASS | Signed upload to quarantine, private REVIEW delivery, ALLOW sanitization/promotion/readback, BLOCK cleanup, and test-object cleanup passed with synthetic media. |
 | Modal workspace/app/volume access | PASS | Authenticated `netlittle2` inspection found `littlenet-web`, `littlenet-ai`, `littlenet-uploads`, and `littlenet-model-cache`. |
-| Modal AI readiness/authentication | FAIL | Bounded `/healthz` probe was not ready and the synthetic image moderation request returned HTTP 401; no secrets were printed or changed. |
-| Modal idle cost guard | PASS | Active-container list was empty after the bounded probe and idle wait. |
-| Real Resend inbox OTP | FAIL | `E2E_TEST_EMAIL` is present and a live registration was attempted, but the backend returned `email_sent=false`; no OTP verification evidence exists. |
+| Modal AI readiness/authentication | PASS | A non-disclosing fingerprint comparison found `AI_SHARED_SECRET` present and equal in `littlenet-web-secrets` and `littlenet-ai-secrets` (64 characters; no values printed or rotated). After redeploying the existing apps, the protected `/healthz` returned HTTP 200 with `ok=true`, a synthetic TEXT `/ai/moderate` request returned HTTP 200 with populated safety signals, and web `/readyz` returned HTTP 200/ready. No GPU warmup was run. |
+| Modal idle cost guard | PASS | `littlenet-ai` had one container immediately after the probe, then `modal container list --app-id ap-Blh94Ec2SPFf3y4nYHxsJz --json` returned `[]` after a 75-second idle wait; the AI function is configured with `scaledown_window=60` and `min_containers=0`. |
+| Real Resend inbox OTP | PASS | After refreshing the invalid Resend credential, `littlenet.in` reported `verified`, the live API returned `email_sent=true`, resend returned HTTP 200, Resend reported the newest message `last_event=delivered`, and the code completed mobile verification. The authorized Gmail connection exposed a different/empty mailbox, so direct Gmail-body evidence is not claimed. |
 | Moderation benchmark calibration | PASS | Six-row lawful synthetic calibration sample: exact-action agreement 0.666667, macro-F1 0.666667; ALLOW precision/recall 1.0/1.0, REVIEW 0.5/0.5, BLOCK 0.5/0.5. This is not production accuracy. |
 | EAS authentication/project link | PASS | `eas-cli whoami --non-interactive` authenticated as `akshu1245`; the existing project `c4ce834d-fd50-4504-a311-820c3372b6dc` was linked without creating a project. |
 | EAS preview APK build | PASS | Existing-project preview build `914dc2c5-740b-4f2e-aa2d-40e0ba0566e8` finished successfully for `com.littlenet.app`; artifact: https://expo.dev/artifacts/eas/Pak-g5Mj08VCdNHHiew-ZHgnSMDEHDzV2vNaqJ5w_FU.apk |
