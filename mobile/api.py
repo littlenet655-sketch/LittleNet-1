@@ -33,6 +33,7 @@ from child.service import (
     can_discover_child,
     counts,
     create_child_profile,
+    discoverable_child_ids,
     discoverable_children,
     follow_child,
     get_child_profile,
@@ -91,6 +92,7 @@ from services.social import (
     visible_posts,
     visible_profile_posts,
 )
+from child.search_routes import search_visible_posts, visible_hashtags
 from services.audit import log
 from services.usage import close_session, heartbeat, lock_state, minutes_today, online_state, start_session
 
@@ -2783,15 +2785,11 @@ def register_mobile_api(bp):
             row.pop("profile_picture", None)
             out_kids.append(_clean(row))
 
-        posts = discoverable_posts(uid, False, 30, 0)
+        allowed_author_ids = [uid] + discoverable_child_ids(uid)
         if q:
-            needle = q.lstrip("#").casefold()
-            posts = [
-                p for p in posts
-                if needle in str(p.get("caption") or "").casefold()
-                or needle in str(p.get("content_category") or "").casefold()
-                or needle in str(p.get("full_name") or "").casefold()
-            ]
+            posts = search_visible_posts(uid, q, 30, allowed_author_ids=allowed_author_ids)
+        else:
+            posts = discoverable_posts(uid, False, 30, 0)
 
         curated = search_curated_content(uid, q, limit=20) if q else []
         for item in curated:
@@ -2805,5 +2803,6 @@ def register_mobile_api(bp):
             pii_warning=False,
             children=out_kids,
             posts=[_post_json(p, uid) for p in posts],
+            hashtags=_clean(visible_hashtags(uid, q, 10, allowed_author_ids=allowed_author_ids)),
             curated=_clean(curated),
         )
