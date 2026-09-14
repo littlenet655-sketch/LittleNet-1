@@ -36,6 +36,12 @@
           "microphonePermission": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c4ce834d-fd50-4504-a311-820c3372b6dc"
+      }
+    },
+    "owner": "akshu1245s-team"
   }
 }
