@@ -89,6 +89,16 @@ _Last audited: 2026-09-14 against Google Stitch ZIP and React Native branch `fea
 | 60 | Admin Review & AI Evidence | `59_60_admin_moderation_ai_evidence_instagram_clone/` | `mobile_app/src/screens/admin/AdminScreens.tsx` | 68% | Private media/text evidence, risk/status, notes and approve/block/escalate actions are wired; model-signal visualization is not returned | IN PROGRESS |
 | 61 | Settings & Guardian Preferences | `61_settings_safety_preferences/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 50% | Language/security groups and linked-guardian status presentation | PARTIAL |
 
+## Release evidence note
+
+The 2026-09-14 source-level release checks pass for the current mobile
+candidate: 80 mobile tests, TypeScript typecheck, Android export, and Expo
+dependency alignment. Expo Doctor remains 19/21 because of tool metadata
+warnings; this matrix does not treat those warnings as proof of native
+incompatibility. Physical Android evidence is still `DEVICE-UNVERIFIED`, and
+no visual row is upgraded to `COMPLETE` without a device or emulator run for
+critical interactions.
+
 ## Completion rule
 
 A row can move to **COMPLETE** only when its visible states match the corresponding Stitch screenshot/HTML at a mobile viewport, all existing API/security behavior remains wired, TypeScript and React Native tests pass, and the interaction is included in device or emulator evidence where the state is critical.
