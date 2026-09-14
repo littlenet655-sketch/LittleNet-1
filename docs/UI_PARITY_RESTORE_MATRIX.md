@@ -1,0 +1,94 @@
+# UI Parity Restore Matrix
+
+_Last audited: 2026-09-14 against Google Stitch ZIP and React Native branch `feature/submission-readiness-fixes`._
+
+## Authority and scoring
+
+- **Primary visual authority:** `.conversation/attached_assets/stitch_instagram_ui_clone_1789325739406.zip`
+- **Functional implementation:** `mobile_app/` (React Native + Expo)
+- **Secondary gap reference only:** `feature/submission-rebuild-v2/mobile_flutter/`
+- Percentages are conservative visual/interaction parity estimates, not functional test results.
+- A consolidated React Native screen may implement several Stitch states. Rows remain separate so missing sheets, editors and warning states cannot be hidden by route consolidation.
+- `IN PROGRESS` identifies screens included in the current shared visual restoration pass. It does not mean final parity is complete.
+
+## Global Stitch contract
+
+| Area | Stitch requirement | React Native restoration target |
+|---|---|---|
+| Brand/action | `#0095F6`, pressed `#1877F2` | Shared semantic tokens; primary CTAs and active navigation |
+| Surfaces | `#FFFFFF`, scaffold `#FAFAFA` | Flat, zero-shadow surfaces with media-led composition |
+| Text/dividers | `#262626`, muted `#737373`/`#8E8E8E`, line `#DBDBDB` | Compact hierarchy and hairline separators |
+| Safety | ALLOW `#00BA88`, REVIEW `#F59E0B`, BLOCK/heart `#ED4956` | Shared status colors and explanatory states |
+| Geometry | 8pt grid, 8px controls, circular avatars, edge-to-edge media | Replace oversized cards/pills where Stitch is compact |
+| Navigation | 44–48px top bars; 50–54px five-item bottom bar | Compact Instagram-style app chrome |
+| Stories | Orange/pink/violet unread ring; gray seen ring | Shared story-ring component and segmented viewer progress |
+
+## 61-state matrix
+
+| # | Final screen/state | Stitch source folder | Current React Native screen | Parity | Missing visual/interaction elements | Status |
+|---:|---|---|---|---:|---|---|
+| 01 | Splash Screen | `01_03_splash_parent_login/` | `mobile_app/src/screens/WelcomeLogin.tsx` | 45% | Logo-led splash timing, animation and exact auto-route presentation | PARTIAL |
+| 02 | Choose User / Role Switcher | `02_04_choose_user_child_login/` | `mobile_app/src/screens/WelcomeLogin.tsx` | 55% | Stitch role cards, compact app bar and exact child/parent artwork | PARTIAL |
+| 03 | Parent Login & Signup | `01_03_splash_parent_login/` | `mobile_app/src/screens/WelcomeLogin.tsx; mobile_app/src/screens/ParentOnboarding.tsx` | 55% | Exact Stitch form density, password recovery placement and OTP transition styling | PARTIAL |
+| 04 | Child Login / Face Login | `01_02_04_login_child_face_login_instagram_clone/` | `mobile_app/src/screens/WelcomeLogin.tsx; mobile_app/src/screens/ChildFace.tsx` | 55% | Role-specific header, face-login camera treatment and quick-switch presentation | PARTIAL |
+| 05 | Create Child Account | `05_06_child_account_setup_guardian_consent/` | `mobile_app/src/screens/Parent.tsx` | 60% | Avatar/interest selection and Stitch step hierarchy | PARTIAL |
+| 06 | Parent-Child Linking & Consent | `05_06_child_account_setup_guardian_consent/` | `mobile_app/src/screens/Parent.tsx` | 50% | Pairing/consent visual state and completion confirmation | PARTIAL |
+| 07 | Face Enrollment / Liveness | `07_face_enrollment_liveness_scan/` | `mobile_app/src/screens/ChildFace.tsx` | 65% | Oval camera frame, segmented progress and exact liveness guidance | PARTIAL |
+| 08 | Kids Home Feed | `08_kids_home_feed_instagram_clone/` | `mobile_app/src/screens/kids/FeedScreen.tsx` | 60% | Exact compact header, edge-to-edge media/actions and story-ring treatment | IN PROGRESS |
+| 09 | Feed Tabs (For You/Friends/Learn) | `08_kids_home_feed_instagram_clone/` | `mobile_app/src/screens/kids/FeedScreen.tsx` | 35% | Inline three-state selector and per-tab empty/loading states | PARTIAL |
+| 10 | Post Detail | `10_11_post_detail_safe_comments_instagram_clone/` | `mobile_app/src/screens/kids/PostDetailScreen.tsx` | 55% | Edge-to-edge media, action rail and creator menu geometry | PARTIAL |
+| 11 | Safe Comments & Replies | `10_11_post_detail_safe_comments_instagram_clone/` | `mobile_app/src/screens/kids/PostDetailScreen.tsx` | 40% | Bottom-sheet presentation, reply hierarchy and PII warning state | PARTIAL |
+| 12 | Create Post & Media Picker | `12_create_post_media_picker_instagram_clone/` | `mobile_app/src/screens/kids/CreateScreen.tsx` | 50% | Grid picker, multi-select state, audience sheet and compact toolbar | PARTIAL |
+| 13 | Post Preview & AI Safety Check | `13_50_post_preview_ai_safety_check/` | `mobile_app/src/screens/kids/ProcessingScreen.tsx` | 50% | Preview composition plus ALLOW/REVIEW/BLOCK evidence cards | PARTIAL |
+| 14 | Share / Direct Send Sheet | `14_share_send_direct_sheet_instagram_clone/` | `mobile_app/src/screens/kids/ChatScreen.tsx` | 10% | Dedicated bottom sheet, recipient search, avatars and sent states | MISSING DEDICATED UI |
+| 15 | Report / Hide Options Sheet | `15_49_report_options_sheet_instagram_clone/` | `mobile_app/src/screens/kids/PostDetailScreen.tsx` | 15% | Dedicated action sheet for hide/report/block/mute | MISSING DEDICATED UI |
+| 16 | Story Viewer | `16_story_viewer_instagram_clone/` | `mobile_app/src/screens/kids/StoriesScreen.tsx` | 50% | Full-screen media, segmented timing, reactions and pause/resume | IN PROGRESS |
+| 17 | Create Story Camera | `17_18_story_camera_creator_instagram_clone/` | `mobile_app/src/screens/kids/CreateScreen.tsx` | 35% | Full-screen camera controls, flash/flip and shutter presentation | PARTIAL |
+| 18 | Story Editor & Stickers | `18_19_story_editor_stickers/` | `mobile_app/src/screens/kids/CreateScreen.tsx` | 10% | Overlay text, stickers, drawing and undo/redo editor | MISSING DEDICATED UI |
+| 19 | Story Safety Check & Publish | `18_19_story_editor_stickers/` | `mobile_app/src/screens/kids/ProcessingScreen.tsx` | 35% | Story-specific preview, safety state and publish confirmation | PARTIAL |
+| 20 | Safe Reels Feed | `20_safe_reels_feed_instagram_clone/` | `mobile_app/src/screens/kids/ReelsScreen.tsx` | 55% | Full-screen paging, right action rail and audio attribution | IN PROGRESS |
+| 21 | Reel Comments | `10_11_post_detail_safe_comments_instagram_clone/` | `mobile_app/src/screens/kids/PostDetailScreen.tsx` | 25% | Reel-overlay comment sheet and keyboard state | PARTIAL |
+| 22 | Create Reel Studio | `22_23_create_reel_studio_instagram_clone/` | `mobile_app/src/screens/kids/CreateScreen.tsx` | 35% | Recording timer, hands-free/flip controls and clip manager | PARTIAL |
+| 23 | Reel Editor | `22_23_create_reel_studio_instagram_clone/` | `mobile_app/src/screens/kids/CreateScreen.tsx` | 10% | Clip timeline, trim controls, overlays and audio-level UI | MISSING DEDICATED UI |
+| 24 | Reel Preview & Moderation | `24_reel_preview_moderation/` | `mobile_app/src/screens/kids/ProcessingScreen.tsx` | 35% | 9:16 preview, safety evidence breakdown and edit/publish actions | PARTIAL |
+| 25 | Reel Detail & Audio Page | `25_reel_detail_audio_page/` | `mobile_app/src/screens/kids/ReelsScreen.tsx` | 10% | Audio detail route, related reels grid and Use Audio action | MISSING DEDICATED UI |
+| 26 | Explore Grid | `26_27_explore_safe_search_instagram_clone/` | `mobile_app/src/screens/kids/DiscoverScreen.tsx` | 55% | Staggered edge-to-edge media grid and category presentation | PARTIAL |
+| 27 | Safe Search Input | `26_27_explore_safe_search_instagram_clone/` | `mobile_app/src/screens/kids/DiscoverScreen.tsx` | 55% | Exact search bar, recent searches and People/Posts/Reels/Learn tabs | PARTIAL |
+| 28 | Safe Search Results | `28_29_safe_search_blocked_warning/` | `mobile_app/src/screens/kids/DiscoverScreen.tsx` | 40% | Grouped result cards, follow states and project results | PARTIAL |
+| 29 | Blocked / Unsafe Search Warning | `28_29_safe_search_blocked_warning/` | `mobile_app/src/screens/kids/DiscoverScreen.tsx` | 30% | Full child-friendly intervention and Learn Why/Safety Centre actions | PARTIAL |
+| 30 | Messages & DM Inbox | `30_messages_dm_inbox_instagram_clone/` | `mobile_app/src/screens/kids/ConversationsScreen.tsx` | 55% | Exact inbox rows, unread badges, shield and new-message action | PARTIAL |
+| 31 | Direct Safe Chat | `31_35_direct_safe_chat_instagram_clone/` | `mobile_app/src/screens/kids/ChatScreen.tsx` | 55% | Stitch bubbles, sticky composer, attachment and long-press actions | PARTIAL |
+| 32 | New Message & Friend Picker | `32_new_message_friend_picker/` | `mobile_app/src/screens/kids/ConversationsScreen.tsx` | 20% | Dedicated approved-friend picker and group selection state | MISSING DEDICATED UI |
+| 33 | Group Chat | `33_group_chat_robotics_team/` | `mobile_app/src/screens/kids/ChatScreen.tsx` | 25% | Group header, participant state, shared attachment cards | PARTIAL |
+| 34 | Chat Details & Safety Controls | `34_chat_details_safety_instagram_clone/` | `mobile_app/src/screens/kids/ChatScreen.tsx` | 20% | Dedicated details route, shared media, mute/block/report controls | MISSING DEDICATED UI |
+| 35 | Unsafe Message / PII Warning | `31_35_safe_chat_message_warning/` | `mobile_app/src/screens/kids/ChatScreen.tsx` | 40% | Blurred quarantined bubble and Ask Parent explanation sheet | PARTIAL |
+| 36 | My Profile & Highlights | `36_my_profile_highlights_rebuilt/` | `mobile_app/src/screens/kids/OwnProfileScreen.tsx` | 55% | Exact profile header, highlights carousel and three-tab grid | IN PROGRESS |
+| 37 | Other User Profile | `37_other_user_profile_maya_draws/` | `mobile_app/src/screens/kids/OtherProfileScreen.tsx` | 50% | Mutuals, requested/follow state and Stitch grid geometry | PARTIAL |
+| 38 | Edit Profile | `38_edit_profile/` | `mobile_app/src/screens/kids/OwnProfileScreen.tsx` | 10% | Dedicated edit form, avatar picker and age-locked interests | MISSING DEDICATED UI |
+| 39 | Followers & Following Directory | `39_40_friends_directory_requests/` | `mobile_app/src/screens/kids/OtherProfileScreen.tsx` | 10% | Dedicated directory tabs and relationship actions | MISSING DEDICATED UI |
+| 40 | Friend / Follow Requests | `39_40_followers_requests_instagram_clone/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 25% | Child-facing request list and accept/decline/block presentation | PARTIAL |
+| 41 | Saved Content Hub | `41_saved_content_posts_reels_learning/` | `mobile_app/src/screens/kids/OwnProfileScreen.tsx` | 10% | Dedicated Posts/Reels/Learning tabs and category chips | MISSING DEDICATED UI |
+| 42 | Notifications Centre | `42_notifications_centre_instagram_clone/` | `mobile_app/src/screens/kids/NotificationsScreen.tsx` | 60% | Category filters, thumbnails, follow actions and safety styling | PARTIAL |
+| 43 | Learning Hub & Quizzes | `43_learning_hub_quizzes_instagram_clone/` | `mobile_app/src/screens/Quiz.tsx` | 40% | Topic hub, streak, active challenge cards and subject filters | PARTIAL |
+| 44 | Educational Feed & Reels | `44_45_educational_feed_quiz_hub/` | `mobile_app/src/screens/Quiz.tsx` | 15% | Dedicated educational playlist and in-video prompts | MISSING DEDICATED UI |
+| 45 | Quiz List & Challenges | `44_45_educational_feed_quiz_hub/` | `mobile_app/src/screens/Quiz.tsx` | 40% | Filterable quiz/challenge list and difficulty chips | PARTIAL |
+| 46 | Quiz Play & Results | `46_47_quiz_play_challenges_instagram_clone/` | `mobile_app/src/screens/Quiz.tsx` | 60% | Exact progress, answer feedback, results/XP celebration | PARTIAL |
+| 47 | Learning Challenges & Missions | `47_learning_challenges_missions/` | `mobile_app/src/screens/Quiz.tsx` | 20% | Weekly missions route, badge progress and milestones | MISSING DEDICATED UI |
+| 48 | Safety Centre | `48_49_safety_centre_report_instagram_clone/` | `mobile_app/src/screens/kids/NotificationsScreen.tsx` | 10% | Dedicated resources, quick report and parent-help route | MISSING DEDICATED UI |
+| 49 | Report User / Content Flow | `49_50_safety_report_moderation_flow/` | `mobile_app/src/screens/kids/PostDetailScreen.tsx` | 20% | Universal reason picker, confirmation and report status | MISSING DEDICATED UI |
+| 50 | Moderation Result | `13_50_post_preview_ai_safety_check/` | `mobile_app/src/screens/kids/ProcessingScreen.tsx` | 45% | Full ALLOW/REVIEW/BLOCK explanation and action variants | PARTIAL |
+| 51 | Report History & Status | `51_safety_report_history_status/` | `No current React Native screen` | 0% | Entire ticket-history route and status timeline | MISSING |
+| 52 | Parent Dashboard | `52_53_54_parent_dashboard_alerts_instagram_clone/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 60% | Child switcher, circular usage gauge and pause-app treatment | IN PROGRESS |
+| 53 | Child Activity Telemetry | `53_54_parent_activity_alerts/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 55% | Usage graph, recent contacts and quiz telemetry visualizations | PARTIAL |
+| 54 | Parent Alerts | `53_54_parent_activity_alerts/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 50% | Priority grouping, safety thumbnails and action hierarchy | PARTIAL |
+| 55 | Parent Review & Flagged Items | `55_parent_review_moderation/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 65% | Split evidence layout, reason chips and exact approve/reject states | PARTIAL |
+| 56 | Screen-Time Dashboard | `56_57_61_screen_time_smart_controls_instagram_clone/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 60% | Usage bars, schedule visualization and day selector | PARTIAL |
+| 57 | Smart Controls & Toggles | `56_57_61_screen_time_smart_controls_instagram_clone/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 65% | Grouped Stitch switches, descriptions and save feedback | PARTIAL |
+| 58 | Admin Safety Operations Dashboard | `58_admin_safety_operations_dashboard/` | `mobile_app/src/screens/admin/AdminScreens.tsx` | 65% | Dense operations metrics, incident priority and accuracy presentation | IN PROGRESS |
+| 59 | Admin Moderation Queue | `59_60_admin_moderation_ai_evidence_instagram_clone/` | `mobile_app/src/screens/admin/AdminScreens.tsx` | 60% | Filter chips, severity indicators and compact triage rows | IN PROGRESS |
+| 60 | Admin Review & AI Evidence | `59_60_admin_moderation_ai_evidence_instagram_clone/` | `mobile_app/src/screens/admin/AdminScreens.tsx` | 60% | Evidence visualization, model signals and escalation hierarchy | IN PROGRESS |
+| 61 | Settings & Guardian Preferences | `61_settings_safety_preferences/` | `mobile_app/src/screens/parent/ParentScreens.tsx` | 50% | Language/security groups and linked-guardian status presentation | PARTIAL |
+
+## Completion rule
+
+A row can move to **COMPLETE** only when its visible states match the corresponding Stitch screenshot/HTML at a mobile viewport, all existing API/security behavior remains wired, TypeScript and React Native tests pass, and the interaction is included in device or emulator evidence where the state is critical.

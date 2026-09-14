@@ -39,10 +39,11 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const isVideo = current.media_type?.toUpperCase() === 'VIDEO';
   return (
     <Screen>
-      <ScrollView horizontal style={styles.tray}>
+      <Text style={styles.heading}>Stories</Text>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tray}>
         {stories.map((s, i) => (
           <Pressable key={String(s.post_id ?? i)} onPress={() => setIndex(i)} style={[styles.ring, i === index && styles.active]}>
-            <Avatar uri={s.avatar_url} name={s.full_name ?? 'F'} size={48} />
+             <View style={styles.ringOuter}><View style={styles.ringInner}><Avatar uri={s.avatar_url} name={s.full_name ?? 'F'} size={52} /></View></View>
           </Pressable>
         ))}
       </ScrollView>
@@ -62,11 +63,14 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 }
 
 const styles = StyleSheet.create({
-  tray: { maxHeight: 70 },
-  ring: { marginRight: 10, opacity: 0.7 },
-  active: { opacity: 1, borderWidth: 2, borderColor: colors.brand, borderRadius: 28 },
-  viewer: { marginTop: spacing.md, alignItems: 'center' },
-  media: { width: '100%', height: 380, borderRadius: radius.lg, backgroundColor: colors.line },
+  heading: { fontSize: 20, fontWeight: '700', color: colors.ink, paddingHorizontal: spacing.md, marginBottom: spacing.sm },
+  tray: { maxHeight: 78, paddingHorizontal: spacing.md },
+  ring: { marginRight: 12, opacity: 0.7 },
+  ringOuter: { padding: 2, borderRadius: 31, backgroundColor: '#DD2A7B' },
+  ringInner: { padding: 2, borderRadius: 29, backgroundColor: colors.surface },
+  active: { opacity: 1 },
+  viewer: { marginTop: spacing.md, alignItems: 'center', backgroundColor: colors.ink },
+  media: { width: '100%', height: 500, borderRadius: 0, backgroundColor: colors.line },
   caption: { marginTop: 8, color: colors.ink },
   row: { flexDirection: 'row', gap: 10, marginTop: 10 },
   note: { marginTop: 8, color: colors.muted, textAlign: 'center' },

@@ -1,39 +1,39 @@
 export const colors = {
-  background: '#F6F8FF',
+  background: '#FAFAFA',
   surface: '#FFFFFF',
-  ink: '#17213C',
-  muted: '#64708A',
-  line: '#E3E8F5',
-  brand: '#4F46E5',
-  brandDark: '#3730A3',
-  teal: '#2563EB',
+  ink: '#262626',
+  muted: '#737373',
+  line: '#DBDBDB',
+  brand: '#0095F6',
+  brandDark: '#1877F2',
+  teal: '#00BA88',
   sunny: '#F59E0B',
-  danger: '#DC2626',
-  ok: '#15803D',
-  card: '#FBFCFF',
-  violet: '#7C3AED',
-  blue: '#2563EB',
+  danger: '#ED4956',
+  ok: '#00BA88',
+  card: '#FAFAFA',
+  violet: '#8134AF',
+  blue: '#0095F6',
 } as const;
 
 export const radius = {
   sm: 8,
-  md: 14,
-  lg: 22,
+  md: 8,
+  lg: 8,
   pill: 999,
 } as const;
 
 export const spacing = {
-  xs: 6,
-  sm: 10,
-  md: 16,
-  lg: 24,
-  xl: 32,
+  xs: 4,
+  sm: 8,
+  md: 12,
+  lg: 16,
+  xl: 24,
 } as const;
 
 export const type = {
-  hero: 30,
-  title: 22,
-  subtitle: 17,
-  body: 15,
-  caption: 13,
+  hero: 24,
+  title: 20,
+  subtitle: 16,
+  body: 14,
+  caption: 12,
 } as const;

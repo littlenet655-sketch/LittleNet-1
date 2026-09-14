@@ -126,20 +126,20 @@ def test_verify_adult_face_passes_on_real_adult():
 
 
 def test_resend_sandbox_is_distinguishable_from_verified():
-    """get_mail_status distinguishes sandbox from a verified domain."""
+    """get_mail_status rejects sandbox senders and accepts custom senders."""
     from mailg.send_email import get_mail_status
 
-    # Case 1: Unverified or default sandbox from address
+    # Case 1: Resend's shared sandbox sender is never submission-ready.
     with patch.dict(os.environ, {
         "RESEND_API_KEY": "re_test_123",
         "RESEND_FROM_EMAIL": "onboarding@resend.dev",
     }, clear=True):
         status = get_mail_status()
-        assert status["ok"] is True
-        assert status["mail_mode"] == "resend_sandbox"
+        assert status["ok"] is False
+        assert status["mail_mode"] == "not_configured"
         assert status["is_production_ready"] is False
 
-    # Case 2: Custom domain without RESEND_DOMAIN_VERIFIED=1
+    # Case 2: A custom sender is accepted without the removed legacy flag.
     with patch.dict(os.environ, {
         "RESEND_API_KEY": "re_test_123",
         "RESEND_FROM_EMAIL": "no-reply@devpluse.in",
@@ -147,10 +147,10 @@ def test_resend_sandbox_is_distinguishable_from_verified():
     }, clear=True):
         status = get_mail_status()
         assert status["ok"] is True
-        assert status["mail_mode"] == "resend_sandbox"
-        assert status["is_production_ready"] is False
+        assert status["mail_mode"] == "resend_verified"
+        assert status["is_production_ready"] is True
 
-    # Case 3: Verified custom production domain
+    # Case 3: The legacy flag is ignored in either direction.
     with patch.dict(os.environ, {
         "RESEND_API_KEY": "re_test_123",
         "RESEND_FROM_EMAIL": "safety@littlenet.safe",
@@ -170,7 +170,7 @@ def test_production_preflight_rejects_sandbox_only_mail():
     # Test that readyz rejects sandbox in STRICT_PRODUCTION_PREFLIGHT mode
     with patch.dict(os.environ, {
         "RESEND_API_KEY": "re_test_123",
-        "RESEND_FROM_EMAIL": "no-reply@devpluse.in",
+        "RESEND_FROM_EMAIL": "onboarding@resend.dev",
         "RESEND_DOMAIN_VERIFIED": "0",
         "STRICT_PRODUCTION_PREFLIGHT": "1",
     }, clear=True):
@@ -181,7 +181,7 @@ def test_production_preflight_rejects_sandbox_only_mail():
                     assert resp.status_code == 503
                     data = resp.get_json()
                     assert data["status"] == "degraded"
-                    assert data["mail_mode"] == "resend_sandbox"
+                    assert data["mail_mode"] == "not_configured"
 
     # And passes when verified
     with patch.dict(os.environ, {
