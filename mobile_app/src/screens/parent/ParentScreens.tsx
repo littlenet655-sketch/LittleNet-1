@@ -49,6 +49,8 @@ function RefreshingScroll({ refreshing, onRefresh, children }: { refreshing: boo
 }
 
 function ChildCard({ child, onPress }: { child: ParentChild; onPress?: () => void }) {
+  const limit = child.limit?.daily_limit_minutes;
+  const usageRatio = limit ? Math.min(child.minutes_today / limit, 1) : 0;
   return (
     <Pressable accessibilityRole={onPress ? 'button' : undefined} disabled={!onPress} onPress={onPress} style={styles.childCard}>
       <Avatar uri={child.avatar_url} name={child.full_name} size={52} />
@@ -56,8 +58,12 @@ function ChildCard({ child, onPress }: { child: ParentChild; onPress?: () => voi
         <Text style={styles.rowTitle}>{child.full_name}</Text>
         <Text style={styles.muted}>@{child.username} · {child.account_status}</Text>
         <Text style={styles.muted}>{child.minutes_today} min today · {child.quiz_7d.accuracy}% quiz accuracy</Text>
+        {limit ? <View style={styles.usageTrack} accessibilityLabel={`${child.minutes_today} of ${limit} minutes used`}><View style={[styles.usageFill, usageRatio >= 1 && styles.usageDanger, { width: `${Math.max(usageRatio * 100, 2)}%` }]} /></View> : null}
       </View>
-      {child.open_reviews > 0 ? <View style={styles.alertPill}><Text style={styles.alertText}>{child.open_reviews} review</Text></View> : null}
+      <View style={styles.childSignals}>
+        <View style={[styles.statusDot, child.presence?.online && styles.statusDotOnline]} />
+        {child.open_reviews > 0 ? <View style={styles.alertPill}><Text style={styles.alertText}>{child.open_reviews} review</Text></View> : null}
+      </View>
     </Pressable>
   );
 }
@@ -127,7 +133,7 @@ export function ParentSafetyScreen({ navigation }: ParentScreenProps<'ParentSafe
   const { session } = useAuth();
   const query = useQuery({ queryKey: parentKeys.safety, queryFn: () => fetchParentSafety(session?.token ?? ''), enabled: Boolean(session) });
   const events = query.data?.events ?? [];
-  return <Screen><FlatList data={events} keyExtractor={(event) => String(event.event_id)} refreshControl={<RefreshControl refreshing={query.isRefetching} onRefresh={() => void query.refetch()} />} ListHeaderComponent={<BrandHeader title="Safety review" subtitle="Only open review items belonging to your children appear here." />} ListEmptyComponent={query.isPending ? <LoadingState message="Loading safety reviews…" /> : query.isError ? <ErrorState message={errorText(query.error)} onRetry={() => void query.refetch()} /> : <EmptyState title="Review queue clear" body="Items needing your decision will appear here." />} renderItem={({ item: event }) => <Pressable accessibilityRole="button" style={styles.listCard} onPress={() => navigation.navigate('ParentReview', { eventId: event.event_id })}><View style={styles.rowBetween}><CategoryBadge label={event.content_type} /><TimeAgo value={event.created_at} /></View><Text style={styles.rowTitle}>{event.full_name ?? 'Your child'}</Text><Text style={styles.body}>{event.reason || 'LittleNet needs a parent decision.'}</Text></Pressable>} /></Screen>;
+  return <Screen><FlatList data={events} keyExtractor={(event) => String(event.event_id)} refreshControl={<RefreshControl refreshing={query.isRefetching} onRefresh={() => void query.refetch()} />} ListHeaderComponent={<BrandHeader title="Safety review" subtitle="Only open review items belonging to your children appear here." />} ListEmptyComponent={query.isPending ? <LoadingState message="Loading safety reviews…" /> : query.isError ? <ErrorState message={errorText(query.error)} onRetry={() => void query.refetch()} /> : <EmptyState title="Review queue clear" body="Items needing your decision will appear here." />} renderItem={({ item: event }) => <Pressable accessibilityRole="button" style={styles.listCard} onPress={() => navigation.navigate('ParentReview', { eventId: event.event_id })}><View style={styles.rowBetween}><RiskBadge score={event.risk_score} /><TimeAgo value={event.created_at} /></View><Text style={styles.rowTitle}>{event.full_name ?? 'Your child'}</Text><Text style={styles.body}>{event.reason || 'LittleNet needs a parent decision.'}</Text><Text style={styles.muted}>Evidence: {event.preview?.media_type ? humanize(event.preview.media_type) : 'text summary'} · Status: {humanize(event.status)}</Text></Pressable>} /></Screen>;
 }
 
 function ReviewMedia({ preview, token }: { preview?: ReviewPreview | null; token: string }) {
@@ -171,7 +177,9 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
   if (!childId) return <Screen><ScrollView><BrandHeader title="Screen time" subtitle="Choose a child to view current usage and set a server-enforced daily limit." /><AsyncBody query={dashboard}><SelectChild children={dashboard.data?.children ?? []} onPick={setChildId} /></AsyncBody></ScrollView></Screen>;
   if (!child) return <Screen><LoadingState message="Loading screen time…" /></Screen>;
   const valid = Number.isInteger(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 1440;
-  return <Screen><ScrollView><BrandHeader title={`${child.full_name}'s screen time`} subtitle={`${child.minutes_today} minutes used today. Overnight and active-session enforcement remains on the server.`} /><Card><Field label="Daily limit in minutes (1–1440)" value={minutes} onChangeText={setMinutes} keyboardType="number-pad" error={valid ? undefined : 'Enter a whole number from 1 to 1440.'} /><Toggle label="Strict limit" body="Lock Kids Mode when the daily allowance is reached." value={strict} onChange={setStrict} />{mutation.isSuccess ? <Notice tone="ok" message="Screen-time limit saved." /> : null}{mutation.error ? <Notice message={errorText(mutation.error)} /> : null}<Button label="Save screen time" disabled={!valid} loading={mutation.isPending} onPress={() => mutation.mutate()} /></Card></ScrollView></Screen>;
+  const limit = Number(minutes);
+  const usage = Math.min(child.minutes_today / Math.max(limit, 1), 1);
+  return <Screen><ScrollView><BrandHeader title={`${child.full_name}'s screen time`} subtitle={`${child.minutes_today} minutes used today. Overnight and active-session enforcement remains on the server.`} /><Card><View style={styles.usageSummary}><Text style={styles.usageNumber}>{child.minutes_today}</Text><Text style={styles.muted}>minutes used today</Text><View style={styles.largeUsageTrack}><View style={[styles.usageFill, usage >= 1 && styles.usageDanger, { width: `${Math.max(usage * 100, 2)}%` }]} /></View><Text style={styles.muted}>{limit || '—'} minute daily allowance</Text></View><Field label="Daily limit in minutes (1–1440)" value={minutes} onChangeText={setMinutes} keyboardType="number-pad" error={valid ? undefined : 'Enter a whole number from 1 to 1440.'} /><Toggle label="Strict limit" body="Lock Kids Mode when the daily allowance is reached." value={strict} onChange={setStrict} />{mutation.isSuccess ? <Notice tone="ok" message="Screen-time limit saved." /> : null}{mutation.error ? <Notice message={errorText(mutation.error)} /> : null}<Button label="Save screen time" disabled={!valid} loading={mutation.isPending} onPress={() => mutation.mutate()} /></Card></ScrollView></Screen>;
 }
 
 function Toggle({ label, body, value, onChange }: { label: string; body: string; value: boolean; onChange: (value: boolean) => void }) {
@@ -194,7 +202,7 @@ export function ParentControlsScreen({ route }: ParentScreenProps<'ParentControl
   const featureRows: Array<[keyof ParentControls, string, string]> = [
     ['allow_reels', 'Reels', 'Short-form videos'], ['allow_stories', 'Stories', '24-hour stories'], ['allow_messaging', 'Messages', 'Approved-friend chat'], ['allow_posting', 'Posting', 'Create posts, stories and reels'], ['allow_discover', 'Discover', 'Search and recommendations'],
   ];
-  return <Screen><ScrollView keyboardShouldPersistTaps="handled"><BrandHeader title="Feature controls" subtitle="Changes take effect on the next Kids request; no reinstall or relogin is required." /><Card>{featureRows.map(([key, label, body]) => <Toggle key={key} label={label} body={body} value={Boolean(draft[key])} onChange={(value) => set(key, value)} />)}<Toggle label="Educational-only feed" body="Limit the feed to learning-friendly categories." value={draft.educational_only_feed} onChange={(value) => set('educational_only_feed', value)} /><Toggle label="Quiet hours" body="Restrict Kids Mode during the configured window, including overnight windows." value={draft.quiet_hours_enabled} onChange={(value) => set('quiet_hours_enabled', value)} />{draft.quiet_hours_enabled ? <><Field label="Starts (24-hour HH:MM)" value={draft.quiet_start} onChangeText={(value) => set('quiet_start', value)} /><Field label="Ends (24-hour HH:MM)" value={draft.quiet_end} onChangeText={(value) => set('quiet_end', value)} /><Notice tone="info" message="For example, 21:00 to 07:00 runs overnight." /></> : null}</Card><Text style={styles.sectionTitle}>Allowed categories</Text><View style={styles.chips}>{(query.data?.categories ?? []).map((category) => { const selected = draft.allowed_categories.includes(category); return <Pressable key={category} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} style={[styles.chip, selected && styles.chipSelected]} onPress={() => set('allowed_categories', selected ? draft.allowed_categories.filter((item) => item !== category) : [...draft.allowed_categories, category])}><Text style={[styles.chipText, selected && styles.chipTextSelected]}>{category}</Text></Pressable>; })}</View>{mutation.isSuccess ? <Notice tone="ok" message="Controls saved and active." /> : null}{mutation.error ? <Notice message={errorText(mutation.error)} /> : null}<Button label="Save controls" disabled={!draft.allowed_categories.length} loading={mutation.isPending} onPress={() => mutation.mutate()} /></ScrollView></Screen>;
+  return <Screen><ScrollView keyboardShouldPersistTaps="handled"><BrandHeader title="Feature controls" subtitle="Changes take effect on the next Kids request; no reinstall or relogin is required." /><Text style={styles.sectionKicker}>CONTENT & SOCIAL</Text><Card>{featureRows.map(([key, label, body]) => <Toggle key={key} label={label} body={body} value={Boolean(draft[key])} onChange={(value) => set(key, value)} />)}</Card><Text style={styles.sectionKicker}>LEARNING & ROUTINES</Text><Card><Toggle label="Educational-only feed" body="Limit the feed to learning-friendly categories." value={draft.educational_only_feed} onChange={(value) => set('educational_only_feed', value)} /><Toggle label="Quiet hours" body="Restrict Kids Mode during the configured window, including overnight windows." value={draft.quiet_hours_enabled} onChange={(value) => set('quiet_hours_enabled', value)} />{draft.quiet_hours_enabled ? <><Field label="Starts (24-hour HH:MM)" value={draft.quiet_start} onChangeText={(value) => set('quiet_start', value)} /><Field label="Ends (24-hour HH:MM)" value={draft.quiet_end} onChangeText={(value) => set('quiet_end', value)} /><Notice tone="info" message="For example, 21:00 to 07:00 runs overnight." /></> : null}</Card><Text style={styles.sectionTitle}>Allowed categories</Text><View style={styles.chips}>{(query.data?.categories ?? []).map((category) => { const selected = draft.allowed_categories.includes(category); return <Pressable key={category} accessibilityRole="checkbox" accessibilityState={{ checked: selected }} style={[styles.chip, selected && styles.chipSelected]} onPress={() => set('allowed_categories', selected ? draft.allowed_categories.filter((item) => item !== category) : [...draft.allowed_categories, category])}><Text style={[styles.chipText, selected && styles.chipTextSelected]}>{category}</Text></Pressable>; })}</View>{mutation.isSuccess ? <Notice tone="ok" message="Controls saved and active." /> : null}{mutation.error ? <Notice message={errorText(mutation.error)} /> : null}<Button label="Save controls" disabled={!draft.allowed_categories.length} loading={mutation.isPending} onPress={() => mutation.mutate()} /></ScrollView></Screen>;
 }
 
 export function ParentFollowRequestsScreen(_props: ParentScreenProps<'FollowRequests'>) {
@@ -236,6 +244,12 @@ function humanize(value: string): string {
   return value.toLowerCase().split('_').map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
 }
 
+function RiskBadge({ score }: { score?: number | string | null }) {
+  const numeric = Number(score);
+  const tone = Number.isFinite(numeric) && numeric >= 0.7 ? 'danger' : Number.isFinite(numeric) && numeric >= 0.4 ? 'review' : 'safe';
+  return <View style={[styles.riskBadge, tone === 'danger' ? styles.riskDanger : tone === 'review' ? styles.riskReview : styles.riskSafe]}><Text style={styles.riskText}>{tone === 'safe' ? 'Review item' : `${tone === 'danger' ? 'High' : 'Review'} risk · ${String(score ?? 'not scored')}`}</Text></View>;
+}
+
 const styles = StyleSheet.create({
   flex: { flex: 1 },
   body: { color: colors.ink, fontSize: type.body, lineHeight: 22, marginTop: spacing.xs },
@@ -250,6 +264,21 @@ const styles = StyleSheet.create({
   menuCard: { minHeight: 64, padding: spacing.md, borderWidth: 1, borderColor: colors.line, borderRadius: radius.md, backgroundColor: colors.surface, justifyContent: 'center' },
   menuTitle: { color: colors.ink, fontSize: type.subtitle, fontWeight: '800' },
   childCard: { minHeight: 76, flexDirection: 'row', gap: spacing.sm, alignItems: 'center', backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.sm },
+  childSignals: { alignItems: 'flex-end', gap: spacing.sm },
+  statusDot: { width: 9, height: 9, borderRadius: 5, backgroundColor: colors.line },
+  statusDotOnline: { backgroundColor: colors.teal },
+  usageTrack: { height: 4, backgroundColor: colors.line, borderRadius: 4, overflow: 'hidden', marginTop: spacing.xs },
+  usageFill: { height: 4, backgroundColor: colors.brand, borderRadius: 4 },
+  usageDanger: { backgroundColor: colors.danger },
+  usageSummary: { padding: spacing.md, backgroundColor: '#EAF4FF', borderRadius: radius.md, marginBottom: spacing.sm },
+  usageNumber: { color: colors.brand, fontSize: 32, fontWeight: '900' },
+  largeUsageTrack: { height: 8, backgroundColor: '#CFE8FA', borderRadius: 8, overflow: 'hidden', marginVertical: spacing.sm },
+  sectionKicker: { color: colors.violet, fontSize: 11, fontWeight: '900', letterSpacing: 1.3, marginHorizontal: spacing.md, marginTop: spacing.sm, marginBottom: spacing.xs },
+  riskBadge: { paddingHorizontal: spacing.sm, paddingVertical: spacing.xs, borderRadius: radius.pill },
+  riskSafe: { backgroundColor: '#E7F6EC' },
+  riskReview: { backgroundColor: '#FFF4D6' },
+  riskDanger: { backgroundColor: '#FDECEC' },
+  riskText: { color: colors.ink, fontSize: 11, fontWeight: '800' },
   listCard: { backgroundColor: colors.surface, borderWidth: 1, borderColor: colors.line, borderRadius: radius.md, padding: spacing.md, marginBottom: spacing.sm },
   rowTitle: { color: colors.ink, fontWeight: '800', fontSize: type.body },
   rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: spacing.sm },
