@@ -30,10 +30,18 @@ def test_modal_docs_name_every_live_web_dependency_key():
         "R2_ACCESS_KEY_ID",
         "R2_SECRET_ACCESS_KEY",
         "R2_BUCKET",
-        "SMTP_USER",
-        "SMTP_PASSWORD",
-        "MAIL_EMAIL",
-        "MAIL_PASSWORD",
+        "RESEND_API_KEY",
+        "RESEND_FROM_EMAIL",
+        "RESEND_FROM_NAME",
     ]
     for key in required:
         assert key in docs, key
+
+
+def test_modal_docs_require_verified_resend_without_legacy_fallbacks():
+    docs = (ROOT / "MODAL_DEPLOYMENT.md").read_text(encoding="utf-8")
+    assert "RESEND_API_KEY" in docs
+    assert "RESEND_FROM_EMAIL" in docs
+    assert "RESEND_FROM_NAME" in docs
+    assert "SMTP_USER" not in docs
+    assert "MAIL_EMAIL" not in docs
