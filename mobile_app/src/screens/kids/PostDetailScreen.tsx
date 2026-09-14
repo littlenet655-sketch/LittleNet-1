@@ -70,7 +70,8 @@ export function PostDetailScreen({ route }: ChildScreenProps<'PostDetail'>) {
   }
 
   async function safetyAction(action: 'report' | 'block' | 'mute') {
-    if (!session || !post.child_id) return;
+    const creatorId = post?.child_id;
+    if (!session || !creatorId) return;
     if (action === 'report' && !reason) {
       setSafetyError('Choose a report reason before sending.');
       return;
@@ -79,8 +80,8 @@ export function PostDetailScreen({ route }: ChildScreenProps<'PostDetail'>) {
     setSafetyError('');
     try {
       if (action === 'report') await submitReport(session.token, 'POST', postId, reason);
-      if (action === 'block') await blockUser(session.token, post.child_id, 'BLOCK');
-      if (action === 'mute') await muteUser(session.token, post.child_id, 'MUTE');
+      if (action === 'block') await blockUser(session.token, creatorId, 'BLOCK');
+      if (action === 'mute') await muteUser(session.token, creatorId, 'MUTE');
       await invalidateSocialCaches([postId]);
       setSafetyOpen(false);
       setInfo(action === 'report' ? 'Report sent for safety review.' : action === 'block' ? 'Creator blocked.' : 'Creator muted.');
