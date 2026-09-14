@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { useCameraPermissions } from 'expo-camera';
 import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { ApiError } from '../api/client';
@@ -7,6 +7,7 @@ import { CameraBlockedError, CameraPermissionError } from './capture';
 import type { CapturedPhoto } from './capture';
 import { FacePrecheckError, precheckFace } from './facePrecheck';
 import { Button, Notice, errorText } from '../ui/components';
+import { NativeCameraView } from '../ui/nativeViews';
 import { colors, radius, spacing } from '../ui/tokens';
 
 interface CameraCaptureProps {
@@ -26,7 +27,7 @@ function canRetrySubmission(error: unknown): boolean {
  * ML Kit checks the captured frame before any bytes are sent to the backend.
  */
 export function CameraCapture({ label, busyLabel, busy = false, onCapture }: CameraCaptureProps) {
-  const cameraRef = useRef<CameraView>(null);
+  const cameraRef = useRef<React.ElementRef<typeof NativeCameraView>>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [working, setWorking] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
@@ -49,7 +50,7 @@ export function CameraCapture({ label, busyLabel, busy = false, onCapture }: Cam
     setError(null);
     let capturedPhoto: CapturedPhoto | null = null;
     try {
-      const shot = await cameraRef.current.takePictureAsync({ base64: true, exif: false, quality: 0.7 });
+      const shot = await cameraRef.current.takePicture({ base64: true, exif: false, quality: 0.7 });
       if (!shot?.base64) throw new Error('Could not read the camera photo. Please try again.');
       capturedPhoto = {
         base64: shot.base64,
@@ -109,7 +110,7 @@ export function CameraCapture({ label, busyLabel, busy = false, onCapture }: Cam
   return (
     <>
       <View style={styles.cameraFrame}>
-        <CameraView
+        <NativeCameraView
           ref={cameraRef}
           style={styles.camera}
           facing="front"
