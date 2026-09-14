@@ -74,6 +74,7 @@ Verified on 2026-09-13 against commit `2195cf4`:
 | React Native typecheck | PASS | CI `npm run typecheck` completed successfully. |
 | Android Expo export | PASS | CI bundled 965 modules and exported `mobile_app/dist`. This is not an APK/device run. |
 | Android critical E2E | UNVERIFIED | device/emulator journey evidence |
+| R2 isolated object round-trip | PASS | Submission-readiness prefix upload, HEAD, GET, and DELETE completed with cleanup; this does not replace quarantine/promotion/privacy validation. |
 | Modal idle cost guard | UNVERIFIED | zero idle containers after scaledown |
 | Routine health does not wake GPU | UNVERIFIED | billing/container evidence |
 | Final APK install/launch | UNVERIFIED | installed APK on Android device/emulator |

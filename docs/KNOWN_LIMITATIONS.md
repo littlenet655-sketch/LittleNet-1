@@ -9,5 +9,7 @@
 - Parent/Admin collection routes are intentionally bounded to 100 recent rows. They do not provide enterprise-scale reporting or arbitrary historical export.
 - The activity screen shows event categories and timestamps without exposing private message bodies or unrelated-user content.
 - Modal/R2/Neon production deployment, billing state, and zero-idle-container evidence are external operations and are not inferred from source tests.
+- An isolated R2 object round-trip was verified for the submission-readiness prefix. Full quarantine/promotion/privacy lifecycle evidence remains unverified, and the Modal CLI was unavailable in this workstation for app-state inspection.
+- Real Resend inbox delivery remains unverified because no approved recipient inbox was available in this session; the sender contract and fail-closed behavior are covered by CI/tests.
 - The previously exposed disposable Neon credential/branch still requires deletion or rotation by an authenticated Neon account owner; this workstation has no authenticated Neon CLI profile, so cleanup is not claimed.
 - `npm audit` reports 16 moderate and no high/critical findings. The incompatible transitive upgrade chains are documented in [DEPENDENCY_AUDIT.md](DEPENDENCY_AUDIT.md); no breaking `--force` downgrade was applied.
