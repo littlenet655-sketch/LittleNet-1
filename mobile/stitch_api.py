@@ -8,6 +8,7 @@ from database.connection import execute, fetch_all, fetch_one
 from extensions import csrf, limiter
 from mobile.api import _child_gate, _clean, _post_json, _profile_json, _require_mobile
 from services.social import can_interact, notify, parent_notify, post_visible_to, visible_profile_posts
+from services.recommendation_signals import record_signal
 
 
 def _gate():
@@ -148,6 +149,7 @@ def register_mobile_stitch_api(bp):
             (cid, uid, peer_id, post_id),
             returning=True,
         )
+        record_signal(uid, 'SOCIAL', post_id, 'SHARE')
         notify(peer_id, 'MESSAGE', f"{g.mobile_user.get('full_name') or 'A friend'} shared a post with you", f'/chat/{uid}/', uid)
         return jsonify(ok=True, message_id=int(row['child_message_id']))
 

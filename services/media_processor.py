@@ -399,6 +399,8 @@ def process_media_job(
                     worker_exec_token,
                 ),
             )
+            from services.publication_lifecycle import refresh_publication_visibility
+            refresh_publication_visibility(post_id, child_id, is_reel=bool(post.get("is_reel")))
             _notify_approved_followers(post_id, child_id, kind)
             block_and_cleanup_quarantine(post_id, object_key)
             return {

@@ -65,6 +65,7 @@ from safety.moderation_service import evaluate, record, safety_level
 from safety.pii_service import scan_pii
 from safety.policy import Decision, decide
 from services.behavior import behavior_summary
+from services.recommendation_signals import record_signal
 from services.controls import (
     SAFE_CATEGORIES,
     controls_for_child,
@@ -506,8 +507,9 @@ def _resolve_parent_review(
             post_id = int(event["content_id"])
             cur.execute("SELECT * FROM posts WHERE post_id=%s FOR UPDATE", (post_id,))
             p_row = cur.fetchone()
-            if p_row and p_row.get("source_media_path"):
+            if p_row:
                 kind = "reel" if p_row.get("is_reel") else ("story" if p_row.get("is_story") else "post")
+            if p_row and p_row.get("source_media_path"):
                 media_type = p_row.get("media_type") or "IMAGE"
                 if requested == "APPROVE":
                     from services.media_processor import sanitize_and_promote_media
@@ -605,12 +607,17 @@ def _resolve_parent_review(
         # Commit DB state FIRST before external notifications and storage mutations
         conn.commit()
 
-        if p_row and p_row.get("source_media_path"):
+        if p_row:
             post_id = int(p_row["post_id"])
-            from services.media_processor import block_and_cleanup_quarantine, _notify_approved_followers
             if requested == "APPROVE":
-                _notify_approved_followers(post_id, int(p_row["child_id"]), kind)
-            block_and_cleanup_quarantine(post_id, p_row["source_media_path"])
+                from services.publication_lifecycle import refresh_publication_visibility
+                refresh_publication_visibility(post_id, int(p_row["child_id"]), is_reel=bool(p_row.get("is_reel")))
+                if p_row.get("source_media_path"):
+                    from services.media_processor import _notify_approved_followers
+                    _notify_approved_followers(post_id, int(p_row["child_id"]), kind)
+            if p_row.get("source_media_path"):
+                from services.media_processor import block_and_cleanup_quarantine
+                block_and_cleanup_quarantine(post_id, p_row["source_media_path"])
 
         return True, requested
     except Exception:
@@ -1285,6 +1292,7 @@ def register_mobile_api(bp):
             unfollow_child(uid, child_id)
             return jsonify(ok=True, status="removed")
         follow_child(uid, child_id)
+        record_signal(uid, "CREATOR", child_id, "FOLLOW")
         parent_notify(uid, "FOLLOW_REQUEST", "A new connection request needs approval", "/parent/follow-requests/")
         return jsonify(ok=True, status="pending")
 
@@ -1399,6 +1407,7 @@ def register_mobile_api(bp):
         else:
             execute("INSERT INTO likes(post_id,child_id) VALUES(%s,%s)", (post_id, uid))
             liked = True
+            record_signal(uid, "SOCIAL", post_id, "LIKE")
         count = (fetch_one("SELECT COUNT(*) n FROM likes WHERE post_id=%s", (post_id,)) or {"n": 0})["n"]
         return jsonify(ok=True, liked=liked, likes=count)
 
@@ -1419,6 +1428,7 @@ def register_mobile_api(bp):
         else:
             execute("INSERT INTO saved_posts(child_id,post_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, post_id))
             saved = True
+            record_signal(uid, "SOCIAL", post_id, "SAVE")
         return jsonify(ok=True, saved=saved)
 
     @bp.route("/api/mobile/v1/kids/posts/<int:post_id>/comments", methods=["GET"])
@@ -1467,6 +1477,8 @@ def register_mobile_api(bp):
             (post_id, uid, text, "ALLOWED" if decision.action == "ALLOW" else "REVIEW"),
             returning=True,
         )
+        if decision.action == "ALLOW":
+            record_signal(uid, "SOCIAL", post_id, "COMMENT")
         record(uid, "COMMENT", row["comment_id"], signals, decision)
         if decision.action == "REVIEW":
             parent_notify(uid, "REVIEW_REQUIRED", "A comment needs review", "/parent/safety/")
@@ -1529,6 +1541,9 @@ def register_mobile_api(bp):
                     limit = Config.REEL_MAX_SECONDS if kind == "reel" else Config.STORY_MAX_SECONDS if kind == "story" else Config.VIDEO_MAX_SECONDS
                     if duration <= 0 or duration > limit:
                         return jsonify(error="video_duration_invalid", max_seconds=limit), 400
+                elif content_type == "IMAGE":
+                    from services.media_sanitizer import sanitize_image_in_place
+                    sanitize_image_in_place(path)
                 media_signals, _ = evaluate(uid, content_type, path)
             if content_type == "TEXT" and not caption:
                 return jsonify(error="media_or_caption_required"), 400
@@ -1589,6 +1604,9 @@ def register_mobile_api(bp):
             event = record(uid, content_type, row["post_id"], merged, decision)
             if decision.action == "REVIEW":
                 parent_notify(uid, "REVIEW_REQUIRED", "Content is waiting for your review", f"/parent/safety/?event={event}")
+            elif decision.action == "ALLOW":
+                from services.publication_lifecycle import refresh_publication_visibility
+                refresh_publication_visibility(row["post_id"], uid, is_reel=kind == "reel")
             return jsonify(ok=True, post_id=row["post_id"], status=decision.action)
         except Exception:
             if persisted and stored:
@@ -2208,6 +2226,7 @@ def register_mobile_api(bp):
             return jsonify(ok=True, blocked=False)
         execute("INSERT INTO blocked_users(blocker_id,blocked_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, target_id))
         execute("DELETE FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)", (uid, target_id, target_id, uid))
+        record_signal(uid, "CREATOR", target_id, "BLOCK")
         return jsonify(ok=True, blocked=True)
 
     @bp.route("/api/mobile/v1/kids/muted-users")
@@ -2243,6 +2262,7 @@ def register_mobile_api(bp):
             execute("DELETE FROM muted_users WHERE muter_id=%s AND muted_id=%s", (uid, target_id))
             return jsonify(ok=True, muted=False)
         execute("INSERT INTO muted_users(muter_id,muted_id) VALUES(%s,%s) ON CONFLICT DO NOTHING", (uid, target_id))
+        record_signal(uid, "CREATOR", target_id, "MUTE")
         return jsonify(ok=True, muted=True)
 
     @bp.route("/api/mobile/v1/kids/report", methods=["POST"])
@@ -2284,6 +2304,7 @@ def register_mobile_api(bp):
             "INSERT INTO reports(reporter_id, target_type, target_id, reason, details) VALUES(%s, %s, %s, %s, %s)",
             (uid, kind, tid, reason[:100], details[:2000]),
         )
+        record_signal(uid, "CREATOR" if kind == "USER" else "SOCIAL", tid, "REPORT")
         parent_notify(uid, "REPORT_FILED", f"Report submitted for {kind.lower()}", "/parent/safety/")
         return jsonify(ok=True)
 
@@ -2679,6 +2700,10 @@ def register_mobile_api(bp):
         completed = bool(data.get("completed", False))
         liked = bool(data.get("liked", False))
         saved = bool(data.get("saved", False))
+        try:
+            replay_count = max(0, min(20, int(data.get("replay_count", 0) or 0)))
+        except (TypeError, ValueError):
+            replay_count = 0
 
         state = feed_quiz_state(uid)
         if state.get("required"):
@@ -2686,7 +2711,8 @@ def register_mobile_api(bp):
 
         ok = record_feed_impression(
             uid, session_id, source_type, source_id, surface,
-            watched_ms=watched_ms, completed=completed, liked=liked, saved=saved
+            watched_ms=watched_ms, completed=completed, liked=liked, saved=saved,
+            replay_count=replay_count,
         )
         if not ok:
             return jsonify(error="invalid_session_item"), 403
@@ -2707,6 +2733,34 @@ def register_mobile_api(bp):
             quiz_required=False,
             posts_seen=view_res.get("posts_seen", 0),
         )
+
+    @bp.route("/api/mobile/v2/kids/recommendation-actions", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_recommendation_action():
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "").upper()
+        source_type = str(data.get("source_type") or "SOCIAL").upper()
+        try:
+            source_id = int(data.get("source_id"))
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_source_id"), 400
+        if action not in {"NOT_INTERESTED", "HIDE", "SEARCH_CLICK"}:
+            return jsonify(error="invalid_action"), 400
+        source_type = "CURATED" if source_type == "CURATED" else "SOCIAL"
+        if not post_visible_to(uid, source_id) and source_type == "SOCIAL":
+            return jsonify(error="post_not_found"), 404
+        if action == "SEARCH_CLICK" and source_type == "CURATED":
+            # Curated search results are authorized again by the normal
+            # publication/age/Parent Mode query before recording the click.
+            if not any(int(item["source_id"]) == source_id for item in search_curated_content(uid, str(data.get("query") or ""), 50)):
+                return jsonify(error="content_not_found"), 404
+        record_signal(uid, source_type, source_id, action)
+        return jsonify(ok=True, action=action)
 
     @bp.route("/api/mobile/v2/kids/discover")
     @_require_mobile("CHILD")

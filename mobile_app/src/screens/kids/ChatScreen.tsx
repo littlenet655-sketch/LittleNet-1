@@ -9,7 +9,7 @@ import { useIsForeground } from '../../query/client';
 import { Button, Card, DisabledFeature, EmptyState, ErrorState, Field, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
 import { colors } from '../../ui/tokens';
 
-export function ChatScreen({ route }: ChildScreenProps<'Chat'>) {
+export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
   const { session } = useAuth();
   const foreground = useIsForeground();
   const peerId = Number((route.params as { peerId?: number } | undefined)?.peerId ?? 0);
@@ -71,7 +71,7 @@ export function ChatScreen({ route }: ChildScreenProps<'Chat'>) {
 
   return (
     <Screen>
-      <Text style={styles.peer}>{String(peer.full_name ?? peer.username ?? 'Chat')}</Text>
+      <View style={styles.peerRow}><Text style={styles.peer}>{String(peer.full_name ?? peer.username ?? 'Chat')}</Text><Button label="Details" variant="secondary" onPress={() => navigation.navigate('ChatDetails', { peerId })} /></View>
       {error ? <GateNotice error={error} /> : null}
       {sendError ? <Notice message={sendError} /> : null}
       <FlatList
@@ -99,7 +99,8 @@ export function ChatScreen({ route }: ChildScreenProps<'Chat'>) {
 }
 
 const styles = StyleSheet.create({
-  peer: { fontWeight: '700', color: colors.ink, fontSize: 18, paddingHorizontal: 12, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
+  peerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
+  peer: { flex: 1, fontWeight: '700', color: colors.ink, fontSize: 18, paddingHorizontal: 12, paddingVertical: 12 },
   msg: { color: colors.ink, fontSize: 14, lineHeight: 20 },
   meta: { color: colors.muted, marginTop: 4 },
   row: { marginTop: 8, paddingHorizontal: 12, paddingBottom: 8, backgroundColor: colors.surface },

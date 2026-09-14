@@ -11,6 +11,7 @@ from safety.moderation_service import evaluate,record
 from services.audit import log
 from services.controls import quiet_hours_state,effective_categories
 from safety.pii_service import scan_pii
+from services.recommendation_signals import record_signal
 
 child_bp=Blueprint('child',__name__,template_folder='templates')
 def _guard():
@@ -179,7 +180,7 @@ def follow(child_id):
     if not can_discover_child(session['user_id'],child_id):return jsonify(error='child unavailable'),404
     if is_following(session['user_id'],child_id) or is_follow_pending(session['user_id'],child_id):
         unfollow_child(session['user_id'],child_id);return jsonify(status='removed')
-    follow_child(session['user_id'],child_id);log(session['user_id'],'FOLLOW_REQUEST',{'target':child_id})
+    follow_child(session['user_id'],child_id);record_signal(session['user_id'],'CREATOR',child_id,'FOLLOW');log(session['user_id'],'FOLLOW_REQUEST',{'target':child_id})
     parent_notify(session['user_id'],'FOLLOW_REQUEST','A new connection request needs approval','/parent/follow-requests/')
     try:
         sender=fetch_one('SELECT full_name FROM users WHERE user_id=%s',(session['user_id'],));s_name=(sender or {}).get('full_name') or 'A LittleNet friend'
@@ -190,13 +191,13 @@ def follow(child_id):
 @child_bp.route('/block/<int:user_id>/',methods=['POST'])
 @child_required
 def block(user_id):
-    if user_id!=session['user_id']:log(session['user_id'],'USER_BLOCKED',{'target':user_id});execute('INSERT INTO blocked_users(blocker_id,blocked_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(session['user_id'],user_id));execute('DELETE FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)',(session['user_id'],user_id,user_id,session['user_id']))
+    if user_id!=session['user_id']:log(session['user_id'],'USER_BLOCKED',{'target':user_id});execute('INSERT INTO blocked_users(blocker_id,blocked_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(session['user_id'],user_id));record_signal(session['user_id'],'CREATOR',user_id,'BLOCK');execute('DELETE FROM followers WHERE (child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s)',(session['user_id'],user_id,user_id,session['user_id']))
     return redirect('/discover/')
 
 @child_bp.route('/mute/<int:user_id>/',methods=['POST'])
 @child_required
 def mute(user_id):
-    if user_id!=session['user_id']:execute('INSERT INTO muted_users(muter_id,muted_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(session['user_id'],user_id))
+    if user_id!=session['user_id']:execute('INSERT INTO muted_users(muter_id,muted_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(session['user_id'],user_id));record_signal(session['user_id'],'CREATOR',user_id,'MUTE')
     return redirect(request.referrer or '/child/dashboard/')
 
 @child_bp.route('/notifications/')
@@ -335,7 +336,9 @@ def report_content():
         row=fetch_one("SELECT post_id FROM comments WHERE comment_id=%s AND moderation_status='ALLOWED'",(tid,));valid=bool(row and post_visible_to(session['user_id'],row['post_id']))
     elif kind=='MESSAGE':valid=bool(fetch_one('SELECT 1 FROM child_messages WHERE child_message_id=%s AND (sender_child_id=%s OR receiver_child_id=%s)',(tid,session['user_id'],session['user_id'])))
     if not valid:return jsonify(error='target unavailable'),404
-    execute('INSERT INTO reports(reporter_id,target_type,target_id,reason,details) VALUES(%s,%s,%s,%s,%s)',(session['user_id'],kind,tid,reason[:100],(request.form.get('details') or '')[:2000]));return jsonify(ok=True)
+    execute('INSERT INTO reports(reporter_id,target_type,target_id,reason,details) VALUES(%s,%s,%s,%s,%s)',(session['user_id'],kind,tid,reason[:100],(request.form.get('details') or '')[:2000]))
+    record_signal(session['user_id'],'CREATOR' if kind=='USER' else 'SOCIAL',tid,'REPORT')
+    return jsonify(ok=True)
 
 def _check_live_frame(frame):
     os.makedirs('uploads/live',exist_ok=True);path=os.path.join('uploads/live',f'{uuid.uuid4().hex}.jpg');frame.save(path)
@@ -387,7 +390,7 @@ def api_share_post():
     from childMessage.service import conversation
     ok,reason=is_post_shareable_to(post_id,session['user_id'],receiver)
     if not ok:return jsonify(error=reason),403
-    cid=conversation(session['user_id'],receiver);execute("INSERT INTO child_messages(conversation_id,sender_child_id,receiver_child_id,message_type,shared_post_id,moderation_status) VALUES(%s,%s,%s,'SHARED_POST',%s,'ALLOWED')",(cid,session['user_id'],receiver,post_id));return jsonify(ok=True)
+    cid=conversation(session['user_id'],receiver);execute("INSERT INTO child_messages(conversation_id,sender_child_id,receiver_child_id,message_type,shared_post_id,moderation_status) VALUES(%s,%s,%s,'SHARED_POST',%s,'ALLOWED')",(cid,session['user_id'],receiver,post_id));record_signal(session['user_id'],'SOCIAL',post_id,'SHARE');return jsonify(ok=True)
 
 @child_bp.route('/time-limit-reached/')
 @child_required

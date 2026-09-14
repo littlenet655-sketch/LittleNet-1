@@ -50,7 +50,7 @@ export function ConversationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
         data={items}
         keyExtractor={(c) => `c:${c.conversation_id}`}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load('refresh')} />}
-        ListHeaderComponent={<BrandHeader title="Messages" subtitle="Only approved friends can message." />}
+        ListHeaderComponent={<><BrandHeader title="Messages" subtitle="Only approved friends can message." /><Button label="New message" onPress={() => nav.navigate('NewMessage', {})} /></>}
         ListEmptyComponent={<EmptyState title="No conversations" body="Make an approved friend to start chatting." />}
         renderItem={({ item }) => {
           const unread = isConversationUnread(item);

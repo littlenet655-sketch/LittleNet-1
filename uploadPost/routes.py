@@ -11,6 +11,7 @@ from quiz.service import bump
 from services.audit import log
 from services.controls import SAFE_CATEGORIES, controls_for_child, effective_categories
 from extensions import limiter
+from services.recommendation_signals import record_signal
 
 upload_bp=Blueprint('upload',__name__,template_folder='templates')
 IMG={'jpg','jpeg','png','webp'};VID={'mp4','mov','avi','mkv','webm'};AUD={'mp3','wav','m4a','ogg','webm'}
@@ -42,6 +43,9 @@ def _merge(*signals):
 
 def _create(content_type,payload,caption,category,is_story=False,is_reel=False,path=None,music_path=None,music_signals=None,audience_age_group='ALL'):
     from safety.pii_service import scan_pii
+    if path and content_type == 'IMAGE':
+        from services.media_sanitizer import sanitize_image_in_place
+        sanitize_image_in_place(path)
     if caption and scan_pii(caption)['detected']:
         from safety.policy import Decision
         _unlink(path);_unlink(music_path)
@@ -73,6 +77,9 @@ def _create(content_type,payload,caption,category,is_story=False,is_reel=False,p
         raise
     event=record(session['user_id'],content_type,row['post_id'],merged,d)
     if d.action=='REVIEW':parent_notify(session['user_id'],'REVIEW_REQUIRED','Content is waiting for your review',f'/parent/safety/?event={event}')
+    elif d.action=='ALLOW':
+        from services.publication_lifecycle import refresh_publication_visibility
+        refresh_publication_visibility(row['post_id'], session['user_id'], is_reel=is_reel)
     log(session['user_id'],'POST_CREATED',{'post_id':row['post_id'],'status':d.action,'type':content_type})
     return row['post_id'],d
 
@@ -137,6 +144,7 @@ def like(post_id):
     if exists:execute('DELETE FROM likes WHERE post_id=%s AND child_id=%s',(post_id,session['user_id']));liked=False
     else:
         execute('INSERT INTO likes(post_id,child_id) VALUES(%s,%s)',(post_id,session['user_id']));liked=True
+        record_signal(session['user_id'],'SOCIAL',post_id,'LIKE')
         if p['child_id']!=session['user_id']:notify(p['child_id'],'LIKE',f'{session.get("full_name","Someone")} liked your post',f'/post/{post_id}/',session['user_id'])
     return jsonify(liked=liked)
 
@@ -154,7 +162,9 @@ def comment(post_id):
         return jsonify(blocked=True,error="Personal contact info cannot be shared in comments."),400
     sig,d=evaluate(session['user_id'],'TEXT',text)
     if d.action=='BLOCK':record(session['user_id'],'COMMENT',None,sig,d);parent_notify(session['user_id'],'COMMENT_BLOCKED',d.reason,'/parent/safety/');return jsonify(blocked=True),400
-    row=execute("INSERT INTO comments(post_id,child_id,comment_text,moderation_status) VALUES(%s,%s,%s,%s) RETURNING comment_id",(post_id,session['user_id'],text,'ALLOWED' if d.action=='ALLOW' else 'REVIEW'),returning=True);record(session['user_id'],'COMMENT',row['comment_id'],sig,d)
+    row=execute("INSERT INTO comments(post_id,child_id,comment_text,moderation_status) VALUES(%s,%s,%s,%s) RETURNING comment_id",(post_id,session['user_id'],text,'ALLOWED' if d.action=='ALLOW' else 'REVIEW'),returning=True)
+    if d.action=='ALLOW':record_signal(session['user_id'],'SOCIAL',post_id,'COMMENT')
+    record(session['user_id'],'COMMENT',row['comment_id'],sig,d)
     if d.action=='REVIEW':parent_notify(session['user_id'],'REVIEW_REQUIRED','A comment needs review','/parent/safety/')
     elif p['child_id']!=session['user_id']:notify(p['child_id'],'COMMENT',f'{session.get("full_name","Someone")} commented on your post',f'/post/{post_id}/',session['user_id'])
     return jsonify(status=d.action) if request.is_json else redirect(f'/post/{post_id}/')
@@ -189,6 +199,7 @@ def save_post(post_id):
         execute('DELETE FROM saved_posts WHERE child_id=%s AND post_id=%s',(session['user_id'],post_id));saved=False
     else:
         execute('INSERT INTO saved_posts(child_id,post_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(session['user_id'],post_id));saved=True
+        record_signal(session['user_id'],'SOCIAL',post_id,'SAVE')
     return jsonify(saved=saved)
 
 @upload_bp.route('/saved/')

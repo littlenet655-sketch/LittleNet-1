@@ -11,12 +11,14 @@ from database.connection import fetch_all, fetch_one
 from services.controls import EDUCATIONAL_CATEGORIES, effective_categories
 from services.curated_feed import (
     apply_category_diversity,
+    _child_real_age,
     fetch_curated_candidates,
     merge_candidates,
     normalize_curated_item,
     normalize_social_item,
 )
 from services.social import _age_group
+from services.recommendation_signals import signal_scores
 
 
 def _profile_terms(cid: int) -> tuple[list[str], str]:
@@ -40,16 +42,16 @@ def candidates(cid: int, cap: int = 60, surface: str = "FEED") -> list[dict[str,
     A child with zero social connections will receive curated LittleNet content rather
     than experiencing empty-feed starvation.
     """
-    cats = effective_categories(cid)
-    age_group = _age_group(cid)
-
     # Reuse the exact child-discovery boundary instead of building a wider
     # recommendation-only graph. Recommendations must never reveal children the
     # viewer could not otherwise discover under Parent Mode policy.
     from child.service import discoverable_child_ids
 
     is_reel = str(surface).upper() == "REELS"
-    if is_reel:
+    allowed_child_ids = discoverable_child_ids(cid)
+    cats = effective_categories(cid) if allowed_child_ids else []
+    age_group = _age_group(cid) if allowed_child_ids else None
+    if is_reel and allowed_child_ids:
         social_rows = fetch_all(
             """SELECT p.*,u.full_name,cp.profile_picture,
                 (SELECT COUNT(*) FROM likes l WHERE l.post_id=p.post_id) likes,
@@ -60,16 +62,15 @@ def candidates(cid: int, cap: int = 60, surface: str = "FEED") -> list[dict[str,
               WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=TRUE
                 AND p.content_category=ANY(%s)
                 AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
-                AND p.child_id<>%s
+                AND p.child_id=ANY(%s) AND p.child_id<>%s
                 AND p.child_id NOT IN (
                   SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
                   UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
                   UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
               ORDER BY p.created_at DESC LIMIT %s""",
-            (cid, cid, cats, age_group, age_group, cid, cid, cid, cid, cap),
+            (cid, cid, cats, age_group, age_group, allowed_child_ids, cid, cid, cid, cid, cap),
         )
     else:
-        allowed_child_ids = discoverable_child_ids(cid)
         if not allowed_child_ids:
             social_rows = []
         else:
@@ -142,7 +143,11 @@ def _fallback_score(item: dict[str, Any], terms: list[str]) -> float:
 def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
+    rows = _safe_rank_candidates(cid, rows)
+    if not rows:
+        return []
     terms, profile_text = _profile_terms(cid)
+    feedback = signal_scores(cid, rows)
     ai_scores: dict[int, float] = {}
     try:
         from safety import remote_client
@@ -165,12 +170,68 @@ def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     return sorted(
         rows,
         key=lambda p: (
+            feedback.get(("SOCIAL", int(p.get("source_id", p.get("post_id")))), 0.0)
+            + feedback.get(
+                ("CREATOR", int((p.get("ranking_metadata") or {}).get("child_id") or 0)),
+                0.0,
+            ),
             ai_scores.get(int(p.get("source_id", p.get("post_id"))), -2.0),
             _fallback_score(p, terms),
             p.get("ranking_metadata", {}).get("created_at") or p.get("created_at") or "",
         ),
         reverse=True,
     )
+
+
+def _safe_rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Re-apply publication, age, and Parent Mode gates before ranking."""
+    cats = set(effective_categories(cid))
+    age_group = _age_group(cid)
+    real_age = _child_real_age(cid)
+    creator_ids = {
+        int((item.get("ranking_metadata") or {}).get("child_id"))
+        for item in rows
+        if (item.get("ranking_metadata") or {}).get("child_id") is not None
+    }
+    blocked_ids = set()
+    if creator_ids:
+        try:
+            blocked_rows = fetch_all(
+                """SELECT blocked_id AS creator_id FROM blocked_users
+                   WHERE blocker_id=%s AND blocked_id=ANY(%s)
+                   UNION
+                   SELECT blocker_id AS creator_id FROM blocked_users
+                   WHERE blocked_id=%s AND blocker_id=ANY(%s)
+                   UNION
+                   SELECT muted_id AS creator_id FROM muted_users
+                   WHERE muter_id=%s AND muted_id=ANY(%s)""",
+                (cid, list(creator_ids), cid, list(creator_ids), cid, list(creator_ids)),
+            )
+            blocked_ids = {int(row["creator_id"]) for row in blocked_rows or [] if row.get("creator_id") is not None}
+        except Exception:
+            blocked_ids = set()
+    eligible = []
+    for item in rows:
+        if str(item.get("moderation_status") or "").upper() != "ALLOWED":
+            continue
+        if item.get("is_safe") is not True:
+            continue
+        creator_id = (item.get("ranking_metadata") or {}).get("child_id")
+        if creator_id is not None and int(creator_id) in blocked_ids:
+            continue
+        category = item.get("category") or item.get("content_category")
+        if category not in cats:
+            continue
+        audience = str(item.get("audience_age_group") or "ALL")
+        if age_group and audience not in {"ALL", age_group}:
+            continue
+        try:
+            if not (int(item.get("min_age", 4)) <= real_age <= int(item.get("max_age", 18))):
+                continue
+        except (TypeError, ValueError):
+            continue
+        eligible.append(item)
+    return eligible
 
 
 def apply_diversity_and_balance(ranked_items: list[dict[str, Any]], max_consecutive: int = 2) -> list[dict[str, Any]]:

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { Image, ScrollView, StyleSheet, Text, View } from 'react-native';
-import { addComment, blockUser, fetchPostDetail, muteUser, submitReport, toggleLike, toggleSave, type CommentItem, type PostDetail } from '../../api/kidsSocial';
+import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { addComment, blockUser, fetchConnections, fetchPostDetail, muteUser, sharePostToChat, submitReport, toggleLike, toggleSave, type CommentItem, type PostDetail } from '../../api/kidsSocial';
 import { useAuth } from '../../auth/AuthProvider';
 import { VideoMedia } from '../../kids/VideoMedia';
 import type { ChildScreenProps } from '../../navigation/types';
@@ -23,6 +23,9 @@ export function PostDetailScreen({ route }: ChildScreenProps<'PostDetail'>) {
   const [safetyError, setSafetyError] = useState('');
   const [hidden, setHidden] = useState(false);
   const [reason, setReason] = useState('');
+  const [shareOpen, setShareOpen] = useState(false);
+  const [recipients, setRecipients] = useState<Array<{ user_id?: number; child_id?: number; full_name?: string; username?: string; avatar_url?: string | null }>>([]);
+  const [sharing, setSharing] = useState<number | null>(null);
   const reasons = ['Unsafe or unkind', 'Personal information', 'Something else'];
 
   async function load() {
@@ -92,6 +95,16 @@ export function PostDetailScreen({ route }: ChildScreenProps<'PostDetail'>) {
     }
   }
 
+  async function openShare() {
+    if (!session) return;
+    try {
+      const res = await fetchConnections(session.token);
+      const all = [...res.followers, ...res.following] as typeof recipients;
+      setRecipients(all.filter((p, i, list) => Number(p.user_id ?? p.child_id) && list.findIndex((x) => Number(x.user_id ?? x.child_id) === Number(p.user_id ?? p.child_id)) === i));
+      setShareOpen(true);
+    } catch (err) { setError(err); }
+  }
+
   return (
     <Screen>
       <ScrollView>
@@ -112,6 +125,7 @@ export function PostDetailScreen({ route }: ChildScreenProps<'PostDetail'>) {
                 void invalidateSocialCaches([postId]);
               }).catch((err: unknown) => setError(err));
             }} />
+            <Button label="Share" variant="secondary" onPress={() => void openShare()} />
           </View>
           <Button label="Safety actions" variant="secondary" onPress={() => { setSafetyOpen((value) => !value); setSafetyError(''); }} />
         </Card>
@@ -141,6 +155,12 @@ export function PostDetailScreen({ route }: ChildScreenProps<'PostDetail'>) {
           </Card>
         ))}
       </ScrollView>
+      <Modal visible={shareOpen} transparent animationType="slide" onRequestClose={() => setShareOpen(false)}>
+        <View style={styles.sheet}><Text style={styles.safetyTitle}>Send to a friend</Text><Text style={styles.sheetHint}>Only approved friends can receive posts.</Text>
+          {!recipients.length ? <Text style={styles.sheetHint}>No approved friends yet.</Text> : recipients.map((person, index) => { const id = Number(person.user_id ?? person.child_id); return <Pressable key={`${id}-${index}`} style={styles.recipient} disabled={sharing !== null} onPress={() => { if (!session) return; setSharing(id); sharePostToChat(session.token, id, postId).then(() => { setInfo('Post sent.'); setShareOpen(false); }).catch(setError).finally(() => setSharing(null)); }}><Avatar uri={person.avatar_url} name={person.full_name ?? person.username ?? 'Friend'} size={36} /><Text style={styles.name}>{person.full_name ?? person.username ?? 'Friend'}</Text><Text style={styles.send}>{sharing === id ? 'Sending…' : 'Send'}</Text></Pressable>; })}
+          <Button label="Cancel" variant="secondary" onPress={() => setShareOpen(false)} />
+        </View>
+      </Modal>
     </Screen>
   );
 }
@@ -152,4 +172,8 @@ const styles = StyleSheet.create({
   media: { marginTop: 10, width: '100%', height: 320, borderRadius: 12, backgroundColor: colors.line },
   safetyTitle: { color: colors.ink, fontSize: 17, fontWeight: '700' },
   reasonLabel: { color: colors.muted, fontSize: 12, fontWeight: '700', marginTop: 12, marginBottom: 2 },
+  sheet: { marginTop: 'auto', backgroundColor: colors.surface, padding: 20, borderTopLeftRadius: 18, borderTopRightRadius: 18, minHeight: 280 },
+  sheetHint: { color: colors.muted, marginTop: 6 },
+  recipient: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line },
+  send: { marginLeft: 'auto', color: colors.brand, fontWeight: '800' },
 });
