@@ -83,7 +83,7 @@ Verified on 2026-09-14 against commit `4f9da440` and the subsequent external val
 | Real Resend inbox OTP | FAIL | `E2E_TEST_EMAIL` is present and a live registration was attempted, but the backend returned `email_sent=false`; no OTP verification evidence exists. |
 | Moderation benchmark calibration | PASS | Six-row lawful synthetic calibration sample: exact-action agreement 0.666667, macro-F1 0.666667; ALLOW precision/recall 1.0/1.0, REVIEW 0.5/0.5, BLOCK 0.5/0.5. This is not production accuracy. |
 | EAS authentication/project link | PASS | `eas-cli whoami --non-interactive` authenticated as `akshu1245`; the existing project `c4ce834d-fd50-4504-a311-820c3372b6dc` was linked without creating a project. |
-| EAS preview APK build | UNVERIFIED | Existing-project preview build `914dc2c5-740b-4f2e-aa2d-40e0ba0566e8` was accepted and remained `IN_PROGRESS` at the time of this record; artifact/install evidence is still required. |
+| EAS preview APK build | PASS | Existing-project preview build `914dc2c5-740b-4f2e-aa2d-40e0ba0566e8` finished successfully for `com.littlenet.app`; artifact: https://expo.dev/artifacts/eas/Pak-g5Mj08VCdNHHiew-ZHgnSMDEHDzV2vNaqJ5w_FU.apk |
 | Routine health does not wake GPU | UNVERIFIED | billing/container evidence |
 | Final APK install/launch | UNVERIFIED | installed APK on Android device/emulator |
 
