@@ -82,7 +82,11 @@ export function errorText(error: unknown, fallback = 'Something went wrong. Plea
 export function GateNotice({ error }: { error: unknown }) {
   if (!(error instanceof ApiError)) return <Notice message={errorText(error)} />;
   const gateLabel =
-    error.gate === 'face'
+    error.status === 0
+      ? error.code === 'request_timeout'
+        ? 'Connection timed out'
+        : 'Connection required'
+      : error.gate === 'face'
       ? 'Face step needed'
       : error.gate === 'quiz'
         ? 'Quiz needed'

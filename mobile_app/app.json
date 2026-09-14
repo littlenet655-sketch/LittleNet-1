@@ -29,6 +29,12 @@
       "expo-secure-store",
       "expo-video",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "LittleNet uses the camera for live face checks."
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "LittleNet uses a selected photo only when you choose to create a post.",

@@ -7,12 +7,14 @@ export interface CapturedPhoto {
   base64: string;
   width: number;
   height: number;
+  /** Temporary native URI used only for the on-device ML Kit precheck. */
+  uri?: string;
 }
 
 export interface CameraDeps {
   getPermissions: () => Promise<{ granted: boolean; canAskAgain: boolean }>;
   requestPermissions: () => Promise<{ granted: boolean; canAskAgain: boolean }>;
-  launchCamera: () => Promise<{ cancelled: boolean; base64?: string; width?: number; height?: number }>;
+  launchCamera: () => Promise<{ cancelled: boolean; base64?: string; width?: number; height?: number; uri?: string }>;
 }
 
 export class CameraCancelledError extends Error {
@@ -54,7 +56,7 @@ export async function captureLivePhotoCore(deps: CameraDeps): Promise<CapturedPh
     if (canAskAgain) throw new CameraPermissionError();
     throw new CameraBlockedError();
   }
-  let shot: { cancelled: boolean; base64?: string; width?: number; height?: number };
+  let shot: { cancelled: boolean; base64?: string; width?: number; height?: number; uri?: string };
   try {
     shot = await deps.launchCamera();
   } catch {
@@ -62,5 +64,5 @@ export async function captureLivePhotoCore(deps: CameraDeps): Promise<CapturedPh
   }
   if (shot.cancelled) throw new CameraCancelledError();
   if (!shot.base64) throw new Error('Could not read the camera photo. Please try again.');
-  return { base64: shot.base64, width: shot.width ?? 0, height: shot.height ?? 0 };
+  return { base64: shot.base64, width: shot.width ?? 0, height: shot.height ?? 0, uri: shot.uri };
 }
