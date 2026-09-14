@@ -49,7 +49,7 @@ AI_SERVICE_URL
 AI_SHARED_SECRET
 ```
 
-The live release preflight additionally requires a real public `BASE_URL`, working private R2 storage, and working Resend credentials. Put all of these in `littlenet-web-secrets`:
+The live release preflight additionally requires a real public `BASE_URL`, working private R2 storage, and working Resend credentials. Put the web and R2 values in `littlenet-web-secrets`:
 
 ```text
 BASE_URL
@@ -59,7 +59,14 @@ R2_SECRET_ACCESS_KEY
 R2_BUCKET
 ```
 
-For mail, configure the verified Resend production sender:
+For mail, configure the verified Resend production sender in the `littlenet-email` Modal secret. `modal_web.py` attaches this secret to the live web function; updating only a local Replit secret or only `littlenet-web-secrets` does not refresh the running deployment.
+
+The parent OTP path has a fixed sender contract independent of deployment
+defaults: every parent verification email is sent as
+`LittleNet <no-reply@littlenet.in>`. `RESEND_FROM_EMAIL` and
+`RESEND_FROM_NAME` cannot override that identity for OTP delivery. The
+LittleNet domain must remain verified in Resend; an unverified or sandbox
+sender is not an acceptable fallback.
 
 ```text
 RESEND_API_KEY
@@ -83,9 +90,13 @@ modal secret create littlenet-web-secrets \
   R2_ACCESS_KEY_ID="<r2-access-key>" \
   R2_SECRET_ACCESS_KEY="<r2-secret-key>" \
   R2_BUCKET="<private-bucket-name>" \
+```
+
+```bash
+modal secret create littlenet-email --force \
   RESEND_API_KEY="<resend-api-key>" \
-  RESEND_FROM_EMAIL="no-reply@verified-littlenet-domain" \
-  RESEND_FROM_NAME="LittleNet Safety"
+  RESEND_FROM_EMAIL="no-reply@littlenet.in" \
+  RESEND_FROM_NAME="LittleNet"
 ```
 
 The release preflight validates the database/schema, quiz bank, AI health, Presidio PII detection, MediaPipe liveness assets, public `BASE_URL`, Resend delivery, and R2 bucket access instead of silently falling back to demo behavior.
