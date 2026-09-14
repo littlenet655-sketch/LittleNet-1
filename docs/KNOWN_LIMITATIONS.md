@@ -8,8 +8,10 @@
 - Video moderation samples bounded scenes rather than every frame. Video audio is stripped; standalone voice/audio posting is outside the locked demo scope.
 - Parent/Admin collection routes are intentionally bounded to 100 recent rows. They do not provide enterprise-scale reporting or arbitrary historical export.
 - The activity screen shows event categories and timestamps without exposing private message bodies or unrelated-user content.
-- Modal/R2/Neon production deployment, billing state, and zero-idle-container evidence are external operations and are not inferred from source tests.
-- An isolated R2 object round-trip was verified for the submission-readiness prefix. Full quarantine/promotion/privacy lifecycle evidence remains unverified, and the Modal CLI was unavailable in this workstation for app-state inspection.
-- Real Resend inbox delivery remains unverified because no approved recipient inbox was available in this session; the sender contract and fail-closed behavior are covered by CI/tests.
+- Modal workspace/app/volume access and zero active containers were verified for `netlittle2`; the bounded AI probe still returned HTTP 401, so AI service authentication/readiness is not claimed.
+- The full synthetic R2 lifecycle passed: signed quarantine upload, private REVIEW delivery, ALLOW sanitization/promotion/readback, BLOCK cleanup, and cleanup of all synthetic objects. This does not validate real-user media.
+- Real Resend inbox delivery remains blocked by the missing `E2E_TEST_EMAIL` secret. The sender contract and fail-closed behavior are covered by CI/tests.
+- EAS authentication is blocked because `EXPO_TOKEN` is absent; therefore no installable preview APK was produced in this run.
+- The moderation benchmark result is a six-row synthetic calibration sample, not a production accuracy claim: exact-action agreement and macro-F1 were both 0.666667.
 - The previously exposed disposable Neon credential/branch still requires deletion or rotation by an authenticated Neon account owner; this workstation has no authenticated Neon CLI profile, so cleanup is not claimed.
 - `npm audit` reports 16 moderate and no high/critical findings. The incompatible transitive upgrade chains are documented in [DEPENDENCY_AUDIT.md](DEPENDENCY_AUDIT.md); no breaking `--force` downgrade was applied.

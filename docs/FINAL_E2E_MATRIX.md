@@ -7,11 +7,12 @@ Status values:
 
 > This matrix is intentionally conservative. Source-presence checks, typechecking, and route existence are not enough to mark a user journey PASS.
 
-Verified on 2026-09-13 against commit `2195cf4`:
+Verified on 2026-09-14 against commit `4f9da440` and the subsequent external validation run:
 
 - [LittleNet CI](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761242142): source audit, 347 backend tests, dependency/security checks, and Gitleaks passed.
 - [Disposable PostgreSQL role E2E](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761243565): fresh schema/migrations and authenticated Child/Parent/Admin smoke passed.
 - [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761244826): 77 tests, typecheck, Android export, and Expo dependency check passed.
+- Modal authentication succeeded for the `netlittle2` workspace; `littlenet-web` and `littlenet-ai` were deployed, both expected volumes were present, and the active-container list was empty before and after the bounded probe.
 
 | Journey | Status | Required evidence |
 |---|---|---|
@@ -74,8 +75,15 @@ Verified on 2026-09-13 against commit `2195cf4`:
 | React Native typecheck | PASS | CI `npm run typecheck` completed successfully. |
 | Android Expo export | PASS | CI bundled 965 modules and exported `mobile_app/dist`. This is not an APK/device run. |
 | Android critical E2E | UNVERIFIED | device/emulator journey evidence |
-| R2 isolated object round-trip | PASS | Submission-readiness prefix upload, HEAD, GET, and DELETE completed with cleanup; this does not replace quarantine/promotion/privacy validation. |
-| Modal idle cost guard | UNVERIFIED | zero idle containers after scaledown |
+| R2 isolated object round-trip | PASS | Submission-readiness prefix upload, HEAD, GET, and DELETE completed with cleanup. |
+| R2 full synthetic media lifecycle | PASS | Signed upload to quarantine, private REVIEW delivery, ALLOW sanitization/promotion/readback, BLOCK cleanup, and test-object cleanup passed with synthetic media. |
+| Modal workspace/app/volume access | PASS | Authenticated `netlittle2` inspection found `littlenet-web`, `littlenet-ai`, `littlenet-uploads`, and `littlenet-model-cache`. |
+| Modal AI readiness/authentication | FAIL | Bounded `/healthz` probe was not ready and the synthetic image moderation request returned HTTP 401; no secrets were printed or changed. |
+| Modal idle cost guard | PASS | Active-container list was empty after the bounded probe and idle wait. |
+| Real Resend inbox OTP | BLOCKED | `E2E_TEST_EMAIL` is not present; exact user-only requirement: `NEEDS_USER_SECRET=E2E_TEST_EMAIL`. |
+| Moderation benchmark calibration | PASS | Six-row lawful synthetic calibration sample: exact-action agreement 0.666667, macro-F1 0.666667; ALLOW precision/recall 1.0/1.0, REVIEW 0.5/0.5, BLOCK 0.5/0.5. This is not production accuracy. |
+| EAS authentication | BLOCKED | `EXPO_TOKEN` is not present; `eas-cli whoami --non-interactive` returned `Not logged in`. |
+| EAS preview APK build | BLOCKED | Cannot start the required preview APK build until EAS authentication is supplied. |
 | Routine health does not wake GPU | UNVERIFIED | billing/container evidence |
 | Final APK install/launch | UNVERIFIED | installed APK on Android device/emulator |
 
