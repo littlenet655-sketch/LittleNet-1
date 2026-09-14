@@ -7,6 +7,8 @@ Locked scope: text/image/video moderation plus guardian/child face verification.
 Standalone audio, voice and story-music moderation are intentionally excluded.
 """
 from pathlib import Path
+import hashlib
+import json
 import os
 
 import modal
@@ -86,6 +88,18 @@ image = (
         copy=True,
     )
 )
+secret_preflight_image = modal.Image.debian_slim(python_version="3.11")
+
+
+def _secret_fingerprint(value: str | None) -> dict[str, object]:
+    """Return non-disclosing presence and equality data for a shared secret."""
+    normalized = str(value or "")
+    if not normalized:
+        return {"present": False, "fingerprint": None}
+    return {
+        "present": True,
+        "fingerprint": hashlib.sha256(normalized.encode("utf-8")).hexdigest(),
+    }
 
 
 @app.function(
@@ -110,6 +124,18 @@ def ai_web():
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     from ai_server import app as flask_ai_app
     return flask_ai_app
+
+
+@app.function(
+    image=secret_preflight_image,
+    secrets=[ai_secret],
+    timeout=60,
+    min_containers=0,
+    max_containers=1,
+)
+def ai_secret_preflight():
+    """Read only the AI secret for a non-disclosing release comparison."""
+    return _secret_fingerprint(os.environ.get("AI_SHARED_SECRET"))
 
 
 @app.function(
@@ -239,8 +265,16 @@ def warm_models():
 
 
 @app.local_entrypoint()
-def main(confirm_gpu_warmup: bool = False, prepare_face_cache_only: bool = False):
+def main(
+    confirm_gpu_warmup: bool = False,
+    prepare_face_cache_only: bool = False,
+    secret_preflight: bool = False,
+):
     """Cost-guarded maintenance entrypoint."""
+    if secret_preflight:
+        report = ai_secret_preflight.remote()
+        print(f"secret-preflight {json.dumps(report, sort_keys=True)}")
+        return
     if prepare_face_cache_only:
         report = prepare_face_cache.remote()
         print(f"OK   face-cache: {report}")
