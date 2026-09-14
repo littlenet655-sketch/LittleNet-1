@@ -7,11 +7,14 @@ Status values:
 
 > This matrix is intentionally conservative. Source-presence checks, typechecking, and route existence are not enough to mark a user journey PASS.
 
-Verified on 2026-09-14 against commit `4f9da440` and the subsequent external validation run:
+Verified on 2026-09-14 against the current repository, disposable Neon branch, and
+the recorded external validation runs. The current local release candidate also
+has a clean mobile typecheck, while its physical Android and new native APK
+evidence remain unverified.
 
 - [LittleNet CI](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761242142): source audit, 347 backend tests, dependency/security checks, and Gitleaks passed.
 - [Disposable PostgreSQL role E2E](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761243565): fresh schema/migrations and authenticated Child/Parent/Admin smoke passed.
-- [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761244826): 77 tests, typecheck, Android export, and Expo dependency check passed.
+- [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761244826): the recorded external run passed 77 tests, typecheck, Android export, and Expo dependency check. The current local candidate passes 80 mobile tests, typecheck, Android export, and `expo install --check`.
 - Modal authentication succeeded for the `netlittle2` workspace; `littlenet-web` and `littlenet-ai` were deployed, both expected volumes were present, and the protected AI probe was rerun with the matched live web/AI secret configuration. The existing AI and web apps were redeployed without changing their names or scale-to-zero settings, and the container list was empty after the configured idle window.
 
 | Journey | Status | Required evidence |
@@ -69,12 +72,14 @@ Verified on 2026-09-14 against commit `4f9da440` and the subsequent external val
 | Follow approvals | UNVERIFIED | parent authorization |
 | Admin moderation | PASS | Disposable PostgreSQL journey covered queue, detail, ESCALATE, final APPROVE, two review rows, and dedicated admin audit output. |
 | Fresh PostgreSQL bootstrap | PASS | Role E2E created an empty PostgreSQL 16 service and applied the schema plus production migration chain before testing. |
-| Full backend suite | PASS | CI: 347 passed, 2 skipped, 0 failed/errors. |
+| Full backend suite | PASS | Recorded external CI: 347 passed, 2 skipped, 0 failed/errors. The local workspace cannot reproduce it because its configured `heliumdb` has no LittleNet schema; local failures are not counted as product passes. |
 | Route uniqueness | PASS | `tools/audit_all.py`: 130 routes discovered and no duplicate Android root or mobile method/path registration failure. |
-| React Native unit/component suite | PASS | CI: 77 passed, 0 failed/skipped/cancelled across 19 suites. |
-| React Native typecheck | PASS | CI `npm run typecheck` completed successfully. |
-| Android Expo export | PASS | CI bundled 965 modules and exported `mobile_app/dist`. This is not an APK/device run. |
-| Android critical E2E | UNVERIFIED | device/emulator journey evidence |
+| React Native unit/component suite | PASS | Current local run: 80 passed, 0 failed/skipped/cancelled across 19 suites. |
+| React Native typecheck | PASS | Current local `npm run typecheck`: 0 errors after the typed Expo native-view adapter fix. |
+| Android Expo export | PASS | Current local export bundled 979 modules and exported `mobile_app/dist`. This is not an APK/device run. |
+| Expo dependency alignment | PASS | Current local `npx expo install --check` reports dependencies up to date. |
+| Expo Doctor | UNVERIFIED | 19/21 checks passed. The two remaining findings are the config-schema metadata warning for `newArchEnabled`/`splash` and React Native Directory metadata marking `@react-native-ml-kit/face-detection` as untested on New Architecture; neither was suppressed or used to disable New Architecture. |
+| Android critical E2E | UNVERIFIED | `docs/PHYSICAL_DEVICE_CHECKLIST.md` records the 2026-09-14 run as 0/35 executed because no Android install target was available; per-row blocker logs are under `device/` |
 | R2 isolated object round-trip | PASS | Submission-readiness prefix upload, HEAD, GET, and DELETE completed with cleanup. |
 | R2 full synthetic media lifecycle | PASS | Signed upload to quarantine, private REVIEW delivery, ALLOW sanitization/promotion/readback, BLOCK cleanup, and test-object cleanup passed with synthetic media. |
 | Modal workspace/app/volume access | PASS | Authenticated `netlittle2` inspection found `littlenet-web`, `littlenet-ai`, `littlenet-uploads`, and `littlenet-model-cache`. |
@@ -83,9 +88,9 @@ Verified on 2026-09-14 against commit `4f9da440` and the subsequent external val
 | Real Resend inbox OTP | PASS | After refreshing the invalid Resend credential, `littlenet.in` reported `verified`, the live API returned `email_sent=true`, resend returned HTTP 200, Resend reported the newest message `last_event=delivered`, and the code completed mobile verification. The authorized Gmail connection exposed a different/empty mailbox, so direct Gmail-body evidence is not claimed. |
 | Moderation benchmark calibration | PASS | Six-row lawful synthetic calibration sample: exact-action agreement 0.666667, macro-F1 0.666667; ALLOW precision/recall 1.0/1.0, REVIEW 0.5/0.5, BLOCK 0.5/0.5. This is not production accuracy. |
 | EAS authentication/project link | PASS | `eas-cli whoami --non-interactive` authenticated as `akshu1245`; the existing project `c4ce834d-fd50-4504-a311-820c3372b6dc` was linked without creating a project. |
-| EAS preview APK build | PASS | Existing-project preview build `914dc2c5-740b-4f2e-aa2d-40e0ba0566e8` finished successfully for `com.littlenet.app`; artifact: https://expo.dev/artifacts/eas/Pak-g5Mj08VCdNHHiew-ZHgnSMDEHDzV2vNaqJ5w_FU.apk |
+| New native APK build from current candidate | UNVERIFIED | The previous APK is obsolete. No new current-HEAD EAS APK was built in this workspace, so no build ID or artifact URL is claimed. |
 | Routine health does not wake GPU | UNVERIFIED | billing/container evidence |
-| Final APK install/launch | UNVERIFIED | installed APK on Android device/emulator |
+| Final APK install/launch | UNVERIFIED | `docs/PHYSICAL_DEVICE_CHECKLIST.md` records 0/35 Android journeys executed because no `adb`, emulator, or reachable device was available. |
 
 ## Submission rule
 
