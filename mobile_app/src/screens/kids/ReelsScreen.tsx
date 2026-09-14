@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { useVideoPlayer } from 'expo-video';
 import { useIsFocused } from '@react-navigation/native';
 import type { FeedItem } from '../../api/kidsFeed';
 import { ApiError } from '../../api/client';
@@ -13,6 +13,7 @@ import { useFeed } from '../../kids/useFeed';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
 import { BrandHeader, Button, DisabledFeature, EmptyState, ErrorState, GateNotice, Screen, Skeleton } from '../../ui/components';
+import { NativeVideoView } from '../../ui/nativeViews';
 import { colors, radius, spacing } from '../../ui/tokens';
 
 function ReelVideo({ item, active, nearby, paused, onToggle }: { item: FeedItem; active: boolean; nearby: boolean; paused: boolean; onToggle: () => void }) {
@@ -60,7 +61,7 @@ function ReelVideo({ item, active, nearby, paused, onToggle }: { item: FeedItem;
   if (!source) return <ErrorState message="This reel has no playable video." />;
   return (
     <View style={styles.videoShell}>
-       {nearby ? <Pressable style={styles.videoTouch} onPress={onToggle}><VideoView player={player} style={styles.video} contentFit="cover" nativeControls={false} onFirstFrameRender={() => setReady(true)} /></Pressable> : null}
+        {nearby ? <Pressable style={styles.videoTouch} onPress={onToggle}><NativeVideoView player={player} style={styles.video} contentFit="cover" nativeControls={false} onFirstFrameRender={() => setReady(true)} /></Pressable> : null}
       {!ready && item.poster_url ? <Image source={{ uri: item.poster_url }} style={styles.posterOverlay} /> : null}
        {active && paused && !error ? <View pointerEvents="none" style={styles.paused}><Text style={styles.pauseGlyph}>Ⅱ</Text><Text style={styles.pauseLabel}>Paused</Text></View> : null}
       {error ? <View style={styles.errorOverlay}><Text style={styles.errorText}>Playback failed.</Text><Button label="Retry" onPress={() => void retry()} /></View> : null}
