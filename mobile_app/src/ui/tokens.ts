@@ -1,16 +1,18 @@
 export const colors = {
-  background: '#FFF9F2',
+  background: '#F6F8FF',
   surface: '#FFFFFF',
-  ink: '#1F2937',
-  muted: '#6B7280',
-  line: '#F3E3D3',
-  brand: '#FF6B4A',
-  brandDark: '#E14E2E',
-  teal: '#0EA5A4',
-  sunny: '#FFC93C',
+  ink: '#17213C',
+  muted: '#64708A',
+  line: '#E3E8F5',
+  brand: '#4F46E5',
+  brandDark: '#3730A3',
+  teal: '#2563EB',
+  sunny: '#F59E0B',
   danger: '#DC2626',
   ok: '#15803D',
-  card: '#FFFDF9',
+  card: '#FBFCFF',
+  violet: '#7C3AED',
+  blue: '#2563EB',
 } as const;
 
 export const radius = {
