@@ -7,7 +7,7 @@ import { isConversationUnread } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
 import { Avatar, TimeAgo } from '../../ui/social';
-import { BrandHeader, DisabledFeature, EmptyState, ErrorState, GateNotice, LoadingState, Screen } from '../../ui/components';
+import { BrandHeader, Button, DisabledFeature, EmptyState, ErrorState, GateNotice, LoadingState, Screen } from '../../ui/components';
 import { ApiError } from '../../api/client';
 import { colors } from '../../ui/tokens';
 
