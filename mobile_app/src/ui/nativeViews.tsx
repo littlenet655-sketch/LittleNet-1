@@ -1,5 +1,5 @@
 import { CameraView } from 'expo-camera';
-import type { CameraViewProps, CameraViewRef } from 'expo-camera';
+import type { CameraViewProps } from 'expo-camera';
 import { VideoView } from 'expo-video';
 import type { VideoViewProps } from 'expo-video';
 import type { ComponentType, ForwardRefExoticComponent, RefAttributes } from 'react';
@@ -10,7 +10,7 @@ import type { ComponentType, ForwardRefExoticComponent, RefAttributes } from 're
  * exports unchanged while retaining the package-provided prop and ref types.
  */
 export const NativeCameraView = CameraView as unknown as ForwardRefExoticComponent<
-  CameraViewProps & RefAttributes<CameraViewRef>
+  CameraViewProps & RefAttributes<CameraView>
 >;
 
 export const NativeVideoView = VideoView as unknown as ComponentType<VideoViewProps>;

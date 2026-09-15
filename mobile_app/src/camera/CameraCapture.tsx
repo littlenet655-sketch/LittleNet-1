@@ -5,7 +5,7 @@ import NetInfo from '@react-native-community/netinfo';
 import { ApiError } from '../api/client';
 import { CameraBlockedError, CameraPermissionError } from './capture';
 import type { CapturedPhoto } from './capture';
-import { FacePrecheckError, precheckFace } from './facePrecheck';
+import { precheckFace } from './facePrecheck';
 import { Button, Notice, errorText } from '../ui/components';
 import { NativeCameraView } from '../ui/nativeViews';
 import { colors, radius, spacing } from '../ui/tokens';
@@ -50,7 +50,7 @@ export function CameraCapture({ label, busyLabel, busy = false, onCapture }: Cam
     setError(null);
     let capturedPhoto: CapturedPhoto | null = null;
     try {
-      const shot = await cameraRef.current.takePicture({ base64: true, exif: false, quality: 0.7 });
+      const shot = await cameraRef.current.takePictureAsync({ base64: true, exif: false, quality: 0.7 });
       if (!shot?.base64) throw new Error('Could not read the camera photo. Please try again.');
       capturedPhoto = {
         base64: shot.base64,
