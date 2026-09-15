@@ -6,6 +6,7 @@ the feed: approved/safe content, age/category controls, ACTIVE friendships, and
 block/mute rules. Approved comments can make a post discoverable by text, but a
 comment can never make an otherwise-invisible post visible.
 """
+import re
 from urllib.parse import quote_plus
 
 from flask import Blueprint, jsonify, render_template, request, session
@@ -38,11 +39,16 @@ def _like_pattern(value):
     return f"%{value}%"
 
 
+def _hashtag_regex(value):
+    """Match one complete hashtag without matching a longer tag."""
+    return rf"(^|[^[:alnum:]_])#{re.escape(str(value or '').lower())}([^[:alnum:]_]|$)"
+
+
 def _scope_params(viewer_id):
     return effective_categories(viewer_id), _age_group(viewer_id)
 
 
-def search_visible_posts(viewer_id, query, limit=50):
+def search_visible_posts(viewer_id, query, limit=50, allowed_author_ids=None):
     """Return safe visible posts ranked by caption/hashtag/comment relevance."""
     clean = _clean_query(query)
     if not clean:
@@ -50,12 +56,14 @@ def search_visible_posts(viewer_id, query, limit=50):
 
     cats, age_group = _scope_params(viewer_id)
     word_pattern = _like_pattern(clean)
-    tag_pattern = _like_pattern("#" + clean)
+    tag_regex = _hashtag_regex(clean)
+    is_hashtag = str(query or "").strip().startswith("#")
     limit = max(1, min(int(limit), 50))
 
     return fetch_all(
         """WITH search_input AS (
-              SELECT %s::text AS clean, %s::text AS word_pattern, %s::text AS tag_pattern
+              SELECT %s::text AS clean, %s::text AS word_pattern, %s::text AS tag_regex,
+                     %s::boolean AS is_hashtag
             ), hidden_commenters AS (
               SELECT blocked_id AS user_id FROM blocked_users WHERE blocker_id=%s
               UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
@@ -67,65 +75,86 @@ def search_visible_posts(viewer_id, query, limit=50):
               LEFT JOIN hidden_commenters h ON h.user_id=c.child_id
               WHERE c.moderation_status='ALLOWED' AND h.user_id IS NULL
                 AND (
-                  c.comment_text ILIKE s.word_pattern ESCAPE '!'
-                  OR c.comment_text ILIKE s.tag_pattern ESCAPE '!'
-                  OR to_tsvector('simple',COALESCE(c.comment_text,''))
-                     @@ websearch_to_tsquery('simple',s.clean)
+                  (s.is_hashtag AND COALESCE(c.comment_text,'') ~* s.tag_regex)
+                  OR (NOT s.is_hashtag AND (
+                    c.comment_text ILIKE s.word_pattern ESCAPE '!'
+                    OR to_tsvector('simple',COALESCE(c.comment_text,''))
+                       @@ websearch_to_tsquery('simple',s.clean)
+                  ))
                 )
               ORDER BY c.post_id,c.created_at DESC
             )
             SELECT p.*,u.full_name,u.username,cp.profile_picture,
-              mc.comment_text AS matched_comment,
+              mc.comment_text AS matched_comment,pt.post_id AS tagged_post_id,
               (
-                CASE WHEN COALESCE(p.caption,'') ILIKE s.tag_pattern ESCAPE '!' THEN 12 ELSE 0 END +
-                CASE WHEN COALESCE(p.caption,'') ILIKE s.word_pattern ESCAPE '!' THEN 8 ELSE 0 END +
+                CASE WHEN s.is_hashtag AND (
+                  COALESCE(p.caption,'') ~* s.tag_regex OR pt.post_id IS NOT NULL
+                  OR mc.post_id IS NOT NULL
+                ) THEN 12 ELSE 0 END +
+                CASE WHEN NOT s.is_hashtag AND COALESCE(p.caption,'') ILIKE s.word_pattern ESCAPE '!' THEN 8 ELSE 0 END +
                 CASE WHEN mc.post_id IS NOT NULL THEN 6 ELSE 0 END +
-                CASE WHEN COALESCE(p.content_category,'') ILIKE s.word_pattern ESCAPE '!' THEN 3 ELSE 0 END +
-                CASE WHEN COALESCE(u.username,'') ILIKE s.word_pattern ESCAPE '!' THEN 3 ELSE 0 END +
-                CASE WHEN COALESCE(u.full_name,'') ILIKE s.word_pattern ESCAPE '!' THEN 2 ELSE 0 END
+                CASE WHEN NOT s.is_hashtag AND COALESCE(p.content_category,'') ILIKE s.word_pattern ESCAPE '!' THEN 3 ELSE 0 END +
+                CASE WHEN NOT s.is_hashtag AND COALESCE(u.username,'') ILIKE s.word_pattern ESCAPE '!' THEN 3 ELSE 0 END +
+                CASE WHEN NOT s.is_hashtag AND COALESCE(u.full_name,'') ILIKE s.word_pattern ESCAPE '!' THEN 2 ELSE 0 END
               ) AS search_score
             FROM posts p
             JOIN users u ON u.user_id=p.child_id
             LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
-            LEFT JOIN matching_comments mc ON mc.post_id=p.post_id
             CROSS JOIN search_input s
-            WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE
+            LEFT JOIN matching_comments mc ON mc.post_id=p.post_id
+            LEFT JOIN post_tags pt ON pt.post_id=p.post_id
+              AND LOWER(pt.normalized_tag)=LOWER(s.clean)
+            WHERE p.moderation_status='ALLOWED' AND p.processing_status='ALLOWED'
+              AND p.is_safe=TRUE AND p.is_story=FALSE
               AND p.content_category=ANY(%s)
               AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
-              AND (p.child_id=%s OR EXISTS(
-                SELECT 1 FROM followers f
-                WHERE f.child_id=%s AND f.following_child_id=p.child_id
-                  AND f.approved=TRUE AND f.approval_stage='ACTIVE'))
+              AND (
+                (%s::int[] IS NULL AND (p.child_id=%s OR EXISTS(
+                  SELECT 1 FROM followers f
+                  WHERE f.child_id=%s AND f.following_child_id=p.child_id
+                    AND f.approved=TRUE AND f.approval_stage='ACTIVE')))
+                OR (%s::int[] IS NOT NULL AND p.child_id=ANY(%s::int[]))
+              )
               AND p.child_id NOT IN (
                 SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
                 UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
                 UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
               AND (
-                COALESCE(p.caption,'') ILIKE s.word_pattern ESCAPE '!'
-                OR COALESCE(p.caption,'') ILIKE s.tag_pattern ESCAPE '!'
-                OR COALESCE(p.content_category,'') ILIKE s.word_pattern ESCAPE '!'
-                OR COALESCE(u.full_name,'') ILIKE s.word_pattern ESCAPE '!'
-                OR COALESCE(u.username,'') ILIKE s.word_pattern ESCAPE '!'
-                OR mc.post_id IS NOT NULL
-                OR to_tsvector('simple',
-                    COALESCE(p.caption,'') || ' ' || COALESCE(p.content_category,'') || ' ' ||
-                    COALESCE(u.full_name,'') || ' ' || COALESCE(u.username,''))
-                   @@ websearch_to_tsquery('simple',s.clean)
+                (s.is_hashtag AND (
+                  COALESCE(p.caption,'') ~* s.tag_regex
+                  OR pt.post_id IS NOT NULL
+                  OR mc.post_id IS NOT NULL
+                ))
+                OR (NOT s.is_hashtag AND (
+                  COALESCE(p.caption,'') ILIKE s.word_pattern ESCAPE '!'
+                  OR COALESCE(p.content_category,'') ILIKE s.word_pattern ESCAPE '!'
+                  OR COALESCE(u.full_name,'') ILIKE s.word_pattern ESCAPE '!'
+                  OR COALESCE(u.username,'') ILIKE s.word_pattern ESCAPE '!'
+                  OR mc.post_id IS NOT NULL
+                  OR to_tsvector('simple',
+                      COALESCE(p.caption,'') || ' ' || COALESCE(p.content_category,'') || ' ' ||
+                      COALESCE(u.full_name,'') || ' ' || COALESCE(u.username,''))
+                     @@ websearch_to_tsquery('simple',s.clean)
+                ))
               )
             ORDER BY search_score DESC,p.created_at DESC
             LIMIT %s""",
         (
             clean,
             word_pattern,
-            tag_pattern,
+            tag_regex,
+            is_hashtag,
             viewer_id,
             viewer_id,
             viewer_id,
             cats,
             age_group,
             age_group,
+            allowed_author_ids,
             viewer_id,
             viewer_id,
+            allowed_author_ids,
+            allowed_author_ids,
             viewer_id,
             viewer_id,
             viewer_id,
@@ -142,7 +171,8 @@ def browse_visible_posts(viewer_id, limit=30):
            FROM posts p
            JOIN users u ON u.user_id=p.child_id
            LEFT JOIN child_profiles cp ON cp.child_id=p.child_id
-           WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE
+           WHERE p.moderation_status='ALLOWED' AND p.processing_status='ALLOWED'
+             AND p.is_safe=TRUE AND p.is_story=FALSE
              AND p.content_category=ANY(%s)
              AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
              AND (p.child_id=%s OR EXISTS(
@@ -168,7 +198,7 @@ def browse_visible_posts(viewer_id, limit=30):
     )
 
 
-def visible_hashtags(viewer_id, query="", limit=6):
+def visible_hashtags(viewer_id, query="", limit=6, allowed_author_ids=None):
     """Extract real hashtags from visible captions and approved visible comments."""
     clean = _clean_query(query).lower()
     pattern = _like_pattern(clean)
@@ -183,13 +213,17 @@ def visible_hashtags(viewer_id, query="", limit=6):
             ), visible_posts AS (
               SELECT p.post_id,p.caption
               FROM posts p
-              WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE
+              WHERE p.moderation_status='ALLOWED' AND p.processing_status='ALLOWED'
+                AND p.is_safe=TRUE AND p.is_story=FALSE
                 AND p.content_category=ANY(%s)
                 AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
-                AND (p.child_id=%s OR EXISTS(
-                  SELECT 1 FROM followers f
-                  WHERE f.child_id=%s AND f.following_child_id=p.child_id
-                    AND f.approved=TRUE AND f.approval_stage='ACTIVE'))
+                AND (
+                  (%s::int[] IS NULL AND (p.child_id=%s OR EXISTS(
+                    SELECT 1 FROM followers f
+                    WHERE f.child_id=%s AND f.following_child_id=p.child_id
+                      AND f.approved=TRUE AND f.approval_stage='ACTIVE')))
+                  OR (%s::int[] IS NOT NULL AND p.child_id=ANY(%s::int[]))
+                )
                 AND p.child_id NOT IN (
                   SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
                   UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
@@ -198,6 +232,10 @@ def visible_hashtags(viewer_id, query="", limit=6):
               SELECT LOWER(m[1]) AS tag,vp.post_id
               FROM visible_posts vp
               CROSS JOIN LATERAL regexp_matches(COALESCE(vp.caption,''),'#([[:alnum:]_]{2,50})','g') AS m
+               UNION ALL
+               SELECT LOWER(pt.normalized_tag) AS tag,pt.post_id
+               FROM post_tags pt
+               JOIN visible_posts vp ON vp.post_id=pt.post_id
               UNION ALL
               SELECT LOWER(m[1]) AS tag,c.post_id
               FROM comments c
@@ -208,7 +246,7 @@ def visible_hashtags(viewer_id, query="", limit=6):
             )
             SELECT tag,COUNT(DISTINCT post_id)::int AS post_count
             FROM tag_rows
-            WHERE (%s='' OR tag ILIKE %s ESCAPE '!')
+             WHERE (%s='' OR tag=%s OR tag ILIKE %s ESCAPE '!')
             GROUP BY tag
             ORDER BY post_count DESC,tag ASC
             LIMIT %s""",
@@ -219,11 +257,15 @@ def visible_hashtags(viewer_id, query="", limit=6):
             cats,
             age_group,
             age_group,
+            allowed_author_ids,
+            viewer_id,
+            viewer_id,
+            allowed_author_ids,
+            allowed_author_ids,
             viewer_id,
             viewer_id,
             viewer_id,
-            viewer_id,
-            viewer_id,
+            clean,
             clean,
             pattern,
             limit,

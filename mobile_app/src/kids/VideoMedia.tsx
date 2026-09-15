@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { useVideoPlayer, VideoView } from 'expo-video';
+import { useVideoPlayer } from 'expo-video';
 import { useIsForeground } from '../query/client';
 import { Button } from '../ui/components';
+import { NativeVideoView } from '../ui/nativeViews';
 import { colors, radius, spacing } from '../ui/tokens';
 
 export function VideoMedia({ source, posterUrl, active = true, height = 380 }: { source: string; posterUrl?: string | null; active?: boolean; height?: number }) {
@@ -53,7 +54,7 @@ export function VideoMedia({ source, posterUrl, active = true, height = 380 }: {
 
   return (
     <View style={[styles.shell, { height }]}>
-      <VideoView player={player} style={styles.video} contentFit="cover" nativeControls onFirstFrameRender={() => setReady(true)} />
+      <NativeVideoView player={player} style={styles.video} contentFit="cover" nativeControls onFirstFrameRender={() => setReady(true)} />
       {!ready && posterUrl ? <Image source={{ uri: posterUrl }} style={styles.overlay} /> : null}
       {!ready && !posterUrl && !error ? <View style={styles.overlayCenter}><Text style={styles.loading}>Loading video…</Text></View> : null}
       {error ? <View style={styles.overlayCenter}><Text style={styles.error}>Playback failed.</Text><Button label="Retry" onPress={() => void retry()} /></View> : null}

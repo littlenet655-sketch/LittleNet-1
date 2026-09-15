@@ -7,7 +7,7 @@ import { isConversationUnread } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
 import { Avatar, TimeAgo } from '../../ui/social';
-import { BrandHeader, DisabledFeature, EmptyState, ErrorState, GateNotice, LoadingState, Screen } from '../../ui/components';
+import { BrandHeader, Button, DisabledFeature, EmptyState, ErrorState, GateNotice, LoadingState, Screen } from '../../ui/components';
 import { ApiError } from '../../api/client';
 import { colors } from '../../ui/tokens';
 
@@ -50,7 +50,7 @@ export function ConversationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
         data={items}
         keyExtractor={(c) => `c:${c.conversation_id}`}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load('refresh')} />}
-        ListHeaderComponent={<BrandHeader title="Messages" subtitle="Only approved friends can message." />}
+        ListHeaderComponent={<><BrandHeader title="Messages" subtitle="Only approved friends can message." /><Button label="New message" onPress={() => nav.navigate('NewMessage', {})} /></>}
         ListEmptyComponent={<EmptyState title="No conversations" body="Make an approved friend to start chatting." />}
         renderItem={({ item }) => {
           const unread = isConversationUnread(item);
@@ -68,9 +68,9 @@ export function ConversationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
   name: { fontWeight: '800', color: colors.ink },
   last: { flex: 1, color: colors.muted },
   unread: { color: colors.ink, fontWeight: '800' },
-  dot: { color: colors.brand, fontSize: 12 },
+  dot: { color: colors.brand, fontSize: 12, marginLeft: 4 },
 });

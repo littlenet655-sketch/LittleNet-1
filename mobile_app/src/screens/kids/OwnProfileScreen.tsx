@@ -60,11 +60,12 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           </View>
           {typeof profile?.bio === 'string' && profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
         </Card>
-        <View style={styles.tabs}>
+          <View style={styles.tabs}>
           {(['posts', 'saved', 'edit'] as Tab[]).map((t) => (
             <Pressable key={t} onPress={() => setTab(t)}><Text style={[styles.tab, tab === t && styles.tabActive]}>{t.toUpperCase()}</Text></Pressable>
           ))}
         </View>
+          <View style={styles.actions}><Button label="Edit profile" variant="secondary" onPress={() => nav.navigate('EditProfile', {})} /><Button label="Saved content" variant="secondary" onPress={() => nav.navigate('SavedContent', {})} /><Button label="Followers" variant="secondary" onPress={() => nav.navigate('Connections', { mode: 'followers' })} /></View>
         {tab === 'edit' ? (
           <Card>
             <Field label="Full name" value={name} onChangeText={setName} />
@@ -98,12 +99,13 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 }
 
 const styles = StyleSheet.create({
-  head: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  counts: { color: colors.muted, flex: 1 },
+  head: { flexDirection: 'row', alignItems: 'center', gap: 18, paddingVertical: 8 },
+  counts: { color: colors.ink, flex: 1, fontWeight: '600', lineHeight: 22 },
   bio: { marginTop: 8, color: colors.ink, fontSize: type.body },
-  tabs: { flexDirection: 'row', gap: 16, marginVertical: 12 },
-  tab: { color: colors.muted, fontWeight: '700' },
-  tabActive: { color: colors.brandDark },
-  thumb: { width: '100%', height: 180, borderRadius: 12, backgroundColor: colors.line },
+  tabs: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 12, paddingVertical: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.line },
+  actions: { gap: 8, marginBottom: 8 },
+  tab: { color: colors.muted, fontWeight: '700', fontSize: 12 },
+  tabActive: { color: colors.ink },
+  thumb: { width: '100%', height: 180, borderRadius: 0, backgroundColor: colors.line },
   caption: { marginTop: 6, color: colors.ink },
 });

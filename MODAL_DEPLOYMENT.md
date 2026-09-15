@@ -10,7 +10,7 @@ LittleNet uses a split deployment so the Flask/Jinja social application stays li
 - **Heavy AI:** `modal_ai.py` on a T4 GPU
 - **Database:** external PostgreSQL (for example Neon)
 - **Private media:** Cloudflare R2
-- **Android:** WebView app pointing only at the verified public web URL; the web app calls protected Modal AI internally
+- **Android:** React Native + Expo client using the verified API URL; media and face flows stay protected by the backend and Modal AI
 
 Standalone speech/audio moderation is intentionally outside the locked current scope. Uploaded child videos are sanitized to remove audio before persistence. Old instructions mentioning active Whisper/Faster-Whisper warm-up are obsolete.
 
@@ -49,7 +49,7 @@ AI_SERVICE_URL
 AI_SHARED_SECRET
 ```
 
-The live release preflight additionally requires a real public `BASE_URL`, working private R2 storage, and working SMTP credentials. Put all of these in `littlenet-web-secrets`:
+The live release preflight additionally requires a real public `BASE_URL`, working private R2 storage, and working Resend credentials. Put the web and R2 values in `littlenet-web-secrets`:
 
 ```text
 BASE_URL
@@ -59,27 +59,23 @@ R2_SECRET_ACCESS_KEY
 R2_BUCKET
 ```
 
-For mail, either of these equivalent credential pairs is accepted:
+For mail, configure the verified Resend production sender in the `littlenet-email` Modal secret. `modal_web.py` attaches this secret to the live web function; updating only a local Replit secret or only `littlenet-web-secrets` does not refresh the running deployment.
+
+The parent OTP path has a fixed sender contract independent of deployment
+defaults: every parent verification email is sent as
+`LittleNet <no-reply@littlenet.in>`. `RESEND_FROM_EMAIL` and
+`RESEND_FROM_NAME` cannot override that identity for OTP delivery. The
+LittleNet domain must remain verified in Resend; an unverified or sandbox
+sender is not an acceptable fallback.
 
 ```text
-SMTP_USER + SMTP_PASSWORD
+RESEND_API_KEY
+RESEND_FROM_EMAIL
+RESEND_FROM_NAME
 ```
 
-or
+The sender must be a domain-verified LittleNet address. LittleNet deliberately does not fall back to a sandbox sender, SMTP, or demo delivery because parent OTP success must prove real inbox delivery.
 
-```text
-MAIL_EMAIL + MAIL_PASSWORD
-```
-
-Optional SMTP overrides are:
-
-```text
-SMTP_HOST
-SMTP_PORT
-SMTP_USE_TLS
-```
-
-If the optional SMTP values are absent, LittleNet defaults to `smtp.gmail.com`, port `587`, with TLS enabled.
 
 A complete example is:
 
@@ -94,11 +90,16 @@ modal secret create littlenet-web-secrets \
   R2_ACCESS_KEY_ID="<r2-access-key>" \
   R2_SECRET_ACCESS_KEY="<r2-secret-key>" \
   R2_BUCKET="<private-bucket-name>" \
-  SMTP_USER="<mail-account>" \
-  SMTP_PASSWORD="<mail-app-password>"
 ```
 
-The release preflight validates the database/schema, quiz bank, AI health, Presidio PII detection, MediaPipe liveness assets, public `BASE_URL`, SMTP login, and R2 bucket access instead of silently falling back to demo behavior.
+```bash
+modal secret create littlenet-email --force \
+  RESEND_API_KEY="<resend-api-key>" \
+  RESEND_FROM_EMAIL="no-reply@littlenet.in" \
+  RESEND_FROM_NAME="LittleNet"
+```
+
+The release preflight validates the database/schema, quiz bank, AI health, Presidio PII detection, MediaPipe liveness assets, public `BASE_URL`, Resend delivery, and R2 bucket access instead of silently falling back to demo behavior.
 
 ## Recommended release path
 

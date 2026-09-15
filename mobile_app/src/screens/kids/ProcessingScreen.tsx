@@ -55,4 +55,6 @@ export function ProcessingStatusScreen({ route }: ChildScreenProps<'ProcessingSt
   );
 }
 
-const styles = StyleSheet.create({ copy: { color: colors.ink } });
+const styles = StyleSheet.create({
+  copy: { color: colors.ink, fontSize: 16, lineHeight: 23, textAlign: 'center', paddingVertical: 18 },
+});

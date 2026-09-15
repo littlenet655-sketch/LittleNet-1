@@ -99,8 +99,8 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 }
 
 const styles = StyleSheet.create({
-  kinds: { flexDirection: 'row', gap: 8 },
+  kinds: { flexDirection: 'row', gap: 8, marginBottom: 8 },
   row: { flexDirection: 'row', gap: 8, marginTop: 8 },
-  file: { marginTop: 8, color: colors.ink },
-  preview: { marginTop: 8, width: '100%', height: 220, borderRadius: 12, backgroundColor: colors.line },
+  file: { marginTop: 8, color: colors.muted, fontSize: 12 },
+  preview: { marginTop: 8, width: '100%', height: 260, borderRadius: 0, backgroundColor: colors.line },
 });

@@ -40,7 +40,7 @@ export function CategoryBadge({ label }: { label?: string }) {
 
 const styles = StyleSheet.create({
   avatar: { backgroundColor: colors.line },
-  fallback: { backgroundColor: colors.sunny, alignItems: 'center', justifyContent: 'center' },
+  fallback: { backgroundColor: '#E8F3FA', alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: colors.line },
   initial: { fontWeight: '800', color: colors.ink, fontSize: type.body },
   time: { color: colors.muted, fontSize: type.caption },
   badge: { backgroundColor: '#E6F7F7', borderRadius: radius.pill, paddingHorizontal: spacing.sm, paddingVertical: 3, alignSelf: 'flex-start' },

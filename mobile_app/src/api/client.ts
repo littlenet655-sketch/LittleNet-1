@@ -49,6 +49,7 @@ export const routes = {
   reelsV2: '/api/mobile/v2/kids/reels',
   discoverV2: '/api/mobile/v2/kids/discover',
   impressions: '/api/mobile/v2/kids/impressions',
+  recommendationActions: '/api/mobile/v2/kids/recommendation-actions',
   uploadSession: '/api/mobile/v2/uploads/session',
   uploadComplete: (uploadId: string) => `/api/mobile/v2/uploads/${encodeURIComponent(uploadId)}/complete`,
   processingStatus: (postId: number) => `/api/mobile/v2/posts/${postId}/processing-status`,

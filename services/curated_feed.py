@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from database.connection import execute, fetch_all, fetch_one, get_db_connection
-from services.controls import EDUCATIONAL_CATEGORIES, effective_categories
+from services.controls import EDUCATIONAL_CATEGORIES, controls_for_child, effective_categories
 from services.social import _age_group, child_surface_open
 
 
@@ -166,6 +166,11 @@ def fetch_curated_candidates(child_id: int, surface: str = "FEED", limit: int = 
 
 def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 60) -> list[dict[str, Any]]:
     """Retrieve safe social posts using only fixed parameterized SQL."""
+    from child.service import discoverable_child_ids
+
+    allowed_child_ids = discoverable_child_ids(child_id)
+    if allowed_child_ids is not None and len(allowed_child_ids) == 0:
+        return []
     cats = effective_categories(child_id)
     age_grp = _age_group(child_id)
     is_reel = str(surface).upper() == "REELS"
@@ -181,6 +186,7 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
                LEFT JOIN child_profiles cp ON cp.child_id = p.child_id
                WHERE p.moderation_status = 'ALLOWED' AND p.is_safe = TRUE AND p.is_story = FALSE
                  AND p.is_reel = TRUE
+                  AND p.child_id = ANY(%s::int[])
                  AND p.content_category = ANY(%s)
                  AND (%s IS NULL OR p.audience_age_group = 'ALL' OR p.audience_age_group = %s)
                  AND p.child_id <> %s
@@ -190,13 +196,9 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
                    UNION SELECT muted_id FROM muted_users WHERE muter_id = %s)
                ORDER BY p.created_at DESC
                LIMIT %s""",
-            (child_id, child_id, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
+             (child_id, child_id, allowed_child_ids, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
         )
         return [normalize_social_item(r) for r in rows]
-    from child.service import discoverable_child_ids
-    allowed_child_ids = discoverable_child_ids(child_id)
-    if allowed_child_ids is not None and len(allowed_child_ids) == 0:
-        return []
     rows = fetch_all(
         """SELECT p.*, u.full_name, cp.profile_picture,
              (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
@@ -405,14 +407,55 @@ def _materialize_session_items(raw_items: list[dict[str, Any]], child_id: int, s
         )
         social_map = {int(r["post_id"]): normalize_social_item(r) for r in s_rows}
 
+    # Session rows are only a cursor, not an authorization grant. Re-check
+    # current Parent controls, age, friendship/discoverability, and blocks
+    # after loading the materialized content so settings take effect without
+    # waiting for the session TTL.
+    surface_clean = str(surface).upper()
+    controls = controls_for_child(child_id)
+    if surface_clean == "REELS" and not controls.get("allow_reels", True):
+        return []
+    cats = set(effective_categories(child_id))
+    age_group = _age_group(child_id)
+    child_age = _child_real_age(child_id)
+    from child.service import discoverable_child_ids
+    discoverable_ids = set(discoverable_child_ids(child_id) or [])
+    blocked_rows = fetch_all(
+        """SELECT blocked_id AS creator_id FROM blocked_users WHERE blocker_id=%s
+           UNION SELECT blocker_id AS creator_id FROM blocked_users WHERE blocked_id=%s
+           UNION SELECT muted_id AS creator_id FROM muted_users WHERE muter_id=%s""",
+        (child_id, child_id, child_id),
+    )
+    blocked_ids = {int(row["creator_id"]) for row in blocked_rows or [] if row.get("creator_id") is not None}
+
+    def current_eligible(item: dict[str, Any]) -> bool:
+        if item.get("moderation_status") != "ALLOWED" or item.get("is_safe") is not True:
+            return False
+        if bool(item.get("is_reel")) != (surface_clean == "REELS"):
+            return False
+        if item.get("category") not in cats:
+            return False
+        audience = str(item.get("audience_age_group") or "ALL")
+        if age_group and audience not in {"ALL", age_group}:
+            return False
+        try:
+            if not (int(item.get("min_age", 4)) <= child_age <= int(item.get("max_age", 18))):
+                return False
+        except (TypeError, ValueError):
+            return False
+        if item.get("source_type") == "SOCIAL":
+            creator_id = int((item.get("ranking_metadata") or {}).get("child_id") or 0)
+            if creator_id in blocked_ids or creator_id not in discoverable_ids:
+                return False
+        return True
+
     hydrated = []
     for r in raw_items:
         sid = int(r["source_id"])
         stype = r["source_type"]
-        if stype == "CURATED" and sid in curated_map:
-            hydrated.append(curated_map[sid])
-        elif stype == "SOCIAL" and sid in social_map:
-            hydrated.append(social_map[sid])
+        item = curated_map.get(sid) if stype == "CURATED" else social_map.get(sid)
+        if item and current_eligible(item):
+            hydrated.append(item)
 
     return hydrated
 
@@ -494,9 +537,12 @@ def record_feed_impression(
     completed: bool = False,
     liked: bool = False,
     saved: bool = False,
+    replay_count: int = 0,
 ) -> bool:
     """Record that an item was viewed by a child after validating it belonged to their active session."""
     stype = str(source_type).upper()
+    if stype in {"POST", "REEL", "STORY"}:
+        stype = "SOCIAL"
     surf = str(surface).upper()
 
     # Validate that session belongs to child and item was part of that session
@@ -512,10 +558,21 @@ def record_feed_impression(
         return False
 
     execute(
-        """INSERT INTO content_impressions(child_id, source_type, source_id, surface, watched_ms, completed, liked, saved)
-           VALUES(%s, %s, %s, %s, %s, %s, %s, %s)""",
-        (child_id, stype, source_id, surf, watched_ms, completed, liked, saved),
+        """INSERT INTO content_impressions(
+             child_id, source_type, source_id, surface, watched_ms, completed, liked, saved, replay_count)
+           VALUES(%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+        (child_id, stype, source_id, surf, watched_ms, completed, liked, saved, max(0, int(replay_count or 0))),
     )
+    from services.recommendation_signals import record_reel_completion, record_signal
+    if completed:
+        record_reel_completion(child_id, stype, source_id, replay_count if surf == "REELS" else 0)
+    elif replay_count and surf == "REELS":
+        for _ in range(min(max(int(replay_count), 0), 20)):
+            record_signal(child_id, stype, source_id, "REEL_REPLAY")
+    if liked:
+        record_signal(child_id, stype, source_id, "LIKE")
+    if saved:
+        record_signal(child_id, stype, source_id, "SAVE")
     return True
 
 

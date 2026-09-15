@@ -25,7 +25,14 @@ export type ChildStackParamList = {
   NotificationsTab: undefined;
   Conversations: undefined;
   Chat: { peerId: number; postId?: number };
+  ChatDetails: { peerId: number };
+  NewMessage: undefined;
+  SavedContent: undefined;
+  EditProfile: undefined;
+  Connections: { mode?: 'followers' | 'following' } | undefined;
   PostDetail: { postId: number };
+  SafetyCentre: undefined;
+  ReportHistory: undefined;
   OtherProfile: { targetId: number };
   ProcessingStatus: { postId: number };
 };

@@ -64,8 +64,10 @@ class FakePool:
 
 def test_healthy_pooled_connection_is_validated_and_reused(monkeypatch):
     raw = FakeConnection()
-    pool = FakePool(raw)
+    pool = FakePool(raw, raw)
     monkeypatch.setattr(connection, '_get_pool', lambda: pool)
+    monkeypatch.setattr(connection, '_VALIDATION_INTERVAL_SECONDS', 30)
+    connection.reset_pool_metrics()
 
     wrapped = connection.get_db_connection()
 
@@ -74,6 +76,11 @@ def test_healthy_pooled_connection_is_validated_and_reused(monkeypatch):
     wrapped.close()
     assert pool.returned == [raw]
     assert pool.discarded == []
+
+    wrapped_again = connection.get_db_connection()
+    wrapped_again.close()
+    assert raw.cursor_instance.executed == [('SELECT 1', ())]
+    assert connection.pool_metrics_snapshot()["counts"]["validation_selects"] == 1
 
 
 @pytest.mark.parametrize('broken', [

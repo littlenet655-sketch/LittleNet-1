@@ -29,6 +29,12 @@
       "expo-secure-store",
       "expo-video",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "LittleNet uses the camera for live face checks."
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "LittleNet uses a selected photo only when you choose to create a post.",
@@ -36,6 +42,12 @@
           "microphonePermission": false
         }
       ]
-    ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "c4ce834d-fd50-4504-a311-820c3372b6dc"
+      }
+    },
+    "owner": "akshu1245s-team"
   }
 }
