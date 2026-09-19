@@ -115,3 +115,18 @@ export function fetchKidsHome(token: string): Promise<{ ok: boolean; stories: St
   return get(routes.kidsHome, token);
 }
 
+export interface HeartbeatResult {
+  ok: boolean;
+  minutes_today: number;
+  remaining_minutes: number | null;
+  locked?: boolean;
+}
+
+export function sendHeartbeat(token: string, signal?: AbortSignal): Promise<HeartbeatResult> {
+  return apiRequest<HeartbeatResult>(
+    routes.heartbeatV2,
+    { method: 'POST', signal },
+    token,
+  );
+}
+

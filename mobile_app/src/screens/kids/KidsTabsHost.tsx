@@ -2,6 +2,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import type { ChildScreenProps } from '../../navigation/types';
 import { KidsTabsShell } from './KidsTabs';
 import { useKidsHydration } from '../../kids/useKidsHydration';
+import { useScreenTimeHeartbeat } from '../../kids/useScreenTimeHeartbeat';
 import { FeedScreen } from './FeedScreen';
 import { DiscoverScreen } from './DiscoverScreen';
 import { CreateScreen } from './CreateScreen';
@@ -12,6 +13,7 @@ import { Button, LoadingState, Screen } from '../../ui/components';
 export function KidsTabsHost(props: ChildScreenProps<'KidsTabs'>) {
   const { signOut } = useAuth();
   useKidsHydration();
+  useScreenTimeHeartbeat();
   const tab = String((props.route.params as { tab?: string } | undefined)?.tab ?? 'FeedTab');
   return (
     <KidsTabsShell

@@ -192,6 +192,6 @@ def notify_new_chat_message(recipient_id: int, sender_name: str, conversation_id
         recipient_id,
         event_type="NEW_MESSAGE",
         title=f"Message from {sender_name}",
-        body=f"{sender_name} sent you a message.",
+        message=f"{sender_name} sent you a message.",
         payload={"conversationId": conversation_id},
     )

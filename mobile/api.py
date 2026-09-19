@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import random
@@ -61,7 +62,7 @@ from quiz.service import (
     record_feed_view,
     required_feed_quiz,
 )
-from safety.face_service import enroll, verify, verify_adult_face
+from safety.face_service import clear_child_face, enroll, has_face_profile, verify, verify_adult_face
 from safety.moderation_service import evaluate, record, safety_level
 from safety.pii_service import scan_pii
 from safety.policy import Decision, decide
@@ -170,6 +171,13 @@ def _require_mobile(*roles):
             claims = _load_claims()
             if not claims:
                 return jsonify(error="mobile_auth_required"), 401
+            token = _bearer_token()
+            if token:
+                import hashlib
+                thash = hashlib.sha256(token.encode()).hexdigest()
+                revoked = fetch_one("SELECT 1 FROM mobile_token_revocations WHERE token_hash=%s", (thash,))
+                if revoked:
+                    return jsonify(error="token_revoked"), 401
             user = fetch_one(
                 "SELECT user_id,username,full_name,email,role,age,account_status FROM users WHERE user_id=%s",
                 (int(claims.get("uid") or 0),),
@@ -683,6 +691,17 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("CHILD", "PARENT", "ADMIN")
     def mobile_logout():
+        token = _bearer_token()
+        if token:
+            thash = hashlib.sha256(token.encode()).hexdigest()
+            uid = (g.mobile_claims or {}).get("uid")
+            try:
+                execute(
+                    "INSERT INTO mobile_token_revocations (token_hash, user_id, revoked_at) VALUES (%s, %s, NOW()) ON CONFLICT (token_hash) DO NOTHING",
+                    (thash, uid),
+                )
+            except Exception:
+                pass
         key = (g.mobile_claims or {}).get("usage_session_key")
         if key:
             try:
@@ -1019,11 +1038,16 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("CHILD")
     def mobile_child_face_enroll():
+        uid = int(g.mobile_user["user_id"])
+        if has_face_profile(uid):
+            return jsonify(
+                error="face_already_enrolled",
+                message="Face profile is already enrolled. Only a linked parent can reset enrolled child faces."
+            ), 409
         path = _save_request_image("littlenet_mobile_enroll_")
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
-            uid = int(g.mobile_user["user_id"])
             enroll(uid, path)
             b_key = secrets.token_hex(32)
             execute(
@@ -1110,6 +1134,9 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("CHILD")
     def mobile_kids_profile():
+        gate = _child_gate()
+        if gate:
+            return gate
         uid = int(g.mobile_user["user_id"])
         if request.method == "PUT":
             data = request.get_json(silent=True) or {}
@@ -1817,6 +1844,13 @@ def register_mobile_api(bp):
                 conn.rollback()
                 return jsonify(error="forbidden_upload_owner_mismatch"), 403
 
+            kind = str(session_row.get("kind") or "POST").upper()
+            feature = "reels" if kind == "REEL" else "stories" if kind == "STORY" else "posting"
+            gate = _child_gate(feature)
+            if gate:
+                conn.rollback()
+                return gate
+
             cur.execute(
                 "SELECT post_id, processing_status, moderation_status, processing_error FROM posts WHERE upload_id=%s OR source_media_path=%s LIMIT 1",
                 (upload_id, session_row["object_key"]),
@@ -2362,7 +2396,7 @@ def register_mobile_api(bp):
             err_msg = str(exc).lower()
             if "unique constraint" in err_msg or "duplicate key" in err_msg or "uniqueviolation" in err_msg:
                 return jsonify(error="This username is already taken. Please choose another."), 400
-            return jsonify(error="child_creation_failed", message=str(exc)), 400
+            return jsonify(error="child_creation_failed", message="Unable to create child account. Please verify details and try again."), 400
         return jsonify(ok=True, child_id=child_id, next_steps=["child_face_enrollment", "age_quiz"]), 201
 
     @bp.route("/api/mobile/v1/parent/children/<int:child_id>/face/enroll", methods=["POST"])
@@ -2395,7 +2429,7 @@ def register_mobile_api(bp):
         except Exception as exc:
             import logging
             logging.getLogger(__name__).exception("face_enrollment_failed: %s", exc)
-            return jsonify(error="face_enrollment_failed", message=str(exc)), 400
+            return jsonify(error="face_enrollment_failed", message="Unable to enroll face. Please ensure a clear, well-lit photo of the face and try again."), 400
         finally:
             try:
                 os.remove(path)
@@ -2472,6 +2506,18 @@ def register_mobile_api(bp):
         if not ok:
             return jsonify(ok=False, error=msg), 400
         return jsonify(ok=True, message=msg)
+
+    @bp.route("/api/mobile/v1/parent/child/<int:child_id>/reset-face", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("PARENT")
+    def mobile_parent_reset_child_face(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        clear_child_face(child_id)
+        log(child_id, "CHILD_FACE_RESET_BY_PARENT", {"parent_id": pid})
+        notify(child_id, "FACE_RESET", "Your parent has reset your face login profile.", "/child/dashboard/", pid)
+        return jsonify(ok=True, message="Face profile reset successfully")
 
 
     @bp.route("/api/mobile/v1/parent/time-limit/<int:child_id>", methods=["PUT"])
@@ -2617,6 +2663,28 @@ def register_mobile_api(bp):
     def mobile_admin_reviews():
         rows = fetch_all("SELECT e.*,u.full_name,u.username FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.decision='REVIEW' AND e.status='OPEN' ORDER BY e.created_at DESC LIMIT 100")
         return jsonify(ok=True, events=_clean(rows))
+
+    @bp.route("/api/mobile/v2/kids/heartbeat", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_v2_kids_heartbeat():
+        uid = int(g.mobile_user["user_id"])
+        key = (g.mobile_claims or {}).get("usage_session_key")
+        if key:
+            try:
+                heartbeat(key)
+            except Exception:
+                pass
+        gate = _child_gate()
+        if gate:
+            return gate
+        locked, remaining = lock_state(uid)
+        return jsonify(
+            ok=True,
+            minutes_today=minutes_today(uid),
+            remaining_minutes=remaining,
+            locked=locked,
+        )
 
     @bp.route("/api/mobile/v2/kids/feed")
     @_require_mobile("CHILD")

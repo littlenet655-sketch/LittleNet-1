@@ -38,6 +38,7 @@ export const routes = {
   parentFollowAction: '/api/mobile/v1/parent/follow-requests/action',
   parentNotifications: '/api/mobile/v1/parent/notifications',
   parentActivity: (childId: number) => `/api/mobile/v1/parent/activity/${childId}`,
+  parentResetChildFace: (childId: number) => `/api/mobile/v1/parent/child/${childId}/reset-face`,
   adminDashboard: '/api/mobile/v1/admin/dashboard',
   adminReviews: '/api/mobile/v1/admin/reviews',
   adminReview: (eventId: number) => `/api/mobile/v1/admin/reviews/${eventId}`,
@@ -47,6 +48,7 @@ export const routes = {
   // v2 media pipeline (Agent C owns the posting UI; routes stay centralized here).
   feedV2: '/api/mobile/v2/kids/feed',
   reelsV2: '/api/mobile/v2/kids/reels',
+  heartbeatV2: '/api/mobile/v2/kids/heartbeat',
   discoverV2: '/api/mobile/v2/kids/discover',
   impressions: '/api/mobile/v2/kids/impressions',
   recommendationActions: '/api/mobile/v2/kids/recommendation-actions',

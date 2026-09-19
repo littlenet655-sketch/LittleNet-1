@@ -9,7 +9,7 @@ from __future__ import annotations
 import mimetypes
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 from urllib.parse import urlparse
 
 R2_REFERENCE_PREFIX = "uploads/r2/"

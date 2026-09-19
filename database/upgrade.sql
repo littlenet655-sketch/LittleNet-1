@@ -344,6 +344,16 @@ CREATE TABLE IF NOT EXISTS user_device_tokens (
 
 CREATE INDEX IF NOT EXISTS idx_user_device_tokens_active ON user_device_tokens(user_id) WHERE revoked_at IS NULL;
 
+-- Mobile Bearer Token Revocations (Server-side Session Revocation)
+CREATE TABLE IF NOT EXISTS mobile_token_revocations (
+  token_hash VARCHAR(64) PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  revoked_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_user ON mobile_token_revocations(user_id);
+
+
 
 
 

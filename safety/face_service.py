@@ -35,15 +35,27 @@ def _embedding(img_path):
     return timed_call('deepface',run,timeout_seconds('deepface',120))
 
 
-def enroll(child_id,path,model_name='Facenet512'):
+def has_face_profile(child_id: int) -> bool:
+    """Check if child already has an active enrolled face profile."""
+    row = fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s AND embedding IS NOT NULL", (int(child_id),))
+    return bool(row)
+
+
+def clear_child_face(child_id: int) -> bool:
+    """Clear enrolled face profile upon authorized parent reset."""
+    execute("DELETE FROM face_profiles WHERE child_id=%s", (int(child_id),))
+    return True
+
+
+def enroll(child_id, path, model_name='Facenet512'):
     if model_name != 'Facenet512':
         raise ValueError('invalid_model_name')
-    emb=_embedding(path)
-    emb=_validated_embedding(emb)
+    emb = _embedding(path)
+    emb = _validated_embedding(emb)
     execute('''INSERT INTO face_profiles(child_id,embedding,model_name,reference_path)
                VALUES(%s,%s::jsonb,'Facenet512',%s)
                ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding,model_name=EXCLUDED.model_name,reference_path=EXCLUDED.reference_path,updated_at=NOW()''',
-            (child_id,json.dumps(emb),None))
+            (child_id, json.dumps(emb), None))
     return True
 
 

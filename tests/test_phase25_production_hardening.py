@@ -293,7 +293,8 @@ def test_complete_idempotency(client, app):
 
     token = _issue_token({"user_id": 9911, "role": "CHILD"})
 
-    with patch("services.job_queue.enqueue_media_job") as mock_q:
+    with patch("services.job_queue.enqueue_media_job") as mock_q, \
+         patch("services.object_storage.head_object", return_value={"content_length": 1024, "content_type": "image/jpeg"}):
         mock_q.return_value = "job_x"
         resp1 = client.post(
             f"/api/mobile/v2/uploads/{u_id}/complete",
