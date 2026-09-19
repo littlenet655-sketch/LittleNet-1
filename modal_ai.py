@@ -83,7 +83,7 @@ image = (
         remote_path="/root/littlenet",
         ignore=[
             ".git/**", ".pytest_cache/**", "**/__pycache__/**", "uploads/**",
-            "android/**", "android-build/**", "mobile_flutter/**", "datasets/**",
+            "android/**", "android-build/**", "mobile_app/**", "mobile_flutter/**", "datasets/**",
             "test-results/**", "playwright-report/**", "tools/gradle-8.9/**",
             "node_modules/**", ".agent/**", ".agents/**", "agent/**",
             ".claude/**", ".cursor/**", "*.db", "*.zip", "*.apk", ".env",

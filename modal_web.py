@@ -57,9 +57,9 @@ web_image = (
         remote_path="/root/littlenet",
         ignore=[
             ".git/**", ".pytest_cache/**", "**/__pycache__/**", "uploads/**",
-            "android/**", "tools/gradle-8.9/**", "node_modules/**", ".agent/**",
-            ".agents/**", "agent/**", ".claude/**", ".cursor/**", "*.db",
-            "*.zip", "*.apk", ".env",
+            "android/**", "tools/gradle-8.9/**", "node_modules/**", "mobile_app/**",
+            ".agent/**", ".agents/**", "agent/**", ".claude/**", ".cursor/**",
+            "*.db", "*.zip", "*.apk", ".env",
         ],
         copy=True,
     )
