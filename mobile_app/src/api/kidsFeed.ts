@@ -130,3 +130,27 @@ export function sendHeartbeat(token: string, signal?: AbortSignal): Promise<Hear
   );
 }
 
+export function recordImpressionBatch(
+  token: string,
+  events: Array<{
+    session_id?: string;
+    source_type: string;
+    source_id: number;
+    surface: string;
+    watched_ms?: number;
+    completed?: boolean;
+    liked?: boolean;
+    saved?: boolean;
+    replay_count?: number;
+  }>,
+): Promise<{ ok: boolean; processed: number }> {
+  return apiRequest<{ ok: boolean; processed: number }>(
+    routes.impressionsBatch,
+    {
+      method: 'POST',
+      body: JSON.stringify({ events }),
+    },
+    token,
+  );
+}
+

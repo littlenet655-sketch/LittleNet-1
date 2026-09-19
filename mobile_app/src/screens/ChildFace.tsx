@@ -1,32 +1,56 @@
 import { useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { enrollChildFace, faceLogin } from '../api/auth';
+import { enrollChildFace, faceLogin, requestFaceChallenge, type FaceChallengeResponse } from '../api/auth';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { CameraCapture } from '../camera/CameraCapture';
 import type { CapturedPhoto } from '../camera/livePhoto';
+import { precheckFaceChallenge } from '../camera/facePrecheck';
 import type { AuthScreenProps, ChildScreenProps } from '../navigation/types';
 import { Button, Card, Field, GateNotice, GuidelineChips, Notice, Screen, errorText } from '../ui/components';
 import { colors, radius, spacing, type } from '../ui/tokens';
 
-/** Face-first login. Password remains only as the backend-permitted fallback. */
-export function FaceLoginScreen({ navigation }: AuthScreenProps<'FaceLogin'>) {
+/** Replay-resistant face login with interactive challenge-response and role awareness. */
+export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogin'>) {
   const { signIn } = useAuth();
+  const mode = route.params?.mode || 'kids';
+  const isParent = mode === 'parent';
   const [identifier, setIdentifier] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [challenge, setChallenge] = useState<FaceChallengeResponse | null>(null);
 
-  async function onCapture(photo: CapturedPhoto) {
-    if (!identifier.trim()) {
-      throw new Error('Enter the child username or email first.');
+  async function startChallenge() {
+    const trimmed = identifier.trim();
+    if (!trimmed) {
+      setError(new Error(`Enter the ${isParent ? 'parent' : 'child'} username or email first.`));
+      return;
     }
     setBusy(true);
     setError(null);
     try {
-      const response = await faceLogin(identifier.trim(), 'kids', photo.base64);
+      setChallenge(await requestFaceChallenge(trimmed, mode));
+    } catch (err) {
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onCapture(photo: CapturedPhoto) {
+    const trimmed = identifier.trim();
+    if (!trimmed) {
+      throw new Error(`Enter the ${isParent ? 'parent' : 'child'} username or email first.`);
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      if (!challenge) throw new Error('Start a fresh face challenge before taking the photo.');
+      const response = await faceLogin(trimmed, mode, photo.base64, challenge.challenge_id, challenge.nonce, challenge.action);
       await signIn(response);
     } catch (err) {
+      setChallenge(null);
       setError(err);
       throw err;
     } finally {
@@ -46,7 +70,9 @@ export function FaceLoginScreen({ navigation }: AuthScreenProps<'FaceLogin'>) {
             />
           </View>
           <Text style={styles.heroBrandName}>LittleNet</Text>
-          <Text style={styles.heroSubtitle}>Kids Face ID Login • Look at the camera</Text>
+          <Text style={styles.heroSubtitle}>
+            {isParent ? 'Parent Face ID Login • Look at the camera' : 'Kids Face ID Login • Look at the camera'}
+          </Text>
         </View>
 
         <Card>
@@ -59,17 +85,35 @@ export function FaceLoginScreen({ navigation }: AuthScreenProps<'FaceLogin'>) {
           />
 
           <Field
-            label="Child Username or Email"
-            placeholder="e.g. alex_star or child@example.com"
+            label={isParent ? 'Parent Username or Email' : 'Child Username or Email'}
+            placeholder={isParent ? 'e.g. parent_name or parent@example.com' : 'e.g. alex_star or child@example.com'}
             autoCapitalize="none"
             autoCorrect={false}
             value={identifier}
-            onChangeText={setIdentifier}
+            onChangeText={(value) => { setIdentifier(value); setChallenge(null); }}
           />
 
           {error ? <GateNotice error={error} /> : null}
 
-          <CameraCapture label="Scan & Verify Face ID" busyLabel="Checking Face…" busy={busy} onCapture={onCapture} />
+          {!challenge ? (
+            <Button label="Start secure face check" loading={busy} disabled={busy} onPress={() => void startChallenge()} />
+          ) : (
+            <>
+              <Notice
+                tone="info"
+                message={challenge.action === 'BLINK' ? 'Challenge: close both eyes, then take the photo.' : challenge.action === 'TURN_LEFT' ? 'Challenge: turn your head left, then take the photo.' : 'Challenge: turn your head right, then take the photo.'}
+              />
+              <CameraCapture
+                label="Capture challenge photo"
+                busyLabel="Checking Face…"
+                busy={busy}
+                instruction="Hold the requested pose while capturing. The app checks the action locally and the server performs anti-spoof and identity checks."
+                validatePhoto={(photo) => precheckFaceChallenge(photo, challenge.action)}
+                onCapture={onCapture}
+              />
+              <Button label="Get a different challenge" variant="secondary" disabled={busy} onPress={() => void startChallenge()} />
+            </>
+          )}
 
           <View style={styles.signupBox}>
             <Pressable onPress={() => navigation.navigate('Login')} hitSlop={8} style={styles.switchAuthButton}>

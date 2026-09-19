@@ -128,10 +128,19 @@ def _issue_token(user: dict, usage_session_key=None) -> str:
         "uid": int(user["user_id"]),
         "role": user["role"],
         "name": user.get("full_name") or user.get("username") or "LittleNet User",
+        "sver": int(user.get("session_version") or 1),
     }
     if usage_session_key:
         claims["usage_session_key"] = str(usage_session_key)
     return _serializer(_AUTH_SALT).dumps(claims)
+
+
+def _revoke_all_user_sessions(user_id: int) -> None:
+    """Invalidate all active bearer sessions across devices for this user."""
+    execute(
+        "UPDATE users SET session_version = COALESCE(session_version, 1) + 1 WHERE user_id=%s",
+        (int(user_id),),
+    )
 
 
 def _issue_pending_parent(user_id: int, email: str) -> str:
@@ -179,11 +188,13 @@ def _require_mobile(*roles):
                 if revoked:
                     return jsonify(error="token_revoked"), 401
             user = fetch_one(
-                "SELECT user_id,username,full_name,email,role,age,account_status FROM users WHERE user_id=%s",
+                "SELECT user_id,username,full_name,email,role,age,account_status,session_version FROM users WHERE user_id=%s",
                 (int(claims.get("uid") or 0),),
             )
             if not user or user.get("account_status") != "ACTIVE":
                 return jsonify(error="account_inactive"), 401
+            if claims.get("sver") is None or int(claims.get("sver")) != int(user.get("session_version") or 1):
+                return jsonify(error="session_revoked"), 401
             if allowed and str(user.get("role") or "").upper() not in allowed:
                 return jsonify(error="role_forbidden"), 403
             if str(user.get("role")) != str(claims.get("role")):
@@ -723,15 +734,51 @@ def register_mobile_api(bp):
             (identifier, identifier, role),
         )
         if not user:
-            return jsonify(error="account_not_found"), 404
+            return jsonify(error="face_login_failed"), 401
+
+        challenge_id = str(data.get("challenge_id") or request.form.get("challenge_id") or "").strip()
+        nonce = str(data.get("nonce") or request.form.get("nonce") or "").strip()
+        action_completed = str(data.get("action_completed") or request.form.get("action_completed") or "").strip().upper()
+        if not challenge_id or not nonce or not action_completed:
+            return jsonify(error="face_auth_challenge_required"), 400
+
+        challenge = fetch_one(
+            "SELECT * FROM face_auth_challenges WHERE challenge_id=%s AND user_id=%s AND nonce=%s",
+            (challenge_id, user["user_id"], nonce),
+        )
+        if not challenge:
+            return jsonify(error="invalid_face_challenge"), 403
+        if challenge.get("used_at") is not None:
+            return jsonify(error="challenge_already_used_replay_detected"), 403
+        if action_completed != str(challenge.get("action") or "").upper():
+            return jsonify(error="challenge_action_mismatch"), 400
+
+        now = datetime.now(timezone.utc)
+        exp = challenge.get("expires_at")
+        if exp:
+            exp_tz = exp.replace(tzinfo=timezone.utc if exp.tzinfo is None else exp.tzinfo)
+            if now > exp_tz:
+                return jsonify(error="challenge_expired"), 403
+
         path = _save_request_image("littlenet_mobile_face_login_")
         if not path:
             return jsonify(error="live_camera_photo_required"), 400
         try:
+            consumed = execute(
+                """UPDATE face_auth_challenges SET used_at=NOW()
+                   WHERE challenge_id=%s AND user_id=%s AND nonce=%s
+                     AND action=%s AND used_at IS NULL AND expires_at > NOW()
+                   RETURNING challenge_id""",
+                (challenge_id, user["user_id"], nonce, action_completed),
+                returning=True,
+            )
+            if not consumed:
+                return jsonify(error="face_challenge_expired_or_consumed"), 403
             ok, reason, _ = verify(user["user_id"], path)
             if not ok:
                 code = 404 if reason == "not_enrolled" else 401
                 return jsonify(error="face_login_failed", reason=reason), code
+
             return _mobile_login_response(user, "FACE")
         finally:
             try:
@@ -760,11 +807,19 @@ def register_mobile_api(bp):
             user = g.mobile_user
 
         if not user:
-            return jsonify(error="user_not_found"), 404
+            # Return an indistinguishable synthetic challenge so this public
+            # endpoint cannot be used to enumerate child or parent accounts.
+            return jsonify(
+                ok=True,
+                challenge_id=str(uuid.uuid4()),
+                nonce=secrets.token_hex(24),
+                action=random.choice(["BLINK", "TURN_LEFT", "TURN_RIGHT"]),
+                expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat(),
+            )
 
         action = random.choice(["BLINK", "TURN_LEFT", "TURN_RIGHT"])
         nonce = secrets.token_hex(24)
-        expires_at = datetime.utcnow() + timedelta(minutes=5)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
 
         row = execute(
             """INSERT INTO face_auth_challenges(user_id, nonce, action, expires_at, session_context)
@@ -780,8 +835,6 @@ def register_mobile_api(bp):
             nonce=nonce,
             action=action,
             expires_at=row["expires_at"].isoformat() + "Z",
-            user_id=user["user_id"],
-            username=user["username"],
         )
 
     @bp.route("/api/mobile/v1/auth/face/verify-challenge", methods=["POST"])
@@ -794,7 +847,7 @@ def register_mobile_api(bp):
         nonce = str(data.get("nonce") or "").strip()
         action_completed = str(data.get("action_completed") or data.get("liveness_action_completed") or "").strip().upper()
 
-        if not challenge_id or not nonce:
+        if not challenge_id or not nonce or not action_completed:
             return jsonify(error="missing_challenge_params"), 400
 
         challenge = fetch_one(
@@ -821,7 +874,7 @@ def register_mobile_api(bp):
             return jsonify(error="challenge_nonce_mismatch"), 403
 
         # Challenge action check
-        if action_completed and challenge["action"] != action_completed:
+        if challenge["action"] != action_completed:
             return jsonify(error="challenge_action_mismatch"), 400
 
         # Fetch user's enrolled biometric key
@@ -845,11 +898,16 @@ def register_mobile_api(bp):
         if not hmac.compare_digest(expected_sig, client_signature):
             return jsonify(error="biometric_signature_invalid"), 403
 
-        # Mark challenge consumed immediately
-        execute(
-            "UPDATE face_auth_challenges SET used_at=NOW() WHERE challenge_id=%s",
-            (challenge_id,),
+        consumed = execute(
+            """UPDATE face_auth_challenges SET used_at=NOW()
+               WHERE challenge_id=%s AND nonce=%s AND action=%s
+                 AND used_at IS NULL AND expires_at > NOW()
+               RETURNING challenge_id""",
+            (challenge_id, nonce, action_completed),
+            returning=True,
         )
+        if not consumed:
+            return jsonify(error="face_challenge_expired_or_consumed"), 403
 
         user = fetch_one("SELECT * FROM users WHERE user_id=%s", (challenge["user_id"],))
         if not user:
@@ -876,11 +934,14 @@ def register_mobile_api(bp):
             return jsonify(error=str(exc)), 400
         except Exception:
             return jsonify(error="parent_registration_failed"), 500
-        return jsonify(
-            ok=True,
-            pending_token=_issue_pending_parent(result["user_id"], result["email"]),
-            email_sent=bool(result.get("email_sent")),
-        )
+        resp = {
+            "ok": True,
+            "pending_token": _issue_pending_parent(result["user_id"], result["email"]),
+            "email_sent": bool(result.get("email_sent")),
+        }
+        if result.get("dev_code"):
+            resp["dev_code"] = result["dev_code"]
+        return jsonify(resp)
 
     @bp.route("/api/mobile/v1/auth/parent/verify-email", methods=["POST"])
     @csrf.exempt
@@ -897,14 +958,17 @@ def register_mobile_api(bp):
 
     @bp.route("/api/mobile/v1/auth/parent/resend-email", methods=["POST"])
     @csrf.exempt
-    @limiter.limit("3 per 15 minutes")
+    @limiter.limit("10 per 15 minutes")
     def mobile_parent_resend_email():
         data = request.get_json(silent=True) or {}
         pending = _load_pending_parent(str(data.get("pending_token") or ""))
         if not pending:
             return jsonify(error="pending_verification_expired"), 401
-        ok, error = resend_parent_email_otp(int(pending["uid"]))
-        return jsonify(ok=bool(ok), error=None if ok else error), (200 if ok else 503)
+        ok, error, dev_code = resend_parent_email_otp(int(pending["uid"]), with_code=True)
+        resp = {"ok": bool(ok), "error": None if ok else error}
+        if dev_code:
+            resp["dev_code"] = dev_code
+        return jsonify(resp), (200 if ok else 503)
 
     @bp.route("/api/mobile/v1/auth/forgot-password", methods=["POST"])
     @csrf.exempt
@@ -2515,6 +2579,7 @@ def register_mobile_api(bp):
         if not owns(pid, child_id):
             return jsonify(error="child_not_found"), 404
         clear_child_face(child_id)
+        _revoke_all_user_sessions(child_id)
         log(child_id, "CHILD_FACE_RESET_BY_PARENT", {"parent_id": pid})
         notify(child_id, "FACE_RESET", "Your parent has reset your face login profile.", "/child/dashboard/", pid)
         return jsonify(ok=True, message="Face profile reset successfully")
@@ -2800,6 +2865,9 @@ def register_mobile_api(bp):
         if gate:
             return gate
         uid = int(g.mobile_user["user_id"])
+        from services.social import story_visible_to
+        if not story_visible_to(uid, story_id):
+            return jsonify(ok=False, error="story_not_found_or_forbidden"), 404
         data = request.get_json(silent=True) or {}
         try:
             ratio = min(1.0, max(0.0, float(data.get("completion_ratio", 1.0))))
@@ -2926,6 +2994,65 @@ def register_mobile_api(bp):
             quiz_required=False,
             posts_seen=view_res.get("posts_seen", 0),
         )
+
+    @bp.route("/api/mobile/v2/kids/impressions/batch", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("60 per minute")
+    @_require_mobile("CHILD")
+    def mobile_record_impression_batch():
+        gate = _child_gate()
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        events = data.get("events") or []
+        if not isinstance(events, list):
+            return jsonify(error="invalid_events_format"), 400
+        if len(events) > 50:
+            return jsonify(error="maximum 50 events allowed per batch"), 400
+        if not events:
+            return jsonify(ok=True, processed=0, recorded=0)
+
+        processed = 0
+        recorded = 0
+        from services.curated_feed import record_feed_impression
+        for ev in events:
+            if not isinstance(ev, dict):
+                continue
+            sess_id = str(ev.get("session_id") or "").strip()
+            src_type = str(ev.get("source_type") or "POST").strip().upper()
+            try:
+                src_id = int(ev.get("source_id"))
+            except (TypeError, ValueError):
+                continue
+            surf = str(ev.get("surface") or "REELS").strip().upper()
+            w_ms = ev.get("watched_ms")
+            if w_ms is not None:
+                try:
+                    w_ms = max(0, int(w_ms))
+                except (TypeError, ValueError):
+                    w_ms = None
+            comp = bool(ev.get("completed", False))
+            lk = bool(ev.get("liked", False))
+            sv = bool(ev.get("saved", False))
+            try:
+                rc = max(0, min(20, int(ev.get("replay_count", 0) or 0)))
+            except (TypeError, ValueError):
+                rc = 0
+
+            try:
+                was_recorded = record_feed_impression(
+                    uid, sess_id, src_type, src_id, surf,
+                    watched_ms=w_ms, completed=comp, liked=lk, saved=sv,
+                    replay_count=rc,
+                )
+                processed += 1
+                if was_recorded:
+                    recorded += 1
+            except Exception:
+                pass
+
+        return jsonify(ok=True, processed=processed, recorded=recorded)
 
     @bp.route("/api/mobile/v2/kids/recommendation-actions", methods=["POST"])
     @csrf.exempt

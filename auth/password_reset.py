@@ -220,9 +220,9 @@ def verify_and_reset_password(user_id: int, code: str, new_password: str):
                 conn.commit()
                 return False, "Incorrect verification code. Please check your email and try again."
 
-            # Code valid: update password hash
+            # Code valid: update password hash and increment session_version to invalidate prior bearer tokens
             new_hash = bcrypt.hashpw(new_pwd.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-            cur.execute("UPDATE users SET password_hash = %s WHERE user_id = %s", (new_hash, user_id))
+            cur.execute("UPDATE users SET password_hash = %s, session_version = COALESCE(session_version, 1) + 1 WHERE user_id = %s", (new_hash, user_id))
             cur.execute("DELETE FROM password_reset_otps WHERE user_id = %s", (user_id,))
         conn.commit()
     except Exception:
@@ -254,5 +254,5 @@ def parent_reset_child_password(parent_id: int, child_id: int, new_password: str
         return False, "Unauthorized: You can only reset passwords for your own approved children."
 
     new_hash = bcrypt.hashpw(new_pwd.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
-    execute("UPDATE users SET password_hash = %s WHERE user_id = %s AND role = 'CHILD'", (new_hash, child_id))
+    execute("UPDATE users SET password_hash = %s, session_version = COALESCE(session_version, 1) + 1 WHERE user_id = %s AND role = 'CHILD'", (new_hash, child_id))
     return True, "Child's password updated successfully."

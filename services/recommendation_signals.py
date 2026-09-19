@@ -112,12 +112,17 @@ def signal_scores(child_id: int, items: list[dict]) -> dict[tuple[str, int], flo
         for item in items
         if item.get("source_type") == "SOCIAL" and item.get("source_id", item.get("post_id")) is not None
     }
+    curated_ids = {
+        int(item.get("source_id", item.get("content_id")))
+        for item in items
+        if item.get("source_type") == "CURATED" and item.get("source_id", item.get("content_id")) is not None
+    }
     creator_ids = {
         int((item.get("ranking_metadata") or {}).get("child_id"))
         for item in items
         if (item.get("ranking_metadata") or {}).get("child_id") is not None
     }
-    if not social_ids and not creator_ids:
+    if not social_ids and not curated_ids and not creator_ids:
         return {}
     try:
         rows = fetch_all(
@@ -125,9 +130,10 @@ def signal_scores(child_id: int, items: list[dict]) -> dict[tuple[str, int], flo
                  FROM recommendation_signals
                 WHERE child_id=%s
                   AND ((source_type='SOCIAL' AND source_id=ANY(%s))
+                    OR (source_type='CURATED' AND source_id=ANY(%s))
                     OR (source_type='CREATOR' AND source_id=ANY(%s)))
                 GROUP BY source_type,source_id""",
-            (int(child_id), list(social_ids), list(creator_ids)),
+            (int(child_id), list(social_ids), list(curated_ids), list(creator_ids)),
         )
     except Exception:
         return {}

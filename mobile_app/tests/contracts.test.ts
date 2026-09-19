@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
@@ -89,16 +90,16 @@ describe('child face enrollment and login contracts', () => {
     assert.deepEqual(bodyJson(), { photo_b64: 'live1' });
 
     nextPayload = { ok: true, token: 't2', auth_method: 'FACE', user: {} };
-    await faceLogin('kid_rio', 'kids', 'live2');
+    await faceLogin('kid_rio', 'kids', 'live2', 'ch_1', 'nonce_1', 'BLINK');
     assert.equal(seen[1]?.url, 'https://backend.test.invalid/api/mobile/v1/auth/face-login');
-    assert.deepEqual(bodyJson(1), { identifier: 'kid_rio', mode: 'kids', photo_b64: 'live2' });
+    assert.deepEqual(bodyJson(1), { identifier: 'kid_rio', mode: 'kids', photo_b64: 'live2', challenge_id: 'ch_1', nonce: 'nonce_1', action_completed: 'BLINK' });
   });
 
   it('maps face mismatch and liveness failures without clearing the gate', async () => {
     stubFetch();
     nextStatus = 401;
     nextPayload = { error: 'face_login_failed', reason: 'spoof' };
-    const err = await faceLogin('kid_rio', 'kids', 'live3').catch((error: unknown) => error);
+    const err = await faceLogin('kid_rio', 'kids', 'live3', 'ch_2', 'nonce_2', 'TURN_LEFT').catch((error: unknown) => error);
     assert.ok(err instanceof ApiError);
     assert.equal((err as ApiError).gate, null);
     assert.match((err as ApiError).message, /Liveness/);

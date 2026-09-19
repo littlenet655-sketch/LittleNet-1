@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 from flask import Blueprint, Flask
 from unittest.mock import MagicMock
-from mobile.api import register_mobile_api, _issue_token
+from mobile.api import register_mobile_api, _issue_token, _serializer, _AUTH_SALT
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -191,3 +191,142 @@ def test_upload_complete_rechecks_parent_controls(monkeypatch):
         assert data["error"] == "disabled_by_parent"
         assert data["feature"] == "posting"
 
+
+def test_session_version_invalidation(monkeypatch):
+    app = _make_app()
+    user = {"user_id": 101, "role": "CHILD", "account_status": "ACTIVE", "full_name": "Child", "session_version": 1}
+    token = _issue_token(user)
+
+    # Initial request with matching session_version succeeds
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): user if "FROM users" in query else None)
+    monkeypatch.setattr("mobile.api._child_gate", lambda feature=None: None)
+
+    with app.test_client() as client:
+        resp = client.get(
+            "/api/mobile/v1/kids/profile",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 200
+
+    # User's session_version in database is incremented (e.g. on password reset or face reset)
+    user_updated = dict(user, session_version=2)
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): user_updated if "FROM users" in query else None)
+
+    with app.test_client() as client:
+        resp = client.get(
+            "/api/mobile/v1/kids/profile",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 401
+        data = resp.get_json()
+        assert data["error"] == "session_revoked"
+
+
+def test_legacy_token_without_session_version_is_rejected(monkeypatch):
+    app = _make_app()
+    user = {"user_id": 101, "role": "CHILD", "account_status": "ACTIVE", "full_name": "Child", "session_version": 2}
+    token = _serializer(_AUTH_SALT).dumps({"uid": 101, "role": "CHILD", "name": "Child"})
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): None if "mobile_token_revocations" in query else user)
+
+    with app.test_client() as client:
+        resp = client.get("/api/mobile/v1/me", headers={"Authorization": f"Bearer {token}"})
+        assert resp.status_code == 401
+        assert resp.get_json()["error"] == "session_revoked"
+
+
+def test_impression_batch_does_not_count_rejected_session_items(monkeypatch):
+    app = _make_app()
+    user = {"user_id": 101, "role": "CHILD", "account_status": "ACTIVE", "full_name": "Child", "session_version": 1}
+    token = _issue_token(user)
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): user if "FROM users" in query else None)
+    monkeypatch.setattr("mobile.api._child_gate", lambda feature=None: None)
+    monkeypatch.setattr("services.curated_feed.record_feed_impression", lambda *args, **kwargs: False)
+
+    with app.test_client() as client:
+        resp = client.post(
+            "/api/mobile/v2/kids/impressions/batch",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"events": [{"session_id": "another-child-session", "source_type": "SOCIAL", "source_id": 55, "surface": "REELS"}]},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["processed"] == 1
+        assert resp.get_json()["recorded"] == 0
+
+
+def test_face_login_requires_challenge_and_nonce(monkeypatch):
+    app = _make_app()
+    user = {"user_id": 101, "role": "CHILD", "account_status": "ACTIVE", "username": "kid_neo", "email": "kid@example.com"}
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): user if "FROM users" in query else None)
+
+    with app.test_client() as client:
+        # Missing challenge_id & nonce
+        resp = client.post(
+            "/api/mobile/v1/auth/face-login",
+            json={"identifier": "kid_neo", "mode": "kids"},
+        )
+        assert resp.status_code == 400
+        assert resp.get_json()["error"] == "face_auth_challenge_required"
+
+
+def test_face_login_rejects_used_challenge(monkeypatch):
+    app = _make_app()
+    user = {"user_id": 101, "role": "CHILD", "account_status": "ACTIVE", "username": "kid_neo", "email": "kid@example.com"}
+    used_challenge = {
+        "challenge_id": 99,
+        "user_id": 101,
+        "nonce": "abc123nonce",
+        "action": "BLINK",
+        "used_at": "2026-09-20 00:00:00",
+    }
+
+    def mock_fetch(query, params=()):
+        if "FROM users" in query:
+            return user
+        if "FROM face_auth_challenges" in query:
+            return used_challenge
+        return None
+
+    monkeypatch.setattr("mobile.api.fetch_one", mock_fetch)
+
+    with app.test_client() as client:
+        resp = client.post(
+            "/api/mobile/v1/auth/face-login",
+            json={"identifier": "kid_neo", "mode": "kids", "challenge_id": "99", "nonce": "abc123nonce", "action_completed": "BLINK"},
+        )
+        assert resp.status_code == 403
+        assert resp.get_json()["error"] == "challenge_already_used_replay_detected"
+
+
+def test_story_view_checks_visibility(monkeypatch):
+    app = _make_app()
+    user = {"user_id": 101, "role": "CHILD", "account_status": "ACTIVE", "full_name": "Child", "session_version": 1}
+    token = _issue_token(user)
+
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): user if "FROM users" in query else None)
+    monkeypatch.setattr("mobile.api._child_gate", lambda feature=None: None)
+
+    # 1. Story is not visible / unauthorized
+    import services.social
+    monkeypatch.setattr(services.social, "story_visible_to", lambda uid, sid: False)
+
+    with app.test_client() as client:
+        resp = client.post(
+            "/api/mobile/v2/kids/stories/555/view",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"completion_ratio": 0.5},
+        )
+        assert resp.status_code == 404
+        assert resp.get_json()["error"] == "story_not_found_or_forbidden"
+
+    # 2. Story is visible
+    monkeypatch.setattr(services.social, "story_visible_to", lambda uid, sid: True)
+    monkeypatch.setattr("mobile.api.execute", lambda query, params=(), **kw: None)
+
+    with app.test_client() as client:
+        resp = client.post(
+            "/api/mobile/v2/kids/stories/555/view",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"completion_ratio": 0.5},
+        )
+        assert resp.status_code == 200
+        assert resp.get_json()["ok"] is True

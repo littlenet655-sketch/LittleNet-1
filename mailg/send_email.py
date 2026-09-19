@@ -60,7 +60,7 @@ def validate_resend_production():
         headers={
             'Authorization': f'Bearer {api_key}',
             'Accept': 'application/json',
-            'User-Agent': 'LittleNet/1.0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) LittleNet/1.0',
         },
         method='GET',
     )
@@ -147,7 +147,7 @@ def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_nam
         headers={
             'Authorization': f'Bearer {api_key}',
             'Content-Type': 'application/json',
-            'User-Agent': 'LittleNet/1.0',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) LittleNet/1.0',
         },
         method='POST',
     )
@@ -201,11 +201,22 @@ def send_parent_otp_email(receiver, subject, body):
     if not resend_key:
         print('[RESEND CONFIG ERROR] RESEND_API_KEY is not configured.')
         return False
+    custom = _resend_from_email()
+    from_email = (
+        custom
+        if (custom and not _is_sandbox_sender(custom) and not custom.endswith('.example'))
+        else EXPECTED_RESEND_FROM_EMAIL
+    )
+    from_name = (
+        os.getenv('RESEND_FROM_NAME')
+        if (custom and not _is_sandbox_sender(custom) and not custom.endswith('.example'))
+        else None
+    ) or EXPECTED_RESEND_FROM_NAME
     return _send_via_resend(
         resend_key,
         receiver,
         subject,
         body,
-        from_email=EXPECTED_RESEND_FROM_EMAIL,
-        from_name=EXPECTED_RESEND_FROM_NAME,
+        from_email=from_email,
+        from_name=from_name,
     )

@@ -173,6 +173,25 @@ def _video_sample_count(path,max_frames=None):
     return min(cap,desired)
 
 
+def video_sampling_coverage(path, requested):
+    """Describe whether uniform sampling meets the configured temporal contract.
+
+    Scene detection is valuable evidence, but it cannot guarantee detection of a
+    brief unsafe insert.  A video which exceeds the configured frame budget is
+    therefore review-only instead of being silently treated as fully scanned.
+    """
+    duration=max(0.0,video_duration_seconds(path))
+    try:max_gap=max(0.5,float(os.getenv('LITTLENET_VIDEO_MAX_AUTO_ALLOW_GAP_SECONDS','4')))
+    except ValueError:max_gap=4.0
+    required=max(1,int(math.ceil(duration/max_gap))+1) if duration else 1
+    return {
+        'duration_seconds':round(duration,3),
+        'max_auto_allow_gap_seconds':max_gap,
+        'required_frames_for_auto_allow':required,
+        'coverage_complete':int(requested)>=required,
+    }
+
+
 def _video_frames(path,max_frames):
     import cv2
     from .policy import decide
@@ -198,11 +217,13 @@ def check_video(path,max_frames=None):
         except Exception:return normalize_signals({'category':'VIDEO','total_safety_failure':True,'errors':['remote_ai_unavailable']},category='VIDEO')
     try:
         requested=_video_sample_count(path,max_frames)
+        coverage=video_sampling_coverage(path,requested)
         outs=timed_call('video_frames',lambda:_video_frames(path,requested),timeout_seconds('video_frames',240))
         if not outs:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['no_video_frames']},category='VIDEO')
         keys=['adult_score','sexual_score','weapon_score','violence_score','general_score'];out={k:max(float(x.get(k,0)) for x in outs) for k in keys};out['toxicity_score']=0
-        out['partial_safety_failure']=any(x.get('partial_safety_failure') for x in outs);out['total_safety_failure']=all(x.get('total_safety_failure') for x in outs);out['errors']=[err for x in outs for err in x.get('errors',[])]
-        out['model_signals']={'sampled_frames':len(outs),'requested_frames':requested,'sampling':'scene+uniform','frames':[x.get('model_signals',{}) for x in outs]}
+        out['partial_safety_failure']=(not coverage['coverage_complete']) or any(x.get('partial_safety_failure') for x in outs);out['total_safety_failure']=all(x.get('total_safety_failure') for x in outs);out['errors']=[err for x in outs for err in x.get('errors',[])]
+        if not coverage['coverage_complete']:out['errors'].append('video_temporal_coverage_incomplete')
+        out['model_signals']={'sampled_frames':len(outs),'requested_frames':requested,'sampling':'scene+uniform',**coverage,'frames':[x.get('model_signals',{}) for x in outs]}
         out['category']='ADULT' if max(out['adult_score'],out['sexual_score'])>=.4 else ('WEAPON' if out['weapon_score']>=.45 else 'VIDEO')
         return normalize_signals(out,category='VIDEO')
     except Exception as exc:return normalize_signals({'total_safety_failure':True,'category':'VIDEO','errors':['video_timeout' if 'timeout' in str(exc) else 'video_processing']},category='VIDEO')

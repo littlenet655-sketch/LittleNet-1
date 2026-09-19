@@ -1,9 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
-import { useVideoPlayer } from 'expo-video';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
-import type { FeedItem } from '../../api/kidsFeed';
-import { recordFeedImpression, refreshReelPlayback } from '../../api/kidsFeed';
+import { recordImpressionBatch } from '../../api/kidsFeed';
 import { ApiError } from '../../api/client';
 import { submitRecommendationAction } from '../../api/recommendation';
 import { submitReport, toggleSave } from '../../api/kidsSocial';
@@ -13,110 +11,10 @@ import { shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget }
 import { useFeed } from '../../kids/useFeed';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
-import { BrandHeader, Button, DisabledFeature, EmptyState, ErrorState, GateNotice, Screen, Skeleton } from '../../ui/components';
-import { NativeVideoView } from '../../ui/nativeViews';
+import { BrandHeader, DisabledFeature, EmptyState, ErrorState, GateNotice, Screen, Skeleton } from '../../ui/components';
 import { colors, radius, spacing } from '../../ui/tokens';
-
-function ReelVideo({
-  item,
-  active,
-  nearby,
-  paused,
-  onToggle,
-  token,
-}: {
-  item: FeedItem;
-  active: boolean;
-  nearby: boolean;
-  paused: boolean;
-  onToggle: () => void;
-  token?: string;
-}) {
-  const [currentSource, setCurrentSource] = useState<string | null>(item.media_url ?? null);
-  const player = useVideoPlayer(null, (instance) => { instance.loop = true; });
-  const [ready, setReady] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const sourceRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    setCurrentSource(item.media_url ?? null);
-  }, [item.media_url]);
-
-  useEffect(() => {
-    const subscription = player.addListener('statusChange', ({ status, error: playbackError }) => {
-      if (status === 'error') {
-        const postId = item.post_id || item.source_id;
-        if (token && typeof postId === 'number') {
-          void refreshReelPlayback(token, postId).then((res) => {
-            if (res.ok && res.playback_url) {
-              setCurrentSource(res.playback_url);
-              void player.replaceAsync(res.playback_url).then(() => {
-                if (active && !paused) player.play();
-              });
-              return;
-            }
-            setError(playbackError?.message ?? 'This reel could not play.');
-          }).catch(() => {
-            setError(playbackError?.message ?? 'This reel could not play.');
-          });
-        } else {
-          setError(playbackError?.message ?? 'This reel could not play.');
-        }
-      }
-    });
-    return () => subscription.remove();
-  }, [player, token, item.post_id, item.source_id, active, paused]);
-
-  useEffect(() => {
-    const next = nearby ? currentSource : null;
-    if (sourceRef.current === next) return;
-    sourceRef.current = next;
-    setReady(false);
-    setError(null);
-    void player.replaceAsync(next).catch((reason: unknown) => {
-      setError(reason instanceof Error ? reason.message : 'This reel could not play.');
-    });
-  }, [nearby, player, currentSource]);
-
-  useEffect(() => {
-    if (active && nearby && currentSource && !error && !paused) player.play();
-    else player.pause();
-  }, [active, error, nearby, paused, player, currentSource]);
-
-  async function retry() {
-    setError(null);
-    setReady(false);
-    const postId = item.post_id || item.source_id;
-    if (token && typeof postId === 'number') {
-      try {
-        const res = await refreshReelPlayback(token, postId);
-        if (res.ok && res.playback_url) {
-          setCurrentSource(res.playback_url);
-          await player.replaceAsync(res.playback_url);
-          if (active) player.play();
-          return;
-        }
-      } catch {}
-    }
-    if (!currentSource) return;
-    try {
-      await player.replaceAsync(currentSource);
-      if (active) player.play();
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'This reel could not play.');
-    }
-  }
-
-  if (!currentSource) return <ErrorState message="This reel has no playable video." />;
-  return (
-    <View style={styles.videoShell}>
-        {nearby ? <Pressable style={styles.videoTouch} onPress={onToggle}><NativeVideoView player={player} style={styles.video} contentFit="cover" nativeControls={false} onFirstFrameRender={() => setReady(true)} /></Pressable> : null}
-      {!ready && item.poster_url ? <Image source={{ uri: item.poster_url }} style={styles.posterOverlay} /> : null}
-       {active && paused && !error ? <View pointerEvents="none" style={styles.paused}><Text style={styles.pauseGlyph}>Ⅱ</Text><Text style={styles.pauseLabel}>Paused</Text></View> : null}
-      {error ? <View style={styles.errorOverlay}><Text style={styles.errorText}>Playback failed.</Text><Button label="Retry" onPress={() => void retry()} /></View> : null}
-    </View>
-  );
-}
+import { ReelPlayer } from '../../video/ReelPlayer';
+import type { ImpressionEventPayload } from '../../video/types';
 
 export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const { session } = useAuth();
@@ -126,35 +24,49 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const foreground = useIsForeground();
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
-  const watchStartRef = useRef<number>(Date.now());
-  const activeIndexRef = useRef<number>(activeIndex);
+  const impressionBatchRef = useRef<ImpressionEventPayload[]>([]);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
     const first = viewableItems.find((row) => typeof row.index === 'number')?.index;
     if (typeof first === 'number') { setActiveIndex(first); setPaused(false); }
   }).current;
 
-  // Track aggregated watch duration telemetry on reel change or unmount
-  useEffect(() => {
-    const prevIndex = activeIndexRef.current;
-    const prevItem = feed.items[prevIndex];
-    const watchedMs = Date.now() - watchStartRef.current;
-    if (session?.token && prevItem && watchedMs >= 1000) {
-      const sourceId = prevItem.post_id ?? prevItem.source_id;
-      if (typeof sourceId === 'number') {
-        void recordFeedImpression(session.token, {
-          session_id: feed.sessionId,
-          source_type: prevItem.source_type ?? 'REEL',
-          source_id: sourceId,
-          surface: 'REELS',
-          watched_ms: watchedMs,
-          completed: watchedMs >= 10000,
-        }).catch(() => {});
-      }
+  // Flush batched impressions to server
+  const flushBatch = useCallback(async () => {
+    if (!session?.token || impressionBatchRef.current.length === 0) return;
+    const events = [...impressionBatchRef.current];
+    impressionBatchRef.current = [];
+    try {
+      await recordImpressionBatch(session.token, events);
+    } catch {
+      // Non-blocking telemetry
     }
-    activeIndexRef.current = activeIndex;
-    watchStartRef.current = Date.now();
-  }, [activeIndex, feed.items, feed.sessionId, session?.token]);
+  }, [session?.token]);
+
+  // Buffer impression events emitted by ReelPlayer
+  const handleMetricsFlush = useCallback((payload: ImpressionEventPayload) => {
+    if (feed.sessionId && !payload.session_id) {
+      payload.session_id = feed.sessionId;
+    }
+    impressionBatchRef.current.push(payload);
+    if (impressionBatchRef.current.length >= 5) {
+      void flushBatch();
+    }
+  }, [feed.sessionId, flushBatch]);
+
+  // Flush on app backgrounding or screen blur
+  useEffect(() => {
+    if (!foreground || !focused) {
+      void flushBatch();
+    }
+  }, [foreground, focused, flushBatch]);
+
+  // Flush on unmount
+  useEffect(() => {
+    return () => {
+      void flushBatch();
+    };
+  }, [flushBatch]);
 
   if (feed.loading) return <Screen><Skeleton lines={4} /></Screen>;
   if (feed.error instanceof ApiError && feed.error.code === 'disabled_by_parent') return <Screen><DisabledFeature feature="Reels" /></Screen>;
@@ -183,14 +95,17 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           const profile = socialProfileTarget(item);
           const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
            return <View style={[styles.page, { height }]}>
-             <ReelVideo
-               item={item}
-               active={shouldPlayReel(index, activeIndex, foreground && focused)}
-               nearby={shouldLoadReel(index, activeIndex)}
-               paused={paused}
-               onToggle={() => index === activeIndex && setPaused((value) => !value)}
-               token={session?.token}
-             />
+             <View style={styles.videoShell}>
+               <ReelPlayer
+                 item={item}
+                 active={shouldPlayReel(index, activeIndex, foreground && focused)}
+                 nearby={shouldLoadReel(index, activeIndex)}
+                 paused={paused}
+                 onTogglePlay={() => index === activeIndex && setPaused((value) => !value)}
+                 token={session?.token}
+                 onMetricsFlush={handleMetricsFlush}
+               />
+             </View>
             <PostCard
               item={item}
               onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}
@@ -214,14 +129,6 @@ const styles = StyleSheet.create({
   headerOverlay: { position: 'absolute', zIndex: 2, top: 0, left: 0, right: 0 },
   page: { marginBottom: 0, padding: spacing.sm, justifyContent: 'center' },
   videoShell: { width: '100%', flex: 1, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.ink },
-  videoTouch: { flex: 1 },
-  video: { width: '100%', height: '100%' },
-  posterOverlay: { ...StyleSheet.absoluteFill, width: '100%', height: '100%' },
-  errorOverlay: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: spacing.sm, backgroundColor: 'rgba(0,0,0,0.72)' },
-  errorText: { color: colors.surface, fontWeight: '700' },
-  paused: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
-  pauseGlyph: { color: colors.surface, fontSize: 44, fontWeight: '800' },
-  pauseLabel: { color: colors.surface, fontWeight: '700' },
   quickActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingVertical: spacing.sm },
   quickText: { color: colors.brandDark, fontWeight: '800', paddingVertical: 6 },
 });

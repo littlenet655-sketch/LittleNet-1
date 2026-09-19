@@ -9,7 +9,7 @@ import { kidsKeys } from '../query/keys';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 
-export function useScreenTimeHeartbeat(onLock?: (gate: string) => void): void {
+export function useScreenTimeHeartbeat(onGateChange?: (gate: string | null) => void): void {
   const { session } = useAuth();
   const online = useIsOnline();
   const queryClient = useQueryClient();
@@ -29,13 +29,15 @@ export function useScreenTimeHeartbeat(onLock?: (gate: string) => void): void {
       try {
         const res = await sendHeartbeat(token!, abortController.signal);
         if (res.locked) {
-          onLock?.('screen_time');
+          onGateChange?.('screen_time');
           void queryClient.invalidateQueries({ queryKey: kidsKeys.home });
+        } else {
+          onGateChange?.(null);
         }
       } catch (err) {
         if (err instanceof ApiError) {
           if (err.status === 423 || err.gate === 'screen_time' || err.gate === 'quiet_hours') {
-            onLock?.(err.gate ?? 'screen_time');
+            onGateChange?.(err.gate ?? 'screen_time');
             void queryClient.invalidateQueries({ queryKey: kidsKeys.home });
           }
         }
@@ -62,5 +64,5 @@ export function useScreenTimeHeartbeat(onLock?: (gate: string) => void): void {
       if (abortController) abortController.abort();
       subscription.remove();
     };
-  }, [token, isChild, online, queryClient, onLock]);
+  }, [token, isChild, online, queryClient, onGateChange]);
 }

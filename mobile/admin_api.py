@@ -152,7 +152,7 @@ def register_mobile_admin_api(bp):
             if not target:
                 conn.rollback()
                 return jsonify(error='user_not_found'), 404
-            cur.execute("UPDATE users SET account_status=%s WHERE user_id=%s", (new_status, target_user_id))
+            cur.execute("UPDATE users SET account_status=%s, session_version = COALESCE(session_version, 1) + 1 WHERE user_id=%s", (new_status, target_user_id))
             cur.execute(
                 """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
                    VALUES(%s,'USER_STATUS','USER',%s,%s::jsonb)""",

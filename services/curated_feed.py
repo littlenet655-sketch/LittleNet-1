@@ -326,7 +326,9 @@ def get_or_create_feed_session(child_id: int, surface: str = "FEED", session_id:
     active_social = social_filtered if len(social_filtered) >= 3 else social
 
     combined = merge_candidates(active_social, active_curated)
-    diversified = apply_category_diversity(combined, max_consecutive=2)
+    from services.recommendation import rank_candidates, apply_diversity_and_balance
+    ranked = rank_candidates(child_id, combined)
+    diversified = apply_diversity_and_balance(ranked, max_consecutive=2)
 
     # Deduplicate within session
     seen_keys: set[tuple[str, int]] = set()
@@ -562,15 +564,20 @@ def record_feed_impression(
     if stype in {"POST", "REEL", "STORY"}:
         stype = "SOCIAL"
     surf = str(surface).upper()
+    if stype not in {"SOCIAL", "CURATED"} or surf not in {"FEED", "REELS"}:
+        return False
+    if not session_id or watched_ms is not None and (int(watched_ms) < 0 or int(watched_ms) > 14_400_000):
+        return False
 
     # Validate that session belongs to child and item was part of that session
     valid = fetch_one(
         """SELECT 1
            FROM feed_sessions fs
            JOIN feed_session_items fsi ON fsi.session_id = fs.session_id
-           WHERE fs.session_id = %s AND fs.child_id = %s
+           WHERE fs.session_id = %s AND fs.child_id = %s AND fs.surface = %s
+             AND fs.expires_at > NOW()
              AND fsi.source_type = %s AND fsi.source_id = %s""",
-        (session_id, child_id, stype, source_id),
+        (session_id, child_id, surf, stype, source_id),
     )
     if not valid:
         return False

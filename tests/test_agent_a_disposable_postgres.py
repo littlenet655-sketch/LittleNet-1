@@ -583,6 +583,7 @@ def test_concurrency_two_workers_one_post_results_in_exactly_one_processing_owne
             notify_calls.append((p_id, c_id))
 
         with patch("services.media_processor.evaluate", return_value=({"adult_score": 0.0, "violence_score": 0.0, "risk_score": 0.0}, None)) as mock_eval, \
+             patch("services.media_processor.object_storage.enabled", return_value=False), \
              patch("services.media_processor.block_and_cleanup_quarantine", return_value=True), \
              patch("services.media_processor._notify_approved_followers", side_effect=fake_notify):
 

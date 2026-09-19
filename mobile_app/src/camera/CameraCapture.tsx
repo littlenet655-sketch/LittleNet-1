@@ -16,6 +16,8 @@ interface CameraCaptureProps {
   busy?: boolean;
   /** Receives the locally checked live photo. Throw to surface API errors in place. */
   onCapture: (photo: CapturedPhoto) => void | Promise<void>;
+  validatePhoto?: (photo: CapturedPhoto) => void | Promise<void>;
+  instruction?: string;
 }
 
 function canRetrySubmission(error: unknown): boolean {
@@ -26,7 +28,7 @@ function canRetrySubmission(error: unknown): boolean {
  * Shared camera step for guardian liveness, face enrollment, and face login.
  * ML Kit checks the captured frame before any bytes are sent to the backend.
  */
-export function CameraCapture({ label, busyLabel, busy = false, onCapture }: CameraCaptureProps) {
+export function CameraCapture({ label, busyLabel, busy = false, onCapture, validatePhoto, instruction }: CameraCaptureProps) {
   const cameraRef = useRef<React.ElementRef<typeof NativeCameraView>>(null);
   const [permission, requestPermission] = useCameraPermissions();
   const [working, setWorking] = useState(false);
@@ -58,7 +60,8 @@ export function CameraCapture({ label, busyLabel, busy = false, onCapture }: Cam
         height: shot.height,
         uri: shot.uri,
       };
-      await precheckFace(capturedPhoto);
+      if (validatePhoto) await validatePhoto(capturedPhoto);
+      else await precheckFace(capturedPhoto);
       await submit(capturedPhoto);
     } catch (err) {
       setPendingPhoto(capturedPhoto && canRetrySubmission(err) ? capturedPhoto : null);
@@ -127,7 +130,7 @@ export function CameraCapture({ label, busyLabel, busy = false, onCapture }: Cam
         <Text style={styles.step}>2 Check</Text>
         <Text style={styles.step}>3 Verify</Text>
       </View>
-      <Notice tone="info" message="Center your face, move closer if needed, and look straight. Your photo is checked on this device before upload." />
+      <Notice tone="info" message={instruction ?? 'Center your face, move closer if needed, and look straight. Your photo is checked on this device before upload.'} />
       {error ? <Notice message={errorText(error)} /> : null}
       {pendingPhoto && canRetrySubmission(error) ? (
         <>

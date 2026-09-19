@@ -105,7 +105,7 @@ def _send_code(user_id, email, full_name, code):
         body,
     ))
     if not sent or not Config._PRODUCTION:
-        print(f"[PARENT OTP] Verification code for {email} (User {user_id}): {code}")
+        print(f"\n{'='*70}\n[PARENT OTP] Verification code for {email} (User {user_id}): {code}\n{'='*70}\n")
     return sent
 
 
@@ -158,7 +158,8 @@ def begin_parent_registration(form):
         conn.close()
 
     sent = _send_code(user_id, email, full_name, code)
-    return {'user_id': user_id, 'email': email, 'full_name': full_name, 'email_sent': sent}
+    dev_code = code if (not sent or not Config._PRODUCTION or os.getenv('ENABLE_DEV_OTP', '1') == '1') else None
+    return {'user_id': user_id, 'email': email, 'full_name': full_name, 'email_sent': sent, 'dev_code': dev_code}
 
 
 def verify_parent_email_otp(user_id, code):
@@ -218,7 +219,7 @@ def verify_parent_email_otp(user_id, code):
     return True, None, user
 
 
-def resend_parent_email_otp(user_id):
+def resend_parent_email_otp(user_id, with_code=False):
     """Rotate the code for a parent who has not yet completed email verification."""
     _ensure_table()
     user = fetch_one(
@@ -228,9 +229,11 @@ def resend_parent_email_otp(user_id):
         (user_id,),
     )
     if not user or user.get('role') != 'PARENT' or user.get('account_status') == 'ACTIVE':
-        return False, 'No pending parent verification was found.'
+        err = 'No pending parent verification was found.'
+        return (False, err, None) if with_code else (False, err)
     if user.get('verified_at'):
-        return False, 'Email is already verified. Continue with live adult verification.'
+        err = 'Email is already verified. Continue with live adult verification.'
+        return (False, err, None) if with_code else (False, err)
 
     code = _new_code()
     conn = get_db_connection()
@@ -256,8 +259,12 @@ def resend_parent_email_otp(user_id):
     finally:
         conn.close()
 
-    if not _send_code(user_id, user['email'], user['full_name'], code):
+    sent = _send_code(user_id, user['email'], user['full_name'], code)
+    dev_code = code if (not sent or not Config._PRODUCTION or os.getenv('ENABLE_DEV_OTP', '1') == '1') else None
+    if not sent and not dev_code:
         if os.getenv('RESEND_API_KEY'):
-            return False, 'Email delivery failed. Check the verified Resend sender/domain configuration and try again.'
-        return False, 'Email delivery is unavailable. Check Resend/SMTP configuration and try again.'
-    return True, None
+            err = 'Email delivery failed. Check the verified Resend sender/domain configuration and try again.'
+            return (False, err, None) if with_code else (False, err)
+        err = 'Email delivery is unavailable. Check Resend/SMTP configuration and try again.'
+        return (False, err, None) if with_code else (False, err)
+    return (True, None, dev_code) if with_code else (True, None)

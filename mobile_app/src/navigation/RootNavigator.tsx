@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { NavigationContainer, useNavigation } from '@react-navigation/native';
 import type { NavigationProp } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -45,7 +45,8 @@ import { GuardianLivenessScreen, OtpVerifyScreen, ParentRegisterScreen } from '.
 import { ForgotPasswordScreen, ResetPasswordScreen } from '../screens/PasswordReset';
 import { QuizScreen } from '../screens/Quiz';
 import { LoginScreen, WelcomeScreen } from '../screens/WelcomeLogin';
-import { LoadingState, Screen } from '../ui/components';
+import { BrandHeader, Button, LoadingState, Notice, Screen } from '../ui/components';
+import { useScreenTimeHeartbeat } from '../kids/useScreenTimeHeartbeat';
 import { resolveChildRoute } from './gates';
 import type { AdminStackParamList, AuthStackParamList, ChildStackParamList, ParentStackParamList } from './types';
 import { colors } from '../ui/tokens';
@@ -103,6 +104,22 @@ function ChildGateSync() {
 }
 
 function ChildNavigator() {
+  const { signOut } = useAuth();
+  const [activeLock, setActiveLock] = useState<string | null>(null);
+  const handleGateChange = useCallback((gate: string | null) => setActiveLock(gate), []);
+  useScreenTimeHeartbeat(handleGateChange);
+
+  if (activeLock) {
+    const quiet = activeLock === 'quiet_hours';
+    return (
+      <Screen>
+        <BrandHeader title={quiet ? 'Quiet hours' : 'Screen-time limit reached'} subtitle="Parent Mode is keeping this account safe." />
+        <Notice tone="info" message={quiet ? 'LittleNet will unlock automatically when quiet hours end.' : 'Ask your parent before using LittleNet again today.'} />
+        <Button label="Log out" variant="secondary" onPress={() => void signOut()} />
+      </Screen>
+    );
+  }
+
   return (
     <ChildStack.Navigator initialRouteName="KidsHome" screenOptions={cleanStackOptions}>
       <ChildStack.Screen name="FaceEnroll" component={withGateSync(FaceEnrollScreen)} options={{ title: 'Face setup' }} />

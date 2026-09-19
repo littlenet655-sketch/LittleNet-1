@@ -18,7 +18,12 @@ from typing import Any, Optional
 
 from config import Config
 from database.connection import execute, fetch_one
-from services.media_delivery import DEFAULT_SIGNED_URL_TTL, is_authorized_viewer, resolve_media_delivery
+from services.media_delivery import (
+    DEFAULT_SIGNED_URL_TTL,
+    get_playback_ttl,
+    is_authorized_viewer,
+    resolve_media_delivery,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -367,7 +372,8 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
         playback_id = media_asset.get("playback_id")
         subdomain = self.subdomain or f"customer-{self.account_id[:8]}"
         hls_url = f"https://{subdomain}.cloudflarestream.com/{playback_id}/manifest/video.m3u8"
-        expires_at = int(time.time()) + min(expires_seconds, 600)
+        ttl = get_playback_ttl(expires_seconds)
+        expires_at = int(time.time()) + ttl
 
         poster_ref = media_asset.get("poster_reference")
         poster_delivery = resolve_media_delivery(poster_ref, viewer_id=viewer_id, viewer_role=viewer_role) if poster_ref else {}

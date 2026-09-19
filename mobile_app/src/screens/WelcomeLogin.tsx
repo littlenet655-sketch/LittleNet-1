@@ -196,7 +196,7 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
 
               <Pressable
                 accessibilityRole="button"
-                onPress={() => navigation.navigate('FaceLogin')}
+                onPress={() => navigation.navigate('FaceLogin', { mode: mode === 'parent' ? 'parent' : 'kids' })}
                 style={styles.faceLoginPill}
               >
                 <Feather name="camera" size={18} color="#0095F6" />

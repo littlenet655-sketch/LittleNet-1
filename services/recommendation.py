@@ -171,6 +171,7 @@ def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         rows,
         key=lambda p: (
             feedback.get(("SOCIAL", int(p.get("source_id", p.get("post_id")))), 0.0)
+            + feedback.get(("CURATED", int(p.get("source_id", p.get("content_id", 0)) or 0)), 0.0)
             + feedback.get(
                 ("CREATOR", int((p.get("ranking_metadata") or {}).get("child_id") or 0)),
                 0.0,

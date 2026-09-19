@@ -6,10 +6,12 @@ posts from quarantine to published or review/blocked states.
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import uuid
 from pathlib import Path
 from typing import Any
@@ -21,6 +23,10 @@ from safety.policy import decide
 from services import object_storage
 from services.media_sanitizer import strip_video_audio_in_place
 from services.social import parent_notify
+
+logger = logging.getLogger(__name__)
+_worker_locks_guard = threading.Lock()
+_worker_locks: dict[int, threading.Lock] = {}
 
 
 def _notify_approved_followers(post_id: int, child_id: int, kind: str) -> None:
@@ -128,7 +134,45 @@ def _merge_signals(text_signals: dict | None, media_signals: dict | None) -> dic
     }
 
 
+def _renew_worker_lease(post_id: int, worker_exec_token: str, extend_seconds: int = 300) -> bool:
+    """Extend lease expiration for an active worker to prevent lease expiration during long operations."""
+    try:
+        updated = execute(
+            """UPDATE posts
+               SET processing_lease_expires_at = NOW() + (%s || ' seconds')::INTERVAL
+               WHERE post_id = %s AND processing_lease_token = %s AND processing_status = 'PROCESSING'
+               RETURNING post_id""",
+            (str(extend_seconds), post_id, worker_exec_token),
+            returning=True,
+        )
+        return bool(updated)
+    except Exception as exc:
+        logger.warning("Failed to renew lease for post %s: %s", post_id, exc)
+        return False
+
+
 def process_media_job(
+    post_id: int,
+    child_id: int,
+    object_key: str,
+    kind: str,
+    lease_token: str | None = None,
+) -> dict[str, Any]:
+    """Prevent duplicate work in-process; the database lease covers other workers."""
+    with _worker_locks_guard:
+        worker_lock = _worker_locks.setdefault(int(post_id), threading.Lock())
+    if not worker_lock.acquire(blocking=False):
+        return {"ok": True, "status": "PROCESSING", "already_claimed": True, "idempotent": True}
+    try:
+        return _process_media_job_impl(post_id, child_id, object_key, kind, lease_token)
+    finally:
+        worker_lock.release()
+        with _worker_locks_guard:
+            if _worker_locks.get(int(post_id)) is worker_lock and not worker_lock.locked():
+                _worker_locks.pop(int(post_id), None)
+
+
+def _process_media_job_impl(
     post_id: int,
     child_id: int,
     object_key: str,
@@ -208,9 +252,26 @@ def process_media_job(
 
     media_type = post.get("media_type") or "VIDEO"
     temp_dir = Path(tempfile.mkdtemp(prefix=f"littlenet_proc_{post_id}_"))
+    lease_stop = threading.Event()
+    lease_lost = threading.Event()
+
+    def keep_lease_alive() -> None:
+        while not lease_stop.wait(60):
+            if not _renew_worker_lease(post_id, worker_exec_token, 300):
+                lease_lost.set()
+                return
+
+    lease_thread = threading.Thread(target=keep_lease_alive, name=f"media-lease-{post_id}", daemon=True)
+    lease_thread.start()
+
+    def require_active_lease() -> None:
+        if lease_lost.is_set() or not _renew_worker_lease(post_id, worker_exec_token, 300):
+            lease_lost.set()
+            raise RuntimeError("processing_lease_lost")
 
     try:
-        source_local = temp_dir / "quarantine_source"
+        source_suffix = Path(str(object_key)).suffix.lower()
+        source_local = temp_dir / f"quarantine_source{source_suffix if source_suffix in {'.jpg', '.jpeg', '.png', '.webp', '.mp4', '.mov'} else '.bin'}"
         if object_storage.enabled():
             object_storage.download_file(object_key, source_local)
         else:
@@ -271,6 +332,7 @@ def process_media_job(
                 return {"ok": False, "error": "video_duration_exceeded"}
 
             final_media_local, final_poster_local = _make_video_derivatives(source_local, temp_dir)
+            _renew_worker_lease(post_id, worker_exec_token, 300)
         elif media_type == "IMAGE":
             try:
                 from PIL import Image, ImageOps
@@ -295,20 +357,22 @@ def process_media_job(
 
         # AI Moderation
         text_signals, _ = evaluate(child_id, "TEXT", combined_text) if combined_text else ({}, None)
+        _renew_worker_lease(post_id, worker_exec_token, 300)
         media_signals, _ = evaluate(child_id, media_type, str(final_media_local))
         merged = _merge_signals(text_signals, media_signals)
         decision = decide(merged, safety_level(child_id), Config.ADULT_HARD_BLOCK_THRESHOLD)
         event_id = record(child_id, media_type, post_id, merged, decision)
 
         if decision.action == "BLOCK":
-            execute(
+            blocked_row = execute(
                 """UPDATE posts
                    SET is_safe=FALSE, moderation_status='BLOCKED', processing_status='BLOCKED',
                        media_path=NULL,
                        safety_score=%s, adult_score=%s, violence_score=%s, weapon_score=%s,
                        toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW(),
                        processing_lease_token=NULL, processing_lease_expires_at=NULL
-                   WHERE post_id=%s AND processing_lease_token=%s""",
+                   WHERE post_id=%s AND processing_lease_token=%s
+                   RETURNING post_id""",
                 (
                     decision.risk,
                     merged["adult_score"] * 100,
@@ -319,7 +383,11 @@ def process_media_job(
                     post_id,
                     worker_exec_token,
                 ),
+                returning=True,
             )
+            if not blocked_row:
+                logger.warning("Worker lease expired or stolen during BLOCK for post %s; aborting cleanup", post_id)
+                return {"ok": False, "status": "EXPIRED", "error": "lease_lost"}
             parent_notify(child_id, "CONTENT_BLOCKED", decision.reason, "/parent/safety/")
             try:
                 from services.push_notifications import notify_child_content_status
@@ -330,13 +398,14 @@ def process_media_job(
             return {"ok": True, "status": "BLOCKED", "reason": decision.reason}
 
         elif decision.action == "REVIEW":
-            execute(
+            review_row = execute(
                 """UPDATE posts
                    SET is_safe=FALSE, moderation_status='REVIEW', processing_status='REVIEW',
                        safety_score=%s, adult_score=%s, violence_score=%s, weapon_score=%s,
                        toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW(),
                        processing_lease_token=NULL, processing_lease_expires_at=NULL
-                   WHERE post_id=%s AND processing_lease_token=%s""",
+                   WHERE post_id=%s AND processing_lease_token=%s
+                   RETURNING post_id""",
                 (
                     decision.risk,
                     merged["adult_score"] * 100,
@@ -347,7 +416,11 @@ def process_media_job(
                     post_id,
                     worker_exec_token,
                 ),
+                returning=True,
             )
+            if not review_row:
+                logger.warning("Worker lease expired or stolen during REVIEW for post %s; aborting notify", post_id)
+                return {"ok": False, "status": "EXPIRED", "error": "lease_lost"}
             parent_notify(
                 child_id,
                 "REVIEW_REQUIRED",
@@ -365,6 +438,7 @@ def process_media_job(
             return {"ok": True, "status": "REVIEW", "event_id": event_id}
 
         else:  # ALLOW
+            require_active_lease()
             ext = "mp4" if media_type == "VIDEO" else "jpg"
             media_mime = "video/mp4" if ext == "mp4" else "image/jpeg"
             namespace = "stories" if kind.lower() == "story" else "reels" if kind.lower() == "reel" else "posts"
@@ -391,14 +465,30 @@ def process_media_job(
                     shutil.copy2(final_poster_local, perm_poster)
                     published_poster_ref = str(perm_poster).replace("\\", "/")
 
-            execute(
+            try:
+                require_active_lease()
+            except RuntimeError:
+                for orphan_ref in (published_media_ref, published_poster_ref):
+                    if not orphan_ref:
+                        continue
+                    try:
+                        if object_storage.is_r2_reference(orphan_ref):
+                            object_storage.delete_reference(orphan_ref)
+                        else:
+                            Path(orphan_ref).unlink(missing_ok=True)
+                    except Exception:
+                        logger.exception("Failed to remove orphaned publication object %s", orphan_ref)
+                raise
+
+            allowed_row = execute(
                 """UPDATE posts
                    SET media_path=%s, poster_path=%s, is_safe=TRUE,
                        moderation_status='ALLOWED', processing_status='ALLOWED',
                        safety_score=%s, adult_score=%s, violence_score=%s, weapon_score=%s,
                        toxicity_score=%s, moderation_reason=%s, processing_completed_at=NOW(),
                        processing_lease_token=NULL, processing_lease_expires_at=NULL
-                   WHERE post_id=%s AND processing_lease_token=%s""",
+                   WHERE post_id=%s AND processing_lease_token=%s
+                   RETURNING post_id""",
                 (
                     published_media_ref,
                     published_poster_ref,
@@ -411,7 +501,21 @@ def process_media_job(
                     post_id,
                     worker_exec_token,
                 ),
+                returning=True,
             )
+            if not allowed_row:
+                logger.warning("Worker lease expired or stolen during ALLOW for post %s; aborting publication", post_id)
+                for orphan_ref in (published_media_ref, published_poster_ref):
+                    if not orphan_ref:
+                        continue
+                    try:
+                        if object_storage.is_r2_reference(orphan_ref):
+                            object_storage.delete_reference(orphan_ref)
+                        else:
+                            Path(orphan_ref).unlink(missing_ok=True)
+                    except Exception:
+                        logger.exception("Failed to remove orphaned publication object %s", orphan_ref)
+                return {"ok": False, "status": "EXPIRED", "error": "lease_lost"}
             if media_type == "VIDEO":
                 try:
                     from services.video_delivery import ingest_post_video
@@ -453,6 +557,8 @@ def process_media_job(
         return {"ok": False, "error": str(exc)}
 
     finally:
+        lease_stop.set()
+        lease_thread.join(timeout=2)
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 

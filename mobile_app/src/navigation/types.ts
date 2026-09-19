@@ -6,9 +6,9 @@ export type AuthStackParamList = {
   ForgotPassword: undefined;
   ResetPassword: { userId: number; maskedEmail: string; message?: string };
   ParentRegister: undefined;
-  OtpVerify: { pendingToken: string; emailSent?: boolean };
+  OtpVerify: { pendingToken: string; emailSent?: boolean; devCode?: string };
   GuardianLiveness: { pendingToken: string };
-  FaceLogin: undefined;
+  FaceLogin: { mode?: 'kids' | 'parent' } | undefined;
 };
 
 export type ChildStackParamList = {

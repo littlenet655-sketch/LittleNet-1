@@ -1,4 +1,4 @@
-import json, math
+import json, math, os
 from .common import timed_call,timeout_seconds
 from database.connection import fetch_one, execute
 
@@ -100,13 +100,20 @@ def verify(child_id,path):
 
 def verify_adult_face(img_path):
     """Estimate adult status only after explicit single-face liveness evidence."""
-    import os
-
     from .remote_client import enabled, face_adult_verify
+    try:
+        auto_approve_age=max(18.0,float(os.getenv('GUARDIAN_FACE_AUTO_APPROVE_AGE','25')))
+    except ValueError:
+        auto_approve_age=25.0
     if enabled():
         try:
             result=face_adult_verify(img_path)
-            return result if isinstance(result,dict) and result.get('is_adult') in {True,False} else {
+            if isinstance(result,dict) and result.get('is_adult') in {True,False}:
+                age=result.get('estimated_age')
+                if result.get('is_adult') is True and (isinstance(age,bool) or not isinstance(age,(int,float)) or float(age)<auto_approve_age):
+                    return {'is_adult':False,'estimated_age':age,'method':result.get('method','REMOTE_AI'),'reason':'age_estimate_ambiguous','requires_manual_review':True}
+                return result
+            return {
                 'is_adult':False,'estimated_age':None,'method':'REMOTE_AI','reason':'adult_face_verification_invalid'
             }
         except Exception:
@@ -150,8 +157,10 @@ def verify_adult_face(img_path):
         age_val=float(raw_age)
         if not math.isfinite(age_val) or age_val<=0:raise ValueError('age_invalid')
         age_display=int(round(age_val))
-        if age_val>=18.0:
+        if age_val>=auto_approve_age:
             return {'is_adult': True, 'estimated_age': age_display, 'method': 'DEEPFACE'}
+        if age_val>=18.0:
+            return {'is_adult':False,'estimated_age':age_display,'method':'DEEPFACE','reason':'age_estimate_ambiguous','requires_manual_review':True}
         return {'is_adult': False, 'estimated_age': age_display, 'method': 'DEEPFACE', 'reason': 'under_age'}
     except Exception as exc:
         msg = str(exc).lower()
@@ -159,7 +168,8 @@ def verify_adult_face(img_path):
             return {'is_adult': False, 'estimated_age': None, 'method': 'DEEPFACE', 'reason': 'single_face_required'}
 
     # Optional age fallback is allowed only after the explicit anti-spoof check above passed.
-    api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
+    allow_fallback=os.getenv('LITTLENET_ENABLE_GENERATIVE_AGE_FALLBACK','0').strip().lower() in {'1','true','yes','on'}
+    api_key = (os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')) if allow_fallback else None
     if api_key:
         try:
             # pyrefly: ignore [missing-import]
@@ -193,12 +203,13 @@ def verify_adult_face(img_path):
                         'reason': 'age_verification_unavailable',
                     }
                 age_int = int(round(age_val))
-                is_adult = data.get('is_adult') is True and age_val >= 18.0
+                is_adult = data.get('is_adult') is True and age_val >= auto_approve_age
                 return {
                     'is_adult': is_adult,
                     'estimated_age': age_int,
                     'method': 'GEMINI_VISION',
-                    'reason': None if is_adult else 'under_age',
+                    'reason': None if is_adult else ('age_estimate_ambiguous' if age_val>=18.0 else 'under_age'),
+                    'requires_manual_review':bool(not is_adult and age_val>=18.0),
                 }
         except Exception:
             pass

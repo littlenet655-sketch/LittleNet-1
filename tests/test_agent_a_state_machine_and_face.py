@@ -218,40 +218,54 @@ def test_child_face_login_endpoint(client):
         "age": 10,
         "is_approved": True,
     }
+    challenge = {
+        "challenge_id": "550e8400-e29b-41d4-a716-446655440001",
+        "user_id": 202,
+        "nonce": "fresh-nonce",
+        "action": "BLINK",
+        "used_at": None,
+        "expires_at": datetime.now(timezone.utc) + timedelta(minutes=5),
+    }
 
-    # 1. Un-enrolled child -> 404 not_enrolled
-    with patch("mobile.api.fetch_one", return_value=user_row), \
-         patch("mobile.api.verify", return_value=(False, "not_enrolled", None)):
-        data = {
+    def face_fetch(query, params=()):
+        if "FROM face_auth_challenges" in query:
+            return challenge
+        return user_row
+
+    def consume_challenge(query, params=(), returning=False):
+        return {"challenge_id": challenge["challenge_id"]} if "UPDATE face_auth_challenges" in query else None
+
+    def request_data():
+        return {
             "identifier": "kiddo",
             "mode": "kids",
+            "challenge_id": challenge["challenge_id"],
+            "nonce": challenge["nonce"],
+            "action_completed": challenge["action"],
             "photo": (BytesIO(b"image_bytes" * 20), "selfie.jpg"),
         }
-        res = client.post("/api/mobile/v1/auth/face-login", data=data, content_type="multipart/form-data")
+
+    # 1. Un-enrolled child -> 404 not_enrolled
+    with patch("mobile.api.fetch_one", side_effect=face_fetch), \
+         patch("mobile.api.execute", side_effect=consume_challenge), \
+         patch("mobile.api.verify", return_value=(False, "not_enrolled", None)):
+        res = client.post("/api/mobile/v1/auth/face-login", data=request_data(), content_type="multipart/form-data")
         assert res.status_code == 404
         assert res.get_json()["reason"] == "not_enrolled"
 
     # 2. Liveness / spoof failure -> 401
-    with patch("mobile.api.fetch_one", return_value=user_row), \
+    with patch("mobile.api.fetch_one", side_effect=face_fetch), \
+         patch("mobile.api.execute", side_effect=consume_challenge), \
          patch("mobile.api.verify", return_value=(False, "liveness_failed", None)):
-        data = {
-            "identifier": "kiddo",
-            "mode": "kids",
-            "photo": (BytesIO(b"image_bytes" * 20), "selfie.jpg"),
-        }
-        res = client.post("/api/mobile/v1/auth/face-login", data=data, content_type="multipart/form-data")
+        res = client.post("/api/mobile/v1/auth/face-login", data=request_data(), content_type="multipart/form-data")
         assert res.status_code == 401
         assert res.get_json()["reason"] == "liveness_failed"
 
     # 3. Invalid enrolled embedding -> 401
-    with patch("mobile.api.fetch_one", return_value=user_row), \
+    with patch("mobile.api.fetch_one", side_effect=face_fetch), \
+         patch("mobile.api.execute", side_effect=consume_challenge), \
          patch("mobile.api.verify", return_value=(False, "invalid_enrolled_embedding", None)):
-        data = {
-            "identifier": "kiddo",
-            "mode": "kids",
-            "photo": (BytesIO(b"image_bytes" * 20), "selfie.jpg"),
-        }
-        res = client.post("/api/mobile/v1/auth/face-login", data=data, content_type="multipart/form-data")
+        res = client.post("/api/mobile/v1/auth/face-login", data=request_data(), content_type="multipart/form-data")
         assert res.status_code == 401
         assert res.get_json()["reason"] == "invalid_enrolled_embedding"
 
@@ -259,18 +273,14 @@ def test_child_face_login_endpoint(client):
     with patch("mobile.api.fetch_one") as mock_fetch, \
          patch("mobile.api.verify", return_value=(True, "matched", 0.15)), \
          patch("mobile.api.start_session", return_value={"session_key": "sess_123"}), \
-         patch("mobile.api.execute"):
+         patch("mobile.api.execute", side_effect=consume_challenge):
         mock_fetch.side_effect = [
             user_row, # user lookup
+            challenge,
             {"embedding": _valid_vector()}, # profile check
             None, # quiz check
         ]
-        data = {
-            "identifier": "kiddo",
-            "mode": "kids",
-            "photo": (BytesIO(b"image_bytes" * 20), "selfie.jpg"),
-        }
-        res = client.post("/api/mobile/v1/auth/face-login", data=data, content_type="multipart/form-data")
+        res = client.post("/api/mobile/v1/auth/face-login", data=request_data(), content_type="multipart/form-data")
         assert res.status_code == 200
         body = res.get_json()
         assert body["ok"] is True

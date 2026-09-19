@@ -64,7 +64,11 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
         password,
         dob: dob.trim(),
       });
-      navigation.navigate('OtpVerify', { pendingToken: response.pending_token, emailSent: response.email_sent });
+      navigation.navigate('OtpVerify', {
+        pendingToken: response.pending_token,
+        emailSent: response.email_sent,
+        devCode: response.dev_code,
+      });
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -196,12 +200,18 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
 }
 
 export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerify'>) {
-  const { pendingToken } = route.params;
-  const [otp, setOtp] = useState('');
+  const { pendingToken, devCode } = route.params;
+  const [otp, setOtp] = useState(devCode || '');
   const [busy, setBusy] = useState(false);
   const [resending, setResending] = useState(false);
   const [error, setError] = useState('');
-  const [info, setInfo] = useState(route.params.emailSent === false ? 'Email delivery may be slow. You can resend the code below.' : '');
+  const [info, setInfo] = useState(
+    devCode
+      ? `Verification code: ${devCode} (expires in 10 minutes)`
+      : route.params.emailSent === false
+      ? 'Email delivery may be slow. You can resend the code below.'
+      : ''
+  );
 
   async function submit() {
     if (otp.trim().length !== 6) {
@@ -225,7 +235,12 @@ export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerif
     setError('');
     try {
       const response = await resendParentEmail(pendingToken);
-      setInfo(response.ok ? 'A fresh code is on its way. It expires in 10 minutes.' : (response.error ?? 'Resend failed. Try again.'));
+      if (response.dev_code) {
+        setOtp(response.dev_code);
+        setInfo(`Verification code: ${response.dev_code} (expires in 10 minutes)`);
+      } else {
+        setInfo(response.ok ? 'A fresh code is on its way. It expires in 10 minutes.' : (response.error ?? 'Resend failed. Try again.'));
+      }
     } catch (err) {
       setError(errorText(err));
     } finally {

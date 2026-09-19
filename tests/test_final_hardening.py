@@ -229,10 +229,10 @@ def test_otp_send_failure_never_claims_code_sent():
     ('{"is_adult": true}', False, 'age_verification_unavailable', None),
     ('{"is_adult": true, "estimated_age": null}', False, 'age_verification_unavailable', None),
     ('{"is_adult": true, "estimated_age": "unknown"}', False, 'age_verification_unavailable', None),
-    ('{"is_adult": true, "estimated_age": "21"}', True, None, 21),
+    ('{"is_adult": true, "estimated_age": "21"}', False, 'age_estimate_ambiguous', 21),
     ('{"is_adult": true, "estimated_age": 17}', False, 'under_age', 17),
-    ('{"is_adult": false, "estimated_age": 30}', False, 'under_age', 30),
-    ('{"is_adult": true, "estimated_age": 18}', True, None, 18),
+    ('{"is_adult": false, "estimated_age": 30}', False, 'age_estimate_ambiguous', 30),
+    ('{"is_adult": true, "estimated_age": 18}', False, 'age_estimate_ambiguous', 18),
     ('{"is_adult": true, "estimated_age": 25}', True, None, 25),
     ('{"is_adult": true, "estimated_age": -5}', False, 'age_verification_unavailable', None),
     ('{"is_adult": true, "estimated_age": "NaN"}', False, 'age_verification_unavailable', None),
@@ -260,7 +260,7 @@ def test_gemini_adult_age_fallback_matrix(gemini_json, expected_is_adult, expect
         mock_deepface.extract_faces.return_value = [{"is_real": True}]
         mock_deepface.analyze.side_effect = RuntimeError("age model unavailable")
 
-        with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key"}, clear=False):
+        with patch.dict(os.environ, {"AI_SERVICE_URL": "", "GEMINI_API_KEY": "fake_test_gemini_key", "LITTLENET_ENABLE_GENERATIVE_AGE_FALLBACK": "1"}, clear=False):
             mock_google = MagicMock()
             mock_google.generativeai = mock_genai
             with patch.dict("sys.modules", {

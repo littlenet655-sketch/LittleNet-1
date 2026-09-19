@@ -6,7 +6,19 @@ import { Button } from '../ui/components';
 import { NativeVideoView } from '../ui/nativeViews';
 import { colors, radius, spacing } from '../ui/tokens';
 
-export function VideoMedia({ source, posterUrl, active = true, height = 380 }: { source: string; posterUrl?: string | null; active?: boolean; height?: number }) {
+export function VideoMedia({
+  source,
+  posterUrl,
+  active = true,
+  height = 380,
+  onComplete,
+}: {
+  source: string;
+  posterUrl?: string | null;
+  active?: boolean;
+  height?: number;
+  onComplete?: () => void;
+}) {
   const foreground = useIsForeground();
   const player = useVideoPlayer(null);
   const sourceRef = useRef<string | null>(null);
@@ -18,8 +30,14 @@ export function VideoMedia({ source, posterUrl, active = true, height = 380 }: {
     const subscription = player.addListener('statusChange', ({ status, error: playbackError }) => {
       if (status === 'error') setError(playbackError?.message ?? 'This video could not play.');
     });
-    return () => subscription.remove();
-  }, [player]);
+    const completeSub = player.addListener('playToEnd', () => {
+      onComplete?.();
+    });
+    return () => {
+      subscription.remove();
+      completeSub.remove();
+    };
+  }, [player, onComplete]);
 
   useEffect(() => {
     if (sourceRef.current === playableSource) return;

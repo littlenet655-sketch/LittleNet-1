@@ -50,9 +50,13 @@ _DETOX=None;_DETOX_NAME=None;_HF_TEXT=None
 
 
 def _normalized_text(text):
-    """Normalize common Unicode/spacing obfuscation before deterministic rules."""
+    """Canonicalize common evasion without changing the text sent to ML."""
     value=unicodedata.normalize('NFKC',text or '').lower()
-    value=re.sub(r'[._*~`|]+',' ',value)
+    value=''.join(ch for ch in value if unicodedata.category(ch) not in {'Cf','Mn'})
+    value=value.translate(str.maketrans({'0':'o','1':'i','3':'e','4':'a','5':'s','7':'t','@':'a','$':'s'}))
+    value=re.sub(r'(?<=\w)[._*~`|/\\-]+(?=\w)','',value)
+    value=re.sub(r'(.)\1{2,}',r'\1\1',value)
+    value=re.sub(r'[^\w\s+\']+',' ',value,flags=re.UNICODE)
     value=re.sub(r'\s+',' ',value).strip()
     return value
 

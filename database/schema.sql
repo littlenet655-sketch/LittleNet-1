@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS users (
  age INTEGER CHECK (age IS NULL OR age BETWEEN 4 AND 18),
  dob DATE,
  account_status VARCHAR(30) NOT NULL DEFAULT 'PENDING_APPROVAL' CHECK (account_status IN ('PENDING_APPROVAL','ACTIVE','REJECTED','SUSPENDED')),
+ session_version INTEGER NOT NULL DEFAULT 1,
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS parent_child_map (
@@ -428,5 +429,27 @@ CREATE TABLE IF NOT EXISTS mobile_token_revocations (
 
 CREATE INDEX IF NOT EXISTS idx_revoked_tokens_user ON mobile_token_revocations(user_id);
 
+-- Semantic Candidate Retrieval & Item Embeddings
+CREATE EXTENSION IF NOT EXISTS vector;
 
-
+CREATE TABLE IF NOT EXISTS item_embeddings (
+  embedding_id BIGSERIAL PRIMARY KEY,
+  source_type VARCHAR(32) NOT NULL,
+  source_id BIGINT NOT NULL,
+  embedding vector(384),
+  model_name VARCHAR(64) NOT NULL DEFAULT 'all-MiniLM-L6-v2',
+  version INT NOT NULL DEFAULT 1,
+  metadata JSONB DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(source_type, source_id, model_name, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_item_embeddings_source ON item_embeddings(source_type, source_id);
+
+-- Performance Composite Indexes
+CREATE INDEX IF NOT EXISTS idx_posts_feed_eligible ON posts(moderation_status, is_safe, is_story, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_posts_reels_eligible ON posts(moderation_status, is_safe, is_story, is_reel, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_content_impressions_child_shown ON content_impressions(child_id, shown_at DESC);
+CREATE INDEX IF NOT EXISTS idx_recommendation_signals_child_src ON recommendation_signals(child_id, source_type, source_id);
+CREATE INDEX IF NOT EXISTS idx_feed_sessions_child_exp ON feed_sessions(child_id, surface, expires_at);

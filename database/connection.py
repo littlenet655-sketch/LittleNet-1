@@ -82,9 +82,11 @@ def _get_pool():
                 except ImportError as exc:
                     raise RuntimeError('psycopg2 is required. Install requirements-core.txt') from exc
                 started = time.monotonic()
-                _pool = ThreadedConnectionPool(2, 20, _database_url(), cursor_factory=RealDictCursor)
+                minconn = max(1, int(os.getenv("DB_POOL_MIN_CONNECTIONS", "2")))
+                maxconn = max(minconn, int(os.getenv("DB_POOL_MAX_CONNECTIONS", "20")))
+                _pool = ThreadedConnectionPool(minconn, maxconn, _database_url(), cursor_factory=RealDictCursor)
                 _metric("pool_creations", time.monotonic() - started)
-                _metric("connection_creations", amount=2)
+                _metric("connection_creations", amount=minconn)
     return _pool
 
 

@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { FlatList, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   fetchAdminAudit,
@@ -11,6 +12,7 @@ import {
   updateAdminUserStatus,
 } from '../../api/parentAdmin';
 import { useAuth } from '../../auth/AuthProvider';
+import { VideoMedia } from '../../kids/VideoMedia';
 import type { AdminScreenProps } from '../../navigation/types';
 import { useIsOnline } from '../../query/client';
 import { adminKeys } from '../../query/keys';
@@ -56,8 +58,9 @@ export function AdminReviewScreen({ navigation, route }: AdminScreenProps<'Admin
   if (query.isPending) return <Screen><LoadingState message="Loading review detail…" /></Screen>;
   if (query.isError || !query.data) return <Screen><ErrorState message={errorText(query.error, 'Review unavailable.')} onRetry={() => void query.refetch()} /></Screen>;
   const { event, preview } = query.data;
-  const previewImage = (preview?.media_type ?? '').toUpperCase() === 'IMAGE' ? preview?.media_url : preview?.poster_url;
-  return <Screen><ScrollView><BrandHeader title="Moderation detail" subtitle="Final actions are confirmed by the backend and recorded in the audit history." /><Card><View style={styles.rowBetween}><CategoryBadge label={event.content_type} /><TimeAgo value={event.created_at} /></View><Text style={styles.title}>{event.full_name ?? event.username ?? `Child ${event.child_id}`}</Text>{previewImage ? <Image source={{ uri: previewImage, headers: { Authorization: `Bearer ${session?.token ?? ''}` } }} resizeMode="cover" style={styles.preview} /> : null}{preview?.media_url && !previewImage ? <Notice tone="info" message="The video remains in private quarantine. Use its event summary for this decision." /> : null}{preview?.caption ? <Text style={styles.body}>{preview.caption}</Text> : null}{preview?.comment_text ? <Text style={styles.body}>{preview.comment_text}</Text> : null}{preview?.message_text ? <Text style={styles.body}>{preview.message_text}</Text> : null}<Text style={styles.body}>{event.reason || 'No public-facing reason supplied.'}</Text><Text style={styles.muted}>Status: {event.status} · decision: {event.decision} · risk: {String(event.risk_score ?? 'not provided')}</Text><Field label="Moderator notes (optional)" value={notes} onChangeText={setNotes} multiline />{mutation.error ? <Notice message={errorText(mutation.error)} /> : null}{mutation.isSuccess && mutation.data.status === 'OPEN' ? <Notice tone="ok" message="Escalation recorded. This event remains open for a final decision." /> : null}<Button label="Approve" loading={mutation.isPending} onPress={() => mutation.mutate('APPROVE')} /><Button label="Block" variant="secondary" disabled={mutation.isPending} onPress={() => mutation.mutate('BLOCK')} /><Button label="Escalate" variant="secondary" disabled={mutation.isPending} onPress={() => mutation.mutate('ESCALATE')} /></Card></ScrollView></Screen>;
+  const isVideo = (preview?.media_type ?? '').toUpperCase() === 'VIDEO';
+  const previewImage = !isVideo ? preview?.media_url : preview?.poster_url;
+  return <Screen><ScrollView><BrandHeader title="Moderation detail" subtitle="Final actions are confirmed by the backend and recorded in the audit history." /><Card><View style={styles.rowBetween}><CategoryBadge label={event.content_type} /><TimeAgo value={event.created_at} /></View><Text style={styles.title}>{event.full_name ?? event.username ?? `Child ${event.child_id}`}</Text>{isVideo && preview?.media_url ? <View style={styles.videoPreviewWrapper}><VideoMedia source={preview.media_url} posterUrl={preview.poster_url} height={300} /><View style={styles.quarantineBadge}><Feather name="shield" size={12} color="#FFFFFF" /><Text style={styles.quarantineBadgeText}>QUARANTINE PREVIEW • LittleNet Safety Review</Text></View></View> : null}{previewImage && !isVideo ? <Image source={{ uri: previewImage, headers: { Authorization: `Bearer ${session?.token ?? ''}` } }} resizeMode="cover" style={styles.preview} /> : null}{preview?.caption ? <Text style={styles.body}>{preview.caption}</Text> : null}{preview?.comment_text ? <Text style={styles.body}>{preview.comment_text}</Text> : null}{preview?.message_text ? <Text style={styles.body}>{preview.message_text}</Text> : null}<Text style={styles.body}>{event.reason || 'No public-facing reason supplied.'}</Text><Text style={styles.muted}>Status: {event.status} · decision: {event.decision} · risk: {String(event.risk_score ?? 'not provided')}</Text><Field label="Moderator notes (optional)" value={notes} onChangeText={setNotes} multiline />{mutation.error ? <Notice message={errorText(mutation.error)} /> : null}{mutation.isSuccess && mutation.data.status === 'OPEN' ? <Notice tone="ok" message="Escalation recorded. This event remains open for a final decision." /> : null}<Button label="Approve" loading={mutation.isPending} onPress={() => mutation.mutate('APPROVE')} /><Button label="Block" variant="secondary" disabled={mutation.isPending} onPress={() => mutation.mutate('BLOCK')} /><Button label="Escalate" variant="secondary" disabled={mutation.isPending} onPress={() => mutation.mutate('ESCALATE')} /></Card></ScrollView></Screen>;
 }
 
 export function AdminUsersScreen(_props: AdminScreenProps<'AdminUsers'>) {
@@ -103,4 +106,32 @@ const styles = StyleSheet.create({
   statusAlert: { color: colors.danger },
   auditRow: { flexDirection: 'row', gap: spacing.sm, minHeight: 68, paddingVertical: spacing.sm, borderBottomWidth: 1, borderBottomColor: colors.line, alignItems: 'center' },
   auditDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.brand },
+  videoPreviewWrapper: {
+    width: '100%',
+    height: 300,
+    borderRadius: radius.md,
+    overflow: 'hidden',
+    backgroundColor: colors.ink,
+    marginVertical: spacing.sm,
+    position: 'relative',
+  },
+  quarantineBadge: {
+    position: 'absolute',
+    top: spacing.sm,
+    left: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(239, 68, 68, 0.88)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    zIndex: 10,
+  },
+  quarantineBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
 });

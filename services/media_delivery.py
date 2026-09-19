@@ -28,6 +28,7 @@ from services.object_storage import (
     DEFAULT_SIGNED_URL_TTL,
     R2_REFERENCE_PREFIX,
     enabled as r2_enabled,
+    get_playback_ttl,
     is_reference as is_r2_reference,
     signed_download_url,
 )
@@ -84,7 +85,7 @@ def resolve_media_delivery(
             # Strict authorization check before generating signed URL
             if viewer_id and viewer_role and is_authorized_viewer(viewer_id, viewer_role, ref):
                 try:
-                    ttl = max(60, min(expires_seconds, 600))  # strictly up to 10 minutes, matching object_storage clamp
+                    ttl = get_playback_ttl(expires_seconds)
                     signed_url = signed_download_url(ref, expires_seconds=ttl)
                     expires_at = int(time.time()) + ttl
                     return {

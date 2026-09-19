@@ -11,7 +11,7 @@ import tempfile
 
 from .common import normalize_signals, timed_call, timeout_seconds
 from .scene_sampler import combined_frame_indices
-from .visual_service import check_image, _video_sample_count
+from .visual_service import check_image, _video_sample_count, video_sampling_coverage
 
 
 def _frame_count(path: str):
@@ -82,6 +82,7 @@ def check_video(path: str, max_frames=None):
 
     try:
         requested = _video_sample_count(path, max_frames)
+        coverage = video_sampling_coverage(path, requested)
         outs, indices, failed_indices = timed_call(
             "video_frames",
             lambda: _sample_frames(path, requested),
@@ -96,9 +97,11 @@ def check_video(path: str, max_frames=None):
         out = {k: max(float(x.get(k, 0)) for x in outs) for k in keys}
         out["toxicity_score"] = 0
         any_total_failure=any(x.get("total_safety_failure") is True for x in outs)
-        out["partial_safety_failure"] = bool(failed_indices) or any_total_failure or any(x.get("partial_safety_failure") is True for x in outs)
+        out["partial_safety_failure"] = (not coverage["coverage_complete"]) or bool(failed_indices) or any_total_failure or any(x.get("partial_safety_failure") is True for x in outs)
         out["total_safety_failure"] = bool(outs) and all(x.get("total_safety_failure") is True for x in outs)
         out["errors"] = [err for x in outs for err in x.get("errors", [])]
+        if not coverage["coverage_complete"]:
+            out["errors"].append("video_temporal_coverage_incomplete")
         out["model_signals"] = {
             "sampling_strategy": "pyscenedetect_plus_uniform",
             "sampled_frames": len(outs),
@@ -106,6 +109,7 @@ def check_video(path: str, max_frames=None):
             "requested_frames": requested,
             "frame_indices": indices,
             "failed_frame_indices": failed_indices,
+            **coverage,
             "frames": [x.get("model_signals", {}) for x in outs],
         }
         out["category"] = (

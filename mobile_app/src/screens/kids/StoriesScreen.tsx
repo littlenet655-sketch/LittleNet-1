@@ -46,17 +46,29 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 
   const current = stories[index];
   const isVideo = current?.media_type?.toUpperCase() === 'VIDEO';
+  const completedRef = useRef<Record<number, boolean>>({});
 
   useEffect(() => {
     setPaused(false);
     if (session?.token && current?.post_id) {
-      void recordStoryView(session.token, current.post_id, 1.0).catch(() => {});
+      // Record initial story view at start of playback (0.1 completion ratio)
+      void recordStoryView(session.token, current.post_id, 0.1).catch(() => {});
     }
   }, [index, current?.post_id, session?.token]);
 
+  function markStoryComplete(postId: number) {
+    if (session?.token && postId && !completedRef.current[postId]) {
+      completedRef.current[postId] = true;
+      void recordStoryView(session.token, postId, 1.0).catch(() => {});
+    }
+  }
+
   useEffect(() => {
     if (!current || isVideo || !stories.length || paused || !focused) return;
-    const timer = setTimeout(() => setIndex((value) => value < stories.length - 1 ? value + 1 : 0), IMAGE_DURATION);
+    const timer = setTimeout(() => {
+      markStoryComplete(current.post_id);
+      setIndex((value) => (value < stories.length - 1 ? value + 1 : 0));
+    }, IMAGE_DURATION);
     return () => clearTimeout(timer);
   }, [index, current?.post_id, isVideo, stories.length, paused, focused]);
 
@@ -82,7 +94,19 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           </View>
         </View>
         <View style={styles.media}>
-          {current.media_url && isVideo ? <VideoMedia key={current.post_id} source={current.media_url} posterUrl={current.poster_url} active={!paused && focused} height={height} /> : null}
+          {current.media_url && isVideo ? (
+            <VideoMedia
+              key={current.post_id}
+              source={current.media_url}
+              posterUrl={current.poster_url}
+              active={!paused && focused}
+              height={height}
+              onComplete={() => {
+                markStoryComplete(current.post_id);
+                setIndex((value) => (value < stories.length - 1 ? value + 1 : 0));
+              }}
+            />
+          ) : null}
           {current.media_url && !isVideo ? <Image source={{ uri: current.media_url }} style={styles.image} resizeMode="cover" /> : null}
           {!current.media_url ? <Text style={styles.missing}>This story has no media.</Text> : null}
           <Pressable accessibilityLabel="Previous story" onPress={previous} style={styles.leftTap} />

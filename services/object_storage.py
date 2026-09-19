@@ -192,20 +192,30 @@ def _request_media_gate() -> None:
 DEFAULT_SIGNED_URL_TTL = 600  # Authoritative 10-minute TTL
 
 
+def get_playback_ttl(expires_seconds: int | None = None) -> int:
+    """Return single authoritative playback signed URL TTL in seconds clamped between 60 and 600."""
+    try:
+        env_val = int(os.getenv("R2_SIGNED_URL_TTL", str(DEFAULT_SIGNED_URL_TTL)))
+    except (TypeError, ValueError):
+        env_val = DEFAULT_SIGNED_URL_TTL
+    raw = expires_seconds if expires_seconds is not None else env_val
+    return max(60, min(int(raw), 600))
+
+
 def signed_download_url(reference: str, expires_seconds: int | None = None) -> str:
     if not is_reference(reference):
         raise ValueError("not an R2 reference")
     if not _enabled():
         raise RuntimeError("Cloudflare R2 is not configured")
     _request_media_gate()
-    expiry = expires_seconds or int(os.getenv("R2_SIGNED_URL_TTL", "180"))
+    effective_ttl = get_playback_ttl(expires_seconds)
     return _client().generate_presigned_url(
         "get_object",
         Params={
             "Bucket": os.environ["R2_BUCKET"],
             "Key": str(reference)[len(R2_REFERENCE_PREFIX) :],
         },
-        ExpiresIn=max(60, min(expiry, 600)),
+        ExpiresIn=effective_ttl,
     )
 
 
