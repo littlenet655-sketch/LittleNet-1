@@ -71,29 +71,36 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?:
       {previewUrl ? <Pressable onPress={onOpen} disabled={!onOpen}><Image source={{ uri: previewUrl }} style={styles.media} /></Pressable> : isVideo ? <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}><Text style={styles.videoLabel}>Video</Text></Pressable> : null}
       {socialTarget ? <View style={styles.actions}>
         <Pressable onPress={() => void onLike()} style={styles.action}>
-          <Text style={styles.actionText}>{item.viewer_liked ? '♥ Liked' : '♡ Like'} ({item.likes ?? 0})</Text>
+          <Text style={[styles.icon, item.viewer_liked && styles.liked]}>♡</Text>
         </Pressable>
         <Pressable onPress={() => void onSave()} style={styles.action}>
-          <Text style={styles.actionText}>{item.viewer_saved ? '★ Saved' : '☆ Save'}</Text>
+          <Text style={styles.icon}>{item.viewer_saved ? '▣' : '□'}</Text>
         </Pressable>
         <Pressable onPress={onOpen} style={styles.action}>
-          <Text style={styles.actionText}>Comments ({item.comments_count ?? 0})</Text>
+          <Text style={styles.icon}>□</Text>
         </Pressable>
+        <Text style={styles.likeCount}>{item.likes ?? 0} likes</Text>
+        <View style={styles.flex} />
+        <Pressable onPress={onOpen}><Text style={styles.icon}>↗</Text></Pressable>
       </View> : null}
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { backgroundColor: colors.surface, borderRadius: radius.lg, borderWidth: 1, borderColor: colors.line, padding: spacing.md, marginBottom: spacing.md },
+  card: { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.line, paddingBottom: spacing.md, marginBottom: spacing.sm },
   row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   meta: { flex: 1 },
   name: { fontWeight: '800', color: colors.ink },
   title: { marginTop: 8, color: colors.ink, fontSize: type.body, fontWeight: '800' },
   caption: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 22 },
-  media: { marginTop: 10, width: '100%', height: 300, borderRadius: radius.md, backgroundColor: colors.line },
+  media: { marginTop: 10, width: '100%', height: 300, borderRadius: 0, backgroundColor: colors.line },
   videoLabel: { margin: 'auto', color: colors.muted, fontWeight: '700' },
-  actions: { flexDirection: 'row', marginTop: 8 },
-  action: { paddingVertical: 8, paddingRight: 16 },
+  actions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 8, paddingHorizontal: spacing.md },
+  action: { paddingVertical: 5 },
   actionText: { color: colors.brandDark, fontWeight: '700' },
+  likeCount: { color: colors.ink, fontSize: type.caption, fontWeight: '700' },
+  flex: { flex: 1 },
+  icon: { color: colors.ink, fontSize: 24, lineHeight: 24 },
+  liked: { color: colors.danger },
 });

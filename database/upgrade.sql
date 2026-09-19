@@ -119,6 +119,22 @@ CREATE INDEX IF NOT EXISTS idx_child_ambitions_child_approved ON child_ambitions
 CREATE INDEX IF NOT EXISTS idx_saved_posts_child ON saved_posts(child_id);
 CREATE INDEX IF NOT EXISTS idx_story_views_post_child ON story_views(post_id,child_id);
 
+CREATE TABLE IF NOT EXISTS recommendation_signals (
+  signal_id BIGSERIAL PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  source_type VARCHAR(20) NOT NULL CHECK(source_type IN ('SOCIAL','CURATED','CREATOR')),
+  source_id BIGINT NOT NULL,
+  signal VARCHAR(30) NOT NULL CHECK(signal IN (
+    'INTEREST','REEL_COMPLETION','REEL_REPLAY','LIKE','SAVE','COMMENT',
+    'SHARE','FOLLOW','SEARCH_CLICK','NOT_INTERESTED','HIDE','MUTE','BLOCK','REPORT'
+  )),
+  weight NUMERIC(8,3) NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_recommendation_signals_child_source
+  ON recommendation_signals(child_id,source_type,source_id,created_at DESC);
+
 -- AI & Safety Intelligence Extensions (K2-Horizon & Enhanced Learning)
 ALTER TABLE moderation_events ADD COLUMN IF NOT EXISTS pii_detected BOOLEAN DEFAULT FALSE;
 ALTER TABLE moderation_events ADD COLUMN IF NOT EXISTS grooming_risk_score NUMERIC(6,2) DEFAULT 0.0;
@@ -265,4 +281,4 @@ ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_lease_token VARCHAR(64);
 ALTER TABLE posts ADD COLUMN IF NOT EXISTS processing_lease_expires_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS idx_posts_lease_expiry ON posts(processing_lease_expires_at)
   WHERE processing_status IN ('UPLOADED', 'PROCESSING');
-
+

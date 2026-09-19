@@ -16,6 +16,40 @@ class MediaSanitizationError(RuntimeError):
     pass
 
 
+def sanitize_image_in_place(path: str) -> bool:
+    """Strip EXIF/GPS metadata and normalize an image before publication."""
+    source = Path(path)
+    if not source.is_file():
+        raise MediaSanitizationError("image_file_missing")
+    suffix = source.suffix.lower() or ".jpg"
+    output_format = {"jpg": "JPEG", ".jpg": "JPEG", ".jpeg": "JPEG", ".png": "PNG", ".webp": "WEBP"}.get(
+        suffix, "JPEG"
+    )
+    fd, tmp = tempfile.mkstemp(prefix="littlenet_clean_image_", suffix=suffix, dir=str(source.parent))
+    os.close(fd)
+    try:
+        try:
+            from PIL import Image, ImageOps
+            with Image.open(source) as image:
+                clean = ImageOps.exif_transpose(image)
+                if output_format == "JPEG":
+                    clean = clean.convert("RGB")
+                save_kwargs = {"quality": 92} if output_format in {"JPEG", "WEBP"} else {}
+                clean.save(tmp, format=output_format, **save_kwargs)
+        except Exception as exc:
+            raise MediaSanitizationError("image_metadata_strip_failed") from exc
+        if not os.path.isfile(tmp) or os.path.getsize(tmp) <= 0:
+            raise MediaSanitizationError("clean_image_output_missing")
+        os.replace(tmp, str(source))
+        return True
+    finally:
+        if os.path.exists(tmp):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def _probe(path: str, selector: str) -> list[str]:
     try:
         result=subprocess.run(

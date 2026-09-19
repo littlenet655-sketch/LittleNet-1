@@ -1,9 +1,68 @@
 import threading
+import os
+import time
+from collections import Counter
 from dotenv import load_dotenv
 load_dotenv()
 
 _pool = None
 _pool_lock = threading.Lock()
+_validation_lock = threading.Lock()
+_validation_cache = {}
+_pool_metrics = Counter()
+_pool_metric_seconds = Counter()
+_VALIDATION_INTERVAL_SECONDS = max(
+    0.0, float(os.getenv("DB_POOL_VALIDATION_INTERVAL_SECONDS", "30"))
+)
+
+
+def _metric(name, elapsed=None, amount=1):
+    with _validation_lock:
+        _pool_metrics[name] += amount
+        if elapsed is not None:
+            _pool_metric_seconds[name] += elapsed
+
+
+def pool_metrics_snapshot():
+    """Return connection-pool timing counters without query parameters or secrets."""
+    with _validation_lock:
+        counts = dict(_pool_metrics)
+        seconds = dict(_pool_metric_seconds)
+    return {
+        "counts": counts,
+        "seconds": seconds,
+        "validation_interval_seconds": _VALIDATION_INTERVAL_SECONDS,
+    }
+
+
+def reset_pool_metrics():
+    """Reset disposable/test diagnostics and cached validation state."""
+    with _validation_lock:
+        _pool_metrics.clear()
+        _pool_metric_seconds.clear()
+        _validation_cache.clear()
+
+
+def _validation_is_recent(raw_conn):
+    if _VALIDATION_INTERVAL_SECONDS <= 0:
+        return False
+    with _validation_lock:
+        entry = _validation_cache.get(id(raw_conn))
+        if not entry or entry[0] is not raw_conn:
+            return False
+        return time.monotonic() - entry[1] < _VALIDATION_INTERVAL_SECONDS
+
+
+def _remember_validation(raw_conn):
+    with _validation_lock:
+        _validation_cache[id(raw_conn)] = (raw_conn, time.monotonic())
+
+
+def _forget_validation(raw_conn):
+    with _validation_lock:
+        entry = _validation_cache.get(id(raw_conn))
+        if entry and entry[0] is raw_conn:
+            _validation_cache.pop(id(raw_conn), None)
 
 
 def _database_url():
@@ -22,24 +81,35 @@ def _get_pool():
                     from psycopg2.extras import RealDictCursor
                 except ImportError as exc:
                     raise RuntimeError('psycopg2 is required. Install requirements-core.txt') from exc
+                started = time.monotonic()
                 _pool = ThreadedConnectionPool(2, 20, _database_url(), cursor_factory=RealDictCursor)
+                _metric("pool_creations", time.monotonic() - started)
+                _metric("connection_creations", amount=2)
     return _pool
 
 
 def _discard_connection(pool, conn):
+    _forget_validation(conn)
     try:pool.putconn(conn, close=True)
     except Exception:
         try:conn.close()
         except Exception:pass
+    _metric("connection_discards")
 
 
 def _connection_is_usable(conn):
     if conn.closed:return False
     try:
+        started = time.monotonic()
         conn.rollback()
         with conn.cursor() as cur:cur.execute('SELECT 1')
-        conn.rollback();return True
-    except Exception:return False
+        conn.rollback()
+        _metric("validation_selects", time.monotonic() - started)
+        _remember_validation(conn)
+        return True
+    except Exception:
+        _metric("validation_failures")
+        return False
 
 
 class PooledConnectionWrapper:
@@ -52,8 +122,10 @@ class PooledConnectionWrapper:
             except Exception:pass
             return
         try:
+            started = time.monotonic()
             if self._conn.closed:raise RuntimeError('connection is closed')
             self._conn.rollback()
+            _metric("connection_returns", time.monotonic() - started)
         except Exception:_discard_connection(self._pool,self._conn)
         else:self._pool.putconn(self._conn)
     def __getattr__(self,name):return getattr(self._conn,name)
@@ -72,38 +144,65 @@ def get_db_connection():
     try:
         pool=_get_pool()
         for _ in range(2):
+            started = time.monotonic()
             raw_conn=pool.getconn()
+            _metric("pool_checkouts", time.monotonic() - started)
+            if raw_conn.closed:
+                _discard_connection(pool, raw_conn)
+                continue
+            if _validation_is_recent(raw_conn):
+                _metric("validation_skips")
+                return PooledConnectionWrapper(pool,raw_conn)
             if _connection_is_usable(raw_conn):return PooledConnectionWrapper(pool,raw_conn)
             _discard_connection(pool,raw_conn)
         raise RuntimeError('pooled database connections failed validation')
     except Exception:
         import psycopg2
         from psycopg2.extras import RealDictCursor
-        return psycopg2.connect(_database_url(), cursor_factory=RealDictCursor)
+        started = time.monotonic()
+        conn = psycopg2.connect(_database_url(), cursor_factory=RealDictCursor)
+        _metric("connection_creations", time.monotonic() - started)
+        return conn
 
 
 def fetch_one(sql, params=()):
     conn=get_db_connection()
     try:
-        with conn.cursor() as cur:cur.execute(sql,params);return cur.fetchone()
+        started = time.monotonic()
+        with conn.cursor() as cur:cur.execute(sql,params);row=cur.fetchone()
+        _metric("sql_calls", time.monotonic() - started)
+        return row
     finally:conn.close()
 
 
 def fetch_all(sql, params=()):
     conn=get_db_connection()
     try:
-        with conn.cursor() as cur:cur.execute(sql,params);return cur.fetchall()
+        started = time.monotonic()
+        with conn.cursor() as cur:cur.execute(sql,params);rows=cur.fetchall()
+        _metric("sql_calls", time.monotonic() - started)
+        return rows
     finally:conn.close()
 
 
 def execute(sql, params=(), returning=False):
     conn=get_db_connection()
     try:
+        started = time.monotonic()
         with conn.cursor() as cur:
             cur.execute(sql,params);row=cur.fetchone() if returning else None
-        conn.commit();return row
+        _metric("sql_calls", time.monotonic() - started)
+        started = time.monotonic()
+        conn.commit()
+        _metric("commits", time.monotonic() - started)
+        return row
     except Exception:
-        conn.rollback();raise
+        started = time.monotonic()
+        try:
+            conn.rollback()
+        finally:
+            _metric("rollbacks", time.monotonic() - started)
+        raise
     finally:conn.close()
 
 
@@ -111,8 +210,18 @@ def execute_count(sql, params=()):
     """Execute one mutation and return PostgreSQL's authoritative affected-row count."""
     conn=get_db_connection()
     try:
+        started = time.monotonic()
         with conn.cursor() as cur:cur.execute(sql,params);count=cur.rowcount
-        conn.commit();return count
+        _metric("sql_calls", time.monotonic() - started)
+        started = time.monotonic()
+        conn.commit()
+        _metric("commits", time.monotonic() - started)
+        return count
     except Exception:
-        conn.rollback();raise
+        started = time.monotonic()
+        try:
+            conn.rollback()
+        finally:
+            _metric("rollbacks", time.monotonic() - started)
+        raise
     finally:conn.close()

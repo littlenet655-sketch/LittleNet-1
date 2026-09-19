@@ -57,7 +57,14 @@ Per audit guidelines, we report **Configured Label Coverage** separately from **
 
 ---
 
-## 4. Benchmark Quarantine Verification
+## 4. Restricted-content quarantine and label audit (not a performance benchmark)
+
+This check is a dataset/pipeline isolation and expected-label audit only. It
+does not measure detector precision, recall, generalisation, real-world
+effectiveness, or 18+ accuracy. No adult-content accuracy claim should be
+derived from it; a suitable independently labelled held-out evaluation set
+and external validation are still required. See
+`docs/MODERATION_BENCHMARK_PROTOCOL.md`.
 
 The 12 restricted adult benchmark images from `18+images.zip` were audited against the safety pipeline:
 - All 12 items are assigned `is_safe = FALSE`, `adult_score = 0.98`, and `moderation_status = 'BLOCKED'`.

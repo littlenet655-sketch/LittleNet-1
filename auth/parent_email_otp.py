@@ -13,7 +13,7 @@ from datetime import date, datetime
 from auth.service import hash_password
 from config import Config
 from database.connection import get_db_connection, fetch_one
-from mailg.send_email import send_email
+from mailg.send_email import send_parent_otp_email
 from services.identity import validate_name, validate_username
 
 OTP_TTL_MINUTES = 10
@@ -99,7 +99,11 @@ def _send_code(user_id, email, full_name, code):
     <p>After OTP verification, LittleNet will ask for a live adult/liveness check before the account can become active.</p>
     <p>If you did not create a LittleNet Parent account, you can ignore this email.</p>
     """
-    return bool(send_email(email, 'LittleNet: Your 6-digit parent verification code', body))
+    return bool(send_parent_otp_email(
+        email,
+        'LittleNet: Your 6-digit parent verification code',
+        body,
+    ))
 
 
 def begin_parent_registration(form):

@@ -5,7 +5,8 @@ export type ChildRoute =
   | 'FaceEnroll' | 'Quiz' | 'KidsHome' | 'KidsTabs'
   | 'FeedTab' | 'DiscoverTab' | 'CreateTab' | 'ReelsTab' | 'ProfileTab'
   | 'Stories' | 'NotificationsTab' | 'Conversations' | 'Chat'
-  | 'PostDetail' | 'OtherProfile' | 'ProcessingStatus';
+  | 'ChatDetails' | 'NewMessage' | 'SavedContent' | 'EditProfile' | 'Connections'
+  | 'PostDetail' | 'OtherProfile' | 'ProcessingStatus' | 'SafetyCentre' | 'ReportHistory';
 
 /** Face gate always wins: a child without enrollment must never reach quiz or home. */
 export function childNextRoute(faceRequired: boolean, quizRequired: boolean): ChildRoute {

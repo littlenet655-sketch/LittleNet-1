@@ -113,6 +113,22 @@ CREATE TABLE IF NOT EXISTS saved_posts (
  UNIQUE(child_id,post_id)
 );
 
+CREATE TABLE IF NOT EXISTS recommendation_signals (
+  signal_id BIGSERIAL PRIMARY KEY,
+  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+  source_type VARCHAR(20) NOT NULL CHECK(source_type IN ('SOCIAL','CURATED','CREATOR')),
+  source_id BIGINT NOT NULL,
+  signal VARCHAR(30) NOT NULL CHECK(signal IN (
+    'INTEREST','REEL_COMPLETION','REEL_REPLAY','LIKE','SAVE','COMMENT',
+    'SHARE','FOLLOW','SEARCH_CLICK','NOT_INTERESTED','HIDE','MUTE','BLOCK','REPORT'
+  )),
+  weight NUMERIC(8,3) NOT NULL,
+  metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_recommendation_signals_child_source
+  ON recommendation_signals(child_id,source_type,source_id,created_at DESC);
+
 CREATE TABLE IF NOT EXISTS story_views (
  story_view_id BIGSERIAL PRIMARY KEY, post_id BIGINT NOT NULL REFERENCES posts(post_id) ON DELETE CASCADE,
  child_id INTEGER NOT NULL REFERENCES users(user_id) ON DELETE CASCADE, viewed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(post_id,child_id)

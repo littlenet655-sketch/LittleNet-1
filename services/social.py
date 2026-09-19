@@ -91,6 +91,10 @@ def discoverable_posts(viewer_id, reels=False, limit=30, offset=0):
     feature = 'allow_reels' if reels else 'allow_discover'
     if not controls.get(feature, True):
         return []
+    from child.service import discoverable_child_ids
+    allowed_child_ids = discoverable_child_ids(viewer_id)
+    if not allowed_child_ids:
+        return []
     cats = effective_categories(viewer_id)
     age_group = _age_group(viewer_id)
     return fetch_all('''SELECT p.*, u.full_name, u.username, cp.profile_picture,
@@ -100,13 +104,14 @@ def discoverable_posts(viewer_id, reels=False, limit=30, offset=0):
       WHERE p.moderation_status='ALLOWED' AND p.is_safe=TRUE AND p.is_story=FALSE AND p.is_reel=%s
         AND p.content_category = ANY(%s)
         AND (%s IS NULL OR p.audience_age_group='ALL' OR p.audience_age_group=%s)
+         AND p.child_id = ANY(%s::int[])
         AND p.child_id NOT IN (
           SELECT blocked_id FROM blocked_users WHERE blocker_id=%s
           UNION SELECT blocker_id FROM blocked_users WHERE blocked_id=%s
           UNION SELECT muted_id FROM muted_users WHERE muter_id=%s)
       ORDER BY p.created_at DESC
       LIMIT %s OFFSET %s''',
-      (reels, cats, age_group, age_group, viewer_id, viewer_id, viewer_id, limit, offset))
+       (reels, cats, age_group, age_group, allowed_child_ids, viewer_id, viewer_id, viewer_id, limit, offset))
 
 
 def active_stories(viewer_id):

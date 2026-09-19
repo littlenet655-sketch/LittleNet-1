@@ -4,9 +4,9 @@ PostgreSQL remains external (Neon/etc.). Private media is stored in R2. Heavy
 AI stays in littlenet-ai and is invoked only for real moderation/face work.
 """
 from pathlib import Path
+import hashlib
 import json
 import os
-import smtplib
 import subprocess
 
 import modal
@@ -65,6 +65,7 @@ web_image = (
     )
     .run_commands("cd /root/littlenet && python tools/install_mediapipe_assets.py")
 )
+secret_preflight_image = modal.Image.debian_slim(python_version="3.11")
 
 
 @app.function(
@@ -110,6 +111,24 @@ def web():
 
 
 @app.function(
+    image=secret_preflight_image,
+    secrets=[web_secret],
+    timeout=60,
+    min_containers=0,
+    max_containers=1,
+)
+def web_secret_preflight():
+    """Read only the web secret for a non-disclosing release comparison."""
+    value = str(os.environ.get("AI_SHARED_SECRET") or "")
+    if not value:
+        return {"present": False, "fingerprint": None}
+    return {
+        "present": True,
+        "fingerprint": hashlib.sha256(value.encode("utf-8")).hexdigest(),
+    }
+
+
+@app.function(
     image=web_image,
     cpu=2.0,
     memory=4096,
@@ -149,8 +168,11 @@ def seed_quizzes():
     return {"ok": True}
 
 
-def _mail_healthcheck():
-    from mailg.send_email import get_mail_status
+def _mail_healthcheck(strict_production: bool = False):
+    from mailg.send_email import get_mail_status, validate_resend_production
+    if strict_production:
+        return validate_resend_production()
+
     status = get_mail_status()
     if status.get("provider") == "resend":
         return {
@@ -161,33 +183,7 @@ def _mail_healthcheck():
             "from": status.get("from_email"),
             "is_production_ready": status.get("is_production_ready", False),
         }
-    if status.get("provider") == "smtp":
-        smtp_res = _smtp_healthcheck()
-        smtp_res["mail_mode"] = "smtp"
-        smtp_res["is_production_ready"] = smtp_res.get("ok", False)
-        return smtp_res
     return {"ok": False, "configured": False, "mail_mode": "not_configured", "is_production_ready": False}
-
-
-def _smtp_healthcheck():
-    host = os.getenv("SMTP_HOST") or "smtp.gmail.com"
-    try:
-        port = int(os.getenv("SMTP_PORT", "587"))
-    except (TypeError, ValueError):
-        port = 587
-    user = os.getenv("SMTP_USER") or os.getenv("MAIL_EMAIL")
-    password = os.getenv("SMTP_PASSWORD") or os.getenv("MAIL_PASSWORD")
-    use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
-    if not user or not password:
-        return {"ok": False, "configured": False, "host": host, "port": port}
-    try:
-        with smtplib.SMTP(host, port, timeout=15) as server:
-            if use_tls:
-                server.starttls()
-            server.login(user, password)
-        return {"ok": True, "configured": True, "host": host, "port": port}
-    except Exception as exc:
-        return {"ok": False, "configured": True, "host": host, "port": port, "error": f"{type(exc).__name__}: {exc}"}
 
 
 @app.function(image=web_image, secrets=[web_secret, email_secret, r2_secret], timeout=180)
@@ -247,7 +243,9 @@ def web_preflight(deep_ai_probe: bool = False):
         and "YOUR-LITTLENET-BACKEND" not in base_url
         and "placeholder.invalid" not in base_url
     )
-    mail = _mail_healthcheck()
+    # Release validation must prove the real Resend credential and verified
+    # LittleNet sender. It must never pass through SMTP or a sandbox sender.
+    mail = _mail_healthcheck(strict_production=True)
     r2 = r2_healthcheck()
     if r2.get("ok") and schema.get("media_delete_outbox"):
         try:
@@ -288,8 +286,13 @@ def main(
     preflight: bool = False,
     reconcile_media: bool = False,
     deep_ai_probe: bool = False,
+    secret_preflight: bool = False,
 ):
     """Release helper. Deep AI probing is opt-in because it wakes the T4."""
+    if secret_preflight:
+        report = web_secret_preflight.remote()
+        print(f"secret-preflight {json.dumps(report, sort_keys=True)}")
+        return
     if init_db:
         print("database", init_database.remote())
     if seed:

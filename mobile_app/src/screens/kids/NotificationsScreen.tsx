@@ -5,7 +5,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
 import { Avatar } from '../../ui/social';
-import { BrandHeader, EmptyState, ErrorState, GateNotice, LoadingState, OfflineBanner, Screen } from '../../ui/components';
+import { BrandHeader, Button, EmptyState, ErrorState, GateNotice, LoadingState, OfflineBanner, Screen } from '../../ui/components';
 import { useIsOnline } from '../../query/client';
 import { colors } from '../../ui/tokens';
 
@@ -59,7 +59,7 @@ export function NotificationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
         data={items}
         keyExtractor={(n) => `n:${n.notification_id}`}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load('refresh')} />}
-        ListHeaderComponent={<><BrandHeader title="Notifications" /><OfflineBanner online={online} />{error ? <GateNotice error={error} /> : null}</>}
+         ListHeaderComponent={<><BrandHeader title="Notifications" /><OfflineBanner online={online} /><Button label="Open Safety Centre" variant="secondary" onPress={() => nav.navigate('SafetyCentre', {})} />{error ? <GateNotice error={error} /> : null}</>}
         ListEmptyComponent={<EmptyState title="No notifications" body="Likes, comments and friend updates will appear here." />}
         renderItem={({ item }) => (
           <Pressable
@@ -84,8 +84,8 @@ export function NotificationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderBottomColor: colors.line },
-  unread: { backgroundColor: '#FFF4EC' },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
+  unread: { backgroundColor: '#F0F8FD' },
   msg: { flex: 1, color: colors.ink },
   dot: { color: colors.brandDark, fontWeight: '800' },
 });

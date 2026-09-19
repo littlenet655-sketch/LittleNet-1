@@ -24,7 +24,7 @@ const expoDeps: CameraDeps = {
     });
     if (result.canceled) return { cancelled: true };
     const asset = result.assets?.[0];
-    return { cancelled: false, base64: asset?.base64 ?? undefined, width: asset?.width, height: asset?.height };
+    return { cancelled: false, base64: asset?.base64 ?? undefined, width: asset?.width, height: asset?.height, uri: asset?.uri };
   },
 };
 

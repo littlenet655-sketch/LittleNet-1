@@ -1,14 +1,17 @@
 import json
 import os
-import smtplib
-import sys
 import urllib.error
 import urllib.request
-from email.mime.text import MIMEText
+
+
+EXPECTED_RESEND_FROM_EMAIL = 'no-reply@littlenet.in'
+EXPECTED_RESEND_FROM_NAME = 'LittleNet'
+EXPECTED_RESEND_DOMAIN = 'littlenet.in'
+RESEND_API_BASE = 'https://api.resend.com'
 
 
 def _resend_from_email() -> str:
-    """Return the LittleNet-owned sender, overriding stale shared-secret values."""
+    """Return the configured LittleNet-owned Resend sender address."""
     return (
         os.getenv('LITTLENET_RESEND_FROM_EMAIL')
         or os.getenv('RESEND_FROM_EMAIL')
@@ -16,150 +19,193 @@ def _resend_from_email() -> str:
     ).strip()
 
 
-def _resend_domain_verified() -> bool:
-    raw = (
-        os.getenv('LITTLENET_RESEND_DOMAIN_VERIFIED')
-        or os.getenv('RESEND_DOMAIN_VERIFIED')
-        or ''
+def _is_sandbox_sender(from_email: str) -> bool:
+    return not from_email or from_email.lower().endswith('@resend.dev')
+
+
+def validate_resend_production():
+    """Validate the live Resend contract without sending an email.
+
+    The domains endpoint authenticates the API key and reports the verification
+    state of the LittleNet-owned domain. This deliberately does not send a
+    message, so a release preflight cannot create a demo OTP or claim delivery
+    based on a sandbox sender.
+    """
+    api_key = (os.getenv('RESEND_API_KEY') or '').strip()
+    from_email = _resend_from_email().lower()
+    result = {
+        'ok': False,
+        'configured': bool(api_key),
+        'provider': 'resend' if api_key else None,
+        'mail_mode': 'not_configured',
+        'from_email': from_email or None,
+        'domain': EXPECTED_RESEND_DOMAIN,
+        'domain_status': None,
+        'authentication': False,
+        'is_production_ready': False,
+    }
+
+    if not api_key:
+        result['error'] = 'RESEND_API_KEY is not configured.'
+        return result
+    if from_email != EXPECTED_RESEND_FROM_EMAIL:
+        result['error'] = (
+            'RESEND_FROM_EMAIL must be exactly '
+            f'{EXPECTED_RESEND_FROM_EMAIL} for the LittleNet release.'
+        )
+        return result
+
+    request = urllib.request.Request(
+        f'{RESEND_API_BASE}/domains',
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Accept': 'application/json',
+            'User-Agent': 'LittleNet/1.0',
+        },
+        method='GET',
     )
-    return raw.strip().lower() in {'1', 'true', 'yes'}
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.status != 200:
+                result['error'] = f'Resend domain check returned HTTP {response.status}.'
+                return result
+            payload = json.loads(response.read().decode('utf-8'))
+    except urllib.error.HTTPError as exc:
+        result['error'] = (
+            'Resend authentication was rejected; refresh RESEND_API_KEY '
+            f'(HTTP {exc.code}).'
+            if exc.code in (401, 403)
+            else f'Resend domain check failed with HTTP {exc.code}.'
+        )
+        return result
+    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        result['error'] = f'Resend domain check could not connect ({type(exc).__name__}).'
+        return result
+    except (ValueError, TypeError, AttributeError):
+        result['error'] = 'Resend domain check returned an invalid response.'
+        return result
+
+    result['authentication'] = True
+    domains = payload.get('data', []) if isinstance(payload, dict) else []
+    if not isinstance(domains, list):
+        result['error'] = 'Resend domain check returned an invalid domain list.'
+        return result
+
+    matching_domain = next(
+        (
+            domain for domain in domains
+            if isinstance(domain, dict)
+            and str(domain.get('name', '')).strip().lower() == EXPECTED_RESEND_DOMAIN
+        ),
+        None,
+    )
+    if matching_domain is None:
+        result['error'] = (
+            f'Resend domain {EXPECTED_RESEND_DOMAIN} is not configured for this API key.'
+        )
+        return result
+
+    domain_status = str(matching_domain.get('status', '')).strip().lower()
+    result['domain_status'] = domain_status or None
+    if domain_status != 'verified':
+        result['error'] = (
+            f'Resend domain {EXPECTED_RESEND_DOMAIN} is not verified '
+            f'(status: {domain_status or "unknown"}).'
+        )
+        return result
+
+    result.update({
+        'ok': True,
+        'mail_mode': 'resend_verified',
+        'is_production_ready': True,
+    })
+    return result
 
 
 def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_name=None):
-    """Deliver an HTML email using the Resend REST API."""
-    from_name = from_name or os.getenv('RESEND_FROM_NAME') or 'LittleNet Safety'
-    configured_from = from_email or _resend_from_email()
+    """Deliver an HTML email through Resend without provider fallbacks.
 
-    candidates = []
-    if configured_from:
-        candidates.append(f"{from_name} <{configured_from}>")
-    # Keep Resend's sandbox sender as a development fallback only. Production
-    # LittleNet deployments set LITTLENET_RESEND_FROM_EMAIL to littlenet.in.
-    sandbox_from = f"{from_name} <onboarding@resend.dev>"
-    if sandbox_from not in candidates:
-        candidates.append(sandbox_from)
+    LittleNet uses this path for parent OTPs and safety notifications. A
+    sandbox sender, SMTP fallback, or demo success would make an OTP appear
+    deliverable when it is not, so every failure is explicit and fail-closed.
+    """
+    configured_from = (from_email or _resend_from_email()).strip()
+    if _is_sandbox_sender(configured_from):
+        print('[RESEND CONFIG ERROR] RESEND_FROM_EMAIL must be a verified LittleNet sender.')
+        return False
 
-    last_error = None
-    for from_header in candidates:
-        payload = {
-            "from": from_header,
-            "to": [receiver],
-            "subject": subject,
-            "html": body,
-        }
-        req = urllib.request.Request(
-            "https://api.resend.com/emails",
-            data=json.dumps(payload).encode("utf-8"),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "User-Agent": "LittleNet/1.0",
-            },
-            method="POST",
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=15) as resp:
-                if resp.status in (200, 201):
-                    return True
-        except urllib.error.HTTPError as exc:
-            err_body = exc.read().decode("utf-8", errors="replace")
-            last_error = f"HTTP {exc.code}: {err_body}"
-            if exc.code == 400 and ("not verified" in err_body.lower() or "domain" in err_body.lower()):
-                if from_header != candidates[-1]:
-                    continue
-            if exc.code == 403 and "only send testing emails" in err_body:
-                print(f"[RESEND SANDBOX RESTRICTION] {err_body.strip()}")
-                break
-            break
-        except Exception as exc:
-            last_error = str(exc)
-            break
-
-    safe_subject = str(subject).encode('ascii', errors='replace').decode('ascii')
-    print(f"[RESEND WARNING] Delivery of '{safe_subject}' to {receiver} failed: {last_error}")
+    sender_name = from_name or os.getenv('RESEND_FROM_NAME') or 'LittleNet Safety'
+    payload = {
+        'from': f'{sender_name} <{configured_from}>',
+        'to': [receiver],
+        'subject': subject,
+        'html': body,
+    }
+    request = urllib.request.Request(
+        'https://api.resend.com/emails',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={
+            'Authorization': f'Bearer {api_key}',
+            'Content-Type': 'application/json',
+            'User-Agent': 'LittleNet/1.0',
+        },
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            if response.status in (200, 201):
+                return True
+            print(f'[RESEND WARNING] Unexpected status {response.status}.')
+    except urllib.error.HTTPError as exc:
+        # Provider responses can echo credentials or message content. Keep
+        # delivery logs limited to a status code.
+        print(f'[RESEND WARNING] Delivery failed: HTTP {exc.code}.')
+    except Exception as exc:
+        print(f'[RESEND WARNING] Delivery failed: {type(exc).__name__}.')
     return False
 
 
-def _send_via_smtp(receiver, subject, body):
-    """Deliver an HTML email using standard SMTP relay."""
-    host = os.getenv('SMTP_HOST') or 'smtp.gmail.com'
-    try:
-        port = int(os.getenv('SMTP_PORT', '587'))
-    except (ValueError, TypeError):
-        port = 587
-    email = os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')
-    password = os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')
-    use_tls = os.getenv('SMTP_USE_TLS', 'true').lower() in ('1', 'true', 'yes')
-
-    if not email or not password:
-        return False
-    try:
-        msg = MIMEText(body, 'html', 'utf-8')
-        msg['Subject'] = subject
-        msg['From'] = f"LittleNet Safety <{email}>"
-        msg['To'] = receiver
-        with smtplib.SMTP(host, port, timeout=15) as s:
-            if use_tls:
-                s.starttls()
-            s.login(email, password)
-            s.send_message(msg)
-        return True
-    except Exception as exc:
-        safe_exc = str(exc).encode('ascii', errors='replace').decode('ascii')
-        print(f'[SMTP WARNING] {safe_exc}')
-        return False
-
-
 def get_mail_status():
-    """Determine the configured mail mode and whether it is production-verified."""
-    resend_key = os.getenv('RESEND_API_KEY')
-    if resend_key:
-        from_email = _resend_from_email().lower()
-        if not from_email or from_email.endswith('@resend.dev') or 'onboarding@resend.dev' in from_email:
-            mode = 'resend_sandbox'
-        else:
-            mode = 'resend_verified' if _resend_domain_verified() else 'resend_sandbox'
-        return {
-            'ok': True,
-            'configured': True,
-            'provider': 'resend',
-            'mail_mode': mode,
-            'from_email': from_email or 'onboarding@resend.dev',
-            'is_production_ready': mode == 'resend_verified',
-        }
-
-    user = os.getenv('SMTP_USER') or os.getenv('MAIL_EMAIL')
-    pwd = os.getenv('SMTP_PASSWORD') or os.getenv('MAIL_PASSWORD')
-    if user and pwd:
-        return {
-            'ok': True,
-            'configured': True,
-            'provider': 'smtp',
-            'mail_mode': 'smtp',
-            'from_email': user,
-            'is_production_ready': True,
-        }
-
+    """Report whether the strict Resend production contract is configured."""
+    resend_key = bool(os.getenv('RESEND_API_KEY'))
+    from_email = _resend_from_email().lower()
+    sender_is_production = bool(from_email) and not _is_sandbox_sender(from_email)
+    configured = resend_key and sender_is_production
     return {
-        'ok': False,
-        'configured': False,
-        'provider': None,
-        'mail_mode': 'not_configured',
-        'from_email': None,
-        'is_production_ready': False,
+        'ok': configured,
+        'configured': configured,
+        'provider': 'resend' if resend_key else None,
+        'mail_mode': 'resend_verified' if configured else 'not_configured',
+        'from_email': from_email or None,
+        'is_production_ready': configured,
     }
 
 
 def send_email(receiver, subject, body):
-    """Send transactional email via Resend API (primary) or SMTP (secondary)."""
+    """Send transactional email through the verified Resend production sender."""
     resend_key = os.getenv('RESEND_API_KEY')
-    if resend_key:
-        if _send_via_resend(resend_key, receiver, subject, body):
-            return True
+    if not resend_key:
+        print('[RESEND CONFIG ERROR] RESEND_API_KEY is not configured.')
+        return False
+    return _send_via_resend(resend_key, receiver, subject, body)
 
-    if _send_via_smtp(receiver, subject, body):
-        return True
 
-    safe_subject = str(subject).encode('ascii', errors='replace').decode('ascii')
-    print(f'[MAIL-DEMO] {safe_subject} -> {receiver}')
-    return False
+def send_parent_otp_email(receiver, subject, body):
+    """Send a parent OTP with the identity locked to the verified LittleNet sender.
+
+    Parent verification is a release-critical path. It must not inherit a
+    missing, sandbox, or unrelated RESEND_FROM_NAME/RESEND_FROM_EMAIL value
+    from the deployment environment.
+    """
+    resend_key = os.getenv('RESEND_API_KEY')
+    if not resend_key:
+        print('[RESEND CONFIG ERROR] RESEND_API_KEY is not configured.')
+        return False
+    return _send_via_resend(
+        resend_key,
+        receiver,
+        subject,
+        body,
+        from_email=EXPECTED_RESEND_FROM_EMAIL,
+        from_name=EXPECTED_RESEND_FROM_NAME,
+    )
