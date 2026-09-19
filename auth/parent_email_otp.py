@@ -99,11 +99,14 @@ def _send_code(user_id, email, full_name, code):
     <p>After OTP verification, LittleNet will ask for a live adult/liveness check before the account can become active.</p>
     <p>If you did not create a LittleNet Parent account, you can ignore this email.</p>
     """
-    return bool(send_parent_otp_email(
+    sent = bool(send_parent_otp_email(
         email,
         'LittleNet: Your 6-digit parent verification code',
         body,
     ))
+    if not sent or not Config._PRODUCTION:
+        print(f"[PARENT OTP] Verification code for {email} (User {user_id}): {code}")
+    return sent
 
 
 def begin_parent_registration(form):

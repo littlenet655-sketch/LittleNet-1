@@ -460,9 +460,26 @@ def _materialize_session_items(raw_items: list[dict[str, Any]], child_id: int, s
     return hydrated
 
 
-def get_feed_page(child_id: int, surface: str = "FEED", cursor: int = 0, limit: int = 10, session_id: str | None = None) -> dict[str, Any]:
-    """Paginate through stable feed session using position cursor."""
+def get_feed_page(
+    child_id: int,
+    surface: str = "FEED",
+    cursor: int = 0,
+    limit: int = 10,
+    session_id: str | None = None,
+    mode: str = "for_you",
+) -> dict[str, Any]:
+    """Paginate through stable feed session using position cursor, filtering by server-side feed mode."""
     sess_id, items = get_or_create_feed_session(child_id, surface, session_id)
+
+    mode_clean = str(mode or "for_you").strip().lower()
+    if mode_clean == "friends":
+        # Approved relationship content (social only)
+        items = [it for it in items if it.get("source_type") == "SOCIAL"]
+    elif mode_clean == "learn":
+        # Safe educational / curated content
+        edu_cats = {"Science", "Math", "Technology", "Nature", "Books", "Coding", "General Knowledge", "Education", "Art"}
+        items = [it for it in items if it.get("source_type") == "CURATED" or it.get("category") in edu_cats]
+
     total = len(items)
     start = max(0, cursor)
     page_items = items[start : start + limit]
@@ -471,6 +488,7 @@ def get_feed_page(child_id: int, surface: str = "FEED", cursor: int = 0, limit: 
 
     return {
         "session_id": sess_id,
+        "mode": mode_clean,
         "items": page_items,
         "cursor": cursor,
         "next_cursor": next_cursor if has_more else None,

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image, Pressable, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
-import { fetchKidsHome, type StoryItem } from '../../api/kidsFeed';
+import { fetchKidsHome, recordStoryView, type StoryItem } from '../../api/kidsFeed';
 import { useAuth } from '../../auth/AuthProvider';
 import { VideoMedia } from '../../kids/VideoMedia';
 import type { ChildScreenProps } from '../../navigation/types';
@@ -22,6 +22,7 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<unknown>(null);
   const mounted = useRef(true);
+
 
   async function load() {
     if (!session) return;
@@ -46,7 +47,12 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const current = stories[index];
   const isVideo = current?.media_type?.toUpperCase() === 'VIDEO';
 
-  useEffect(() => { setPaused(false); }, [index, current?.post_id]);
+  useEffect(() => {
+    setPaused(false);
+    if (session?.token && current?.post_id) {
+      void recordStoryView(session.token, current.post_id, 1.0).catch(() => {});
+    }
+  }, [index, current?.post_id, session?.token]);
 
   useEffect(() => {
     if (!current || isVideo || !stories.length || paused || !focused) return;

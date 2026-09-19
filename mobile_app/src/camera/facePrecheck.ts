@@ -27,6 +27,9 @@ export async function precheckFace(photo: CapturedPhoto): Promise<void> {
 
   let faces: Face[];
   try {
+    if (typeof FaceDetection?.detect !== 'function') {
+      throw new Error('FaceDetection.detect is not a function');
+    }
     faces = await FaceDetection.detect(photo.uri, {
       performanceMode: 'accurate',
       classificationMode: 'all',

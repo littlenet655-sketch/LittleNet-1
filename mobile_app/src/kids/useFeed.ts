@@ -7,16 +7,18 @@ import { mergeFeedPages } from './social';
 type PageParam = { cursor: number; sessionId?: string };
 
 /** One authoritative TanStack Query cache for cursor-paginated feed and reels. */
-export function useFeed(kind: 'feed' | 'reels', limit = 10) {
+export function useFeed(kind: 'feed' | 'reels', limit = 10, mode: 'for_you' | 'friends' | 'learn' = 'for_you') {
   const { session } = useAuth();
   const query = useInfiniteQuery<FeedPage, Error, InfiniteData<FeedPage, PageParam>, readonly unknown[], PageParam>({
-    queryKey: [...(kind === 'feed' ? kidsKeys.feed : kidsKeys.reels), session?.token ?? 'signed-out'],
+    queryKey: [...(kind === 'feed' ? [...kidsKeys.feed, mode] : kidsKeys.reels), session?.token ?? 'signed-out'],
     enabled: Boolean(session),
     initialPageParam: { cursor: 0 },
     queryFn: ({ pageParam, signal }) => {
       if (!session) throw new Error('Sign in required.');
-      const fetchPage = kind === 'feed' ? fetchFeedV2 : fetchReelsV2;
-      return fetchPage(session.token, pageParam.cursor, limit, pageParam.sessionId, signal);
+      if (kind === 'feed') {
+        return fetchFeedV2(session.token, pageParam.cursor, limit, pageParam.sessionId, mode, signal);
+      }
+      return fetchReelsV2(session.token, pageParam.cursor, limit, pageParam.sessionId, signal);
     },
     getNextPageParam: (last) => last.has_more
       ? { cursor: last.next_cursor, sessionId: last.session_id || undefined }
@@ -25,6 +27,7 @@ export function useFeed(kind: 'feed' | 'reels', limit = 10) {
 
   return {
     items: mergeFeedPages(query.data?.pages.map((page) => page.items) ?? []),
+    sessionId: query.data?.pages[0]?.session_id,
     loading: query.isPending,
     loadingMore: query.isFetchingNextPage,
     refreshing: query.isRefetching && !query.isFetchingNextPage,
@@ -35,3 +38,4 @@ export function useFeed(kind: 'feed' | 'reels', limit = 10) {
     retry: () => void query.refetch(),
   };
 }
+

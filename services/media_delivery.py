@@ -25,13 +25,12 @@ from urllib.parse import quote
 
 from config import Config
 from services.object_storage import (
+    DEFAULT_SIGNED_URL_TTL,
     R2_REFERENCE_PREFIX,
     enabled as r2_enabled,
     is_reference as is_r2_reference,
     signed_download_url,
 )
-
-DEFAULT_SIGNED_URL_TTL = 600  # 10 minutes (between 5 and 15 minutes)
 
 
 def is_authorized_viewer(viewer_id: int | None, viewer_role: str | None, reference: str) -> bool:
@@ -85,7 +84,7 @@ def resolve_media_delivery(
             # Strict authorization check before generating signed URL
             if viewer_id and viewer_role and is_authorized_viewer(viewer_id, viewer_role, ref):
                 try:
-                    ttl = max(300, min(expires_seconds, 900))  # strictly 5 - 15 minutes
+                    ttl = max(60, min(expires_seconds, 600))  # strictly up to 10 minutes, matching object_storage clamp
                     signed_url = signed_download_url(ref, expires_seconds=ttl)
                     expires_at = int(time.time()) + ttl
                     return {

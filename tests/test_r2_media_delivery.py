@@ -15,6 +15,7 @@ def _configure_r2(monkeypatch):
     monkeypatch.setenv('R2_ACCESS_KEY_ID', 'key')
     monkeypatch.setenv('R2_SECRET_ACCESS_KEY', 'secret')
     monkeypatch.setenv('R2_BUCKET', 'private-media')
+    monkeypatch.setenv('R2_SIGNED_URL_TTL', '180')
 
 
 def test_signed_url_is_short_lived_and_private_reference_only(monkeypatch):

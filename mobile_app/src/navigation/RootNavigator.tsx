@@ -48,23 +48,31 @@ import { LoginScreen, WelcomeScreen } from '../screens/WelcomeLogin';
 import { LoadingState, Screen } from '../ui/components';
 import { resolveChildRoute } from './gates';
 import type { AdminStackParamList, AuthStackParamList, ChildStackParamList, ParentStackParamList } from './types';
+import { colors } from '../ui/tokens';
 
 const AuthStack = createNativeStackNavigator<AuthStackParamList>();
 const ChildStack = createNativeStackNavigator<ChildStackParamList>();
 const ParentStack = createNativeStackNavigator<ParentStackParamList>();
 const AdminStack = createNativeStackNavigator<AdminStackParamList>();
 
+const cleanStackOptions = {
+  headerShadowVisible: false,
+  headerStyle: { backgroundColor: colors.background },
+  headerTintColor: colors.ink,
+  headerTitleStyle: { fontWeight: '800' as const },
+};
+
 function AuthNavigator() {
   return (
-    <AuthStack.Navigator>
-      <AuthStack.Screen name="Welcome" component={WelcomeScreen} options={{ title: 'LittleNet' }} />
-      <AuthStack.Screen name="Login" component={LoginScreen} options={{ title: 'Log in' }} />
-      <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ title: 'Reset password' }} />
-      <AuthStack.Screen name="ResetPassword" component={ResetPasswordScreen} options={{ title: 'New password' }} />
-      <AuthStack.Screen name="ParentRegister" component={ParentRegisterScreen} options={{ title: 'Parent sign-up' }} />
-      <AuthStack.Screen name="OtpVerify" component={OtpVerifyScreen} options={{ title: 'Verify email' }} />
-      <AuthStack.Screen name="GuardianLiveness" component={GuardianLivenessScreen} options={{ title: 'Adult check' }} />
-      <AuthStack.Screen name="FaceLogin" component={FaceLoginScreen} options={{ title: 'Face login' }} />
+    <AuthStack.Navigator screenOptions={cleanStackOptions}>
+      <AuthStack.Screen name="Welcome" component={WelcomeScreen} options={{ headerShown: false }} />
+      <AuthStack.Screen name="Login" component={LoginScreen} options={{ headerTitle: '' }} />
+      <AuthStack.Screen name="ForgotPassword" component={ForgotPasswordScreen} options={{ headerTitle: '' }} />
+      <AuthStack.Screen name="ResetPassword" component={ResetPasswordScreen} options={{ headerTitle: '' }} />
+      <AuthStack.Screen name="ParentRegister" component={ParentRegisterScreen} options={{ headerTitle: '' }} />
+      <AuthStack.Screen name="OtpVerify" component={OtpVerifyScreen} options={{ headerTitle: '' }} />
+      <AuthStack.Screen name="GuardianLiveness" component={GuardianLivenessScreen} options={{ headerTitle: '' }} />
+      <AuthStack.Screen name="FaceLogin" component={FaceLoginScreen} options={{ headerTitle: '' }} />
     </AuthStack.Navigator>
   );
 }
@@ -96,11 +104,11 @@ function ChildGateSync() {
 
 function ChildNavigator() {
   return (
-    <ChildStack.Navigator initialRouteName="KidsHome">
+    <ChildStack.Navigator initialRouteName="KidsHome" screenOptions={cleanStackOptions}>
       <ChildStack.Screen name="FaceEnroll" component={withGateSync(FaceEnrollScreen)} options={{ title: 'Face setup' }} />
       <ChildStack.Screen name="Quiz" component={withGateSync(QuizScreen)} options={{ title: 'Safety quiz' }} />
       <ChildStack.Screen name="KidsHome" component={withGateSync(KidsHomeScreen)} options={{ title: 'Home' }} />
-      <ChildStack.Screen name="KidsTabs" component={withGateSync(KidsTabsHost)} options={{ title: 'LittleNet' }} />
+      <ChildStack.Screen name="KidsTabs" component={withGateSync(KidsTabsHost)} options={{ headerShown: false }} />
       <ChildStack.Screen name="FeedTab" component={withGateSync(FeedScreen)} options={{ title: 'Home' }} />
       <ChildStack.Screen name="DiscoverTab" component={withGateSync(DiscoverScreen)} options={{ title: 'Discover' }} />
       <ChildStack.Screen name="CreateTab" component={withGateSync(CreateScreen)} options={{ title: 'Create' }} />
@@ -138,7 +146,7 @@ function withGateSync(Component: React.ComponentType<any>): React.ComponentType<
 
 function ParentNavigator() {
   return (
-    <ParentStack.Navigator initialRouteName="ParentHome">
+    <ParentStack.Navigator initialRouteName="ParentHome" screenOptions={cleanStackOptions}>
       <ParentStack.Screen name="ParentHome" component={ParentHomeScreen} options={{ title: 'Parent dashboard' }} />
       <ParentStack.Screen name="Children" component={ParentChildrenScreen} options={{ title: 'Children' }} />
       <ParentStack.Screen name="ChildSummary" component={ParentChildSummaryScreen} options={{ title: 'Child summary' }} />
@@ -157,7 +165,7 @@ function ParentNavigator() {
 
 function AdminNavigator() {
   return (
-    <AdminStack.Navigator>
+    <AdminStack.Navigator screenOptions={cleanStackOptions}>
       <AdminStack.Screen name="AdminHome" component={AdminHomeScreen} options={{ title: 'Moderation' }} />
       <AdminStack.Screen name="AdminReviews" component={AdminReviewsScreen} options={{ title: 'Moderation queue' }} />
       <AdminStack.Screen name="AdminReview" component={AdminReviewScreen} options={{ title: 'Review detail' }} />

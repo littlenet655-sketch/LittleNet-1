@@ -90,7 +90,7 @@ function httpFallbackCode(status: number): string {
 export function userMessageFor(status: number, code: string, body?: Record<string, unknown>): string {
   switch (code) {
     case 'network_unreachable':
-      return 'Internet is required to complete verification.';
+      return 'LittleNet server is unreachable. Check your internet or local connection.';
     case 'verification_offline':
       return 'Internet is required to complete verification.';
     case 'request_timeout':

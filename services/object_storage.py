@@ -31,10 +31,15 @@ def enabled() -> bool:
     return _enabled()
 
 
-def _account_id(raw: Optional[str] = None) -> str:
+_UNSET = object()
+
+
+def _account_id(raw: Any = _UNSET) -> str:
     """Accept either Cloudflare's bare account ID or the copied R2 endpoint URL."""
-    if raw is None:
+    if raw is _UNSET:
         raw = os.getenv("R2_ACCOUNT_ID") or ""
+    elif raw is None:
+        return ""
     raw = str(raw).strip()
     if not raw:
         return ""
@@ -48,7 +53,7 @@ def _account_id(raw: Optional[str] = None) -> str:
     return host.strip("/")
 
 
-def normalize_r2_origin(raw: Optional[str] = None) -> str:
+def normalize_r2_origin(raw: Any = _UNSET) -> str:
     """Normalize bare account ID, endpoint URL, or host into https://<id>.r2.cloudflarestorage.com."""
     account_id = _account_id(raw)
     if not account_id:
@@ -182,6 +187,9 @@ def _request_media_gate() -> None:
         raise
     except Exception as exc:
         raise PermissionError("child_media_gate_unavailable") from exc
+
+
+DEFAULT_SIGNED_URL_TTL = 600  # Authoritative 10-minute TTL
 
 
 def signed_download_url(reference: str, expires_seconds: int | None = None) -> str:

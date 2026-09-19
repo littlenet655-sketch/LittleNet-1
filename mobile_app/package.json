@@ -12,6 +12,7 @@
     "export:android": "expo export --platform android --output-dir dist"
   },
   "dependencies": {
+    "@expo/vector-icons": "^15.1.1",
     "@react-native-community/netinfo": "12.0.1",
     "@react-native-ml-kit/face-detection": "2.0.1",
     "@react-navigation/native": "^7.3.18",
@@ -26,7 +27,8 @@
     "react": "19.2.3",
     "react-native": "0.86.3",
     "react-native-safe-area-context": "~5.7.0",
-    "react-native-screens": "~4.26.0"
+    "react-native-screens": "~4.26.0",
+    "react-native-svg": "15.15.4"
   },
   "devDependencies": {
     "@types/node": "^22.20.2",

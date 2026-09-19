@@ -3,6 +3,7 @@ import { Alert, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, Vi
 import { useVideoPlayer } from 'expo-video';
 import { useIsFocused } from '@react-navigation/native';
 import type { FeedItem } from '../../api/kidsFeed';
+import { recordFeedImpression, refreshReelPlayback } from '../../api/kidsFeed';
 import { ApiError } from '../../api/client';
 import { submitRecommendationAction } from '../../api/recommendation';
 import { submitReport, toggleSave } from '../../api/kidsSocial';
@@ -16,22 +17,58 @@ import { BrandHeader, Button, DisabledFeature, EmptyState, ErrorState, GateNotic
 import { NativeVideoView } from '../../ui/nativeViews';
 import { colors, radius, spacing } from '../../ui/tokens';
 
-function ReelVideo({ item, active, nearby, paused, onToggle }: { item: FeedItem; active: boolean; nearby: boolean; paused: boolean; onToggle: () => void }) {
-  const source = item.media_url ?? null;
+function ReelVideo({
+  item,
+  active,
+  nearby,
+  paused,
+  onToggle,
+  token,
+}: {
+  item: FeedItem;
+  active: boolean;
+  nearby: boolean;
+  paused: boolean;
+  onToggle: () => void;
+  token?: string;
+}) {
+  const [currentSource, setCurrentSource] = useState<string | null>(item.media_url ?? null);
   const player = useVideoPlayer(null, (instance) => { instance.loop = true; });
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const sourceRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const subscription = player.addListener('statusChange', ({ status, error: playbackError }) => {
-      if (status === 'error') setError(playbackError?.message ?? 'This reel could not play.');
-    });
-    return () => subscription.remove();
-  }, [player]);
+    setCurrentSource(item.media_url ?? null);
+  }, [item.media_url]);
 
   useEffect(() => {
-    const next = nearby ? source : null;
+    const subscription = player.addListener('statusChange', ({ status, error: playbackError }) => {
+      if (status === 'error') {
+        const postId = item.post_id || item.source_id;
+        if (token && typeof postId === 'number') {
+          void refreshReelPlayback(token, postId).then((res) => {
+            if (res.ok && res.playback_url) {
+              setCurrentSource(res.playback_url);
+              void player.replaceAsync(res.playback_url).then(() => {
+                if (active && !paused) player.play();
+              });
+              return;
+            }
+            setError(playbackError?.message ?? 'This reel could not play.');
+          }).catch(() => {
+            setError(playbackError?.message ?? 'This reel could not play.');
+          });
+        } else {
+          setError(playbackError?.message ?? 'This reel could not play.');
+        }
+      }
+    });
+    return () => subscription.remove();
+  }, [player, token, item.post_id, item.source_id, active, paused]);
+
+  useEffect(() => {
+    const next = nearby ? currentSource : null;
     if (sourceRef.current === next) return;
     sourceRef.current = next;
     setReady(false);
@@ -39,26 +76,38 @@ function ReelVideo({ item, active, nearby, paused, onToggle }: { item: FeedItem;
     void player.replaceAsync(next).catch((reason: unknown) => {
       setError(reason instanceof Error ? reason.message : 'This reel could not play.');
     });
-  }, [nearby, player, source]);
+  }, [nearby, player, currentSource]);
 
   useEffect(() => {
-    if (active && nearby && source && !error && !paused) player.play();
+    if (active && nearby && currentSource && !error && !paused) player.play();
     else player.pause();
-  }, [active, error, nearby, paused, player, source]);
+  }, [active, error, nearby, paused, player, currentSource]);
 
   async function retry() {
-    if (!source) return;
     setError(null);
     setReady(false);
+    const postId = item.post_id || item.source_id;
+    if (token && typeof postId === 'number') {
+      try {
+        const res = await refreshReelPlayback(token, postId);
+        if (res.ok && res.playback_url) {
+          setCurrentSource(res.playback_url);
+          await player.replaceAsync(res.playback_url);
+          if (active) player.play();
+          return;
+        }
+      } catch {}
+    }
+    if (!currentSource) return;
     try {
-      await player.replaceAsync(source);
+      await player.replaceAsync(currentSource);
       if (active) player.play();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : 'This reel could not play.');
     }
   }
 
-  if (!source) return <ErrorState message="This reel has no playable video." />;
+  if (!currentSource) return <ErrorState message="This reel has no playable video." />;
   return (
     <View style={styles.videoShell}>
         {nearby ? <Pressable style={styles.videoTouch} onPress={onToggle}><NativeVideoView player={player} style={styles.video} contentFit="cover" nativeControls={false} onFirstFrameRender={() => setReady(true)} /></Pressable> : null}
@@ -77,11 +126,35 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const foreground = useIsForeground();
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const watchStartRef = useRef<number>(Date.now());
+  const activeIndexRef = useRef<number>(activeIndex);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
     const first = viewableItems.find((row) => typeof row.index === 'number')?.index;
     if (typeof first === 'number') { setActiveIndex(first); setPaused(false); }
   }).current;
+
+  // Track aggregated watch duration telemetry on reel change or unmount
+  useEffect(() => {
+    const prevIndex = activeIndexRef.current;
+    const prevItem = feed.items[prevIndex];
+    const watchedMs = Date.now() - watchStartRef.current;
+    if (session?.token && prevItem && watchedMs >= 1000) {
+      const sourceId = prevItem.post_id ?? prevItem.source_id;
+      if (typeof sourceId === 'number') {
+        void recordFeedImpression(session.token, {
+          session_id: feed.sessionId,
+          source_type: prevItem.source_type ?? 'REEL',
+          source_id: sourceId,
+          surface: 'REELS',
+          watched_ms: watchedMs,
+          completed: watchedMs >= 10000,
+        }).catch(() => {});
+      }
+    }
+    activeIndexRef.current = activeIndex;
+    watchStartRef.current = Date.now();
+  }, [activeIndex, feed.items, feed.sessionId, session?.token]);
 
   if (feed.loading) return <Screen><Skeleton lines={4} /></Screen>;
   if (feed.error instanceof ApiError && feed.error.code === 'disabled_by_parent') return <Screen><DisabledFeature feature="Reels" /></Screen>;
@@ -110,7 +183,14 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           const profile = socialProfileTarget(item);
           const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
            return <View style={[styles.page, { height }]}>
-             <ReelVideo item={item} active={shouldPlayReel(index, activeIndex, foreground && focused)} nearby={shouldLoadReel(index, activeIndex)} paused={paused} onToggle={() => index === activeIndex && setPaused((value) => !value)} />
+             <ReelVideo
+               item={item}
+               active={shouldPlayReel(index, activeIndex, foreground && focused)}
+               nearby={shouldLoadReel(index, activeIndex)}
+               paused={paused}
+               onToggle={() => index === activeIndex && setPaused((value) => !value)}
+               token={session?.token}
+             />
             <PostCard
               item={item}
               onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}

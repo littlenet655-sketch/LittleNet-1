@@ -1,13 +1,14 @@
-import { useEffect, useState } from 'react';
-import { FlatList, RefreshControl, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { fetchChat, sendChatText, sharePostToChat, type ChatMessage } from '../../api/kidsChat';
 import { ApiError } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
 import { CHAT_BLOCKED_COPY, dedupeChat } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
-import { Button, Card, DisabledFeature, EmptyState, ErrorState, Field, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
-import { colors } from '../../ui/tokens';
+import { Button, Card, DisabledFeature, EmptyState, ErrorState, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
+import { colors, radius, spacing } from '../../ui/tokens';
 
 export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
   const { session } = useAuth();
@@ -22,6 +23,19 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
   const [sendError, setSendError] = useState('');
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const flatListRef = useRef<FlatList>(null);
+
+  useEffect(() => {
+    const showSub = Keyboard.addListener(
+      Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow',
+      () => {
+        setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      }
+    );
+    return () => {
+      showSub.remove();
+    };
+  }, []);
 
   async function load(mode: 'first' | 'more' | 'refresh', beforeId?: number) {
     if (!session || !peerId || !foreground) return;
@@ -42,8 +56,14 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
 
   useEffect(() => { void load('first'); }, [session?.token, peerId, foreground]);
 
+  useEffect(() => {
+    if (messages.length > 0) {
+      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: false }), 50);
+    }
+  }, [messages.length]);
+
   async function onSend() {
-    if (!session || !text.trim()) return;
+    if (!session || !peerId || !text.trim() || sending) return;
     setSending(true);
     setSendError('');
     try {
@@ -71,37 +91,118 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
 
   return (
     <Screen>
-      <View style={styles.peerRow}><Text style={styles.peer}>{String(peer.full_name ?? peer.username ?? 'Chat')}</Text><Button label="Details" variant="secondary" onPress={() => navigation.navigate('ChatDetails', { peerId })} /></View>
-      {error ? <GateNotice error={error} /> : null}
-      {sendError ? <Notice message={sendError} /> : null}
-      <FlatList
-        data={messages}
-        keyExtractor={(m) => `m:${m.child_message_id}`}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load('refresh')} />}
-        ListEmptyComponent={<EmptyState title="Say hello kindly" body="Messages appear here in order." />}
-        onEndReached={() => {
-          const oldest = messages[0]?.child_message_id;
-          if (oldest) void load('more', oldest);
-        }}
-        renderItem={({ item }) => (
-          <Card>
-            <Text style={styles.msg}>{item.message_type === 'SHARED_POST' ? `Shared a post (#${item.shared_post_id ?? ''})` : item.message_text}</Text>
-            {item.sender_child_id !== peerId ? null : <Text style={styles.meta}>Friend</Text>}
-          </Card>
-        )}
-      />
-      <View style={styles.row}>
-        <Field label="Message" value={text} onChangeText={setText} placeholder="Write kindly…" />
-        <Button label={sending ? '…' : 'Send'} disabled={sending || !text.trim()} onPress={() => void onSend()} />
-      </View>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 90 : 60}
+        style={styles.keyboardWrap}
+      >
+        <View style={styles.peerRow}>
+          <Text style={styles.peer}>{String(peer.full_name ?? peer.username ?? 'Chat')}</Text>
+          <Button label="Details" variant="secondary" onPress={() => navigation.navigate('ChatDetails', { peerId })} />
+        </View>
+        {error ? <GateNotice error={error} /> : null}
+        {sendError ? <Notice message={sendError} /> : null}
+
+        <FlatList
+          ref={flatListRef}
+          data={messages}
+          keyExtractor={(m) => `m:${m.child_message_id}`}
+          keyboardDismissMode="on-drag"
+          keyboardShouldPersistTaps="handled"
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void load('refresh')} />}
+          ListEmptyComponent={<EmptyState title="Say hello kindly" body="Messages appear here in order." />}
+          onEndReached={() => {
+            const oldest = messages[0]?.child_message_id;
+            if (oldest) void load('more', oldest);
+          }}
+          contentContainerStyle={styles.listContent}
+          renderItem={({ item }) => (
+            <Card>
+              <Text style={styles.msg}>{item.message_type === 'SHARED_POST' ? `Shared a post (#${item.shared_post_id ?? ''})` : item.message_text}</Text>
+              {item.sender_child_id !== peerId ? null : <Text style={styles.meta}>Friend</Text>}
+            </Card>
+          )}
+        />
+        <View style={styles.inputRow}>
+          <TextInput
+            style={styles.chatInput}
+            value={text}
+            onChangeText={setText}
+            placeholder="Write kindly…"
+            placeholderTextColor={colors.muted}
+            multiline={false}
+            returnKeyType="send"
+            onSubmitEditing={() => void onSend()}
+            onFocus={() => {
+              setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+            }}
+          />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Send message"
+            style={[styles.sendButton, (!text.trim() || sending) && styles.sendButtonDisabled]}
+            disabled={sending || !text.trim()}
+            onPress={() => void onSend()}
+          >
+            <Feather name="send" size={16} color="#FFFFFF" />
+          </Pressable>
+        </View>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  peerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
-  peer: { flex: 1, fontWeight: '700', color: colors.ink, fontSize: 18, paddingHorizontal: 12, paddingVertical: 12 },
+  peerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: '#EFEFEF',
+  },
+  peer: { flex: 1, fontWeight: '800', color: colors.ink, fontSize: 17 },
+  keyboardWrap: { flex: 1 },
+  listContent: { paddingBottom: 16, flexGrow: 1 },
   msg: { color: colors.ink, fontSize: 14, lineHeight: 20 },
-  meta: { color: colors.muted, marginTop: 4 },
-  row: { marginTop: 8, paddingHorizontal: 12, paddingBottom: 8, backgroundColor: colors.surface },
+  meta: { color: colors.muted, marginTop: 4, fontSize: 12 },
+  inputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: '#EFEFEF',
+  },
+  chatInput: {
+    flex: 1,
+    backgroundColor: '#F8F9FA',
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+    borderRadius: radius.pill,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    fontSize: 14,
+    color: colors.ink,
+  },
+  sendButton: {
+    backgroundColor: colors.brand,
+    borderRadius: radius.pill,
+    paddingHorizontal: 16,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  sendButtonDisabled: {
+    opacity: 0.5,
+  },
+  sendButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: 13,
+  },
 });

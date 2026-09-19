@@ -23,7 +23,8 @@ def _validated_embedding(values):
 def _embedding(img_path):
     from .remote_client import enabled, face_embedding
     if enabled(): return _validated_embedding(face_embedding(img_path))
-    from deepface import DeepFace
+    # pyrefly: ignore [missing-import]
+    from deepface import DeepFace  # type: ignore
     def run():
         faces=DeepFace.extract_faces(img_path=img_path, detector_backend='opencv', anti_spoofing=True, enforce_detection=True)
         if not isinstance(faces,list) or len(faces)!=1:raise ValueError('single_face_required')
@@ -105,7 +106,8 @@ def verify_adult_face(img_path):
             }
 
     try:
-        from deepface import DeepFace
+        # pyrefly: ignore [missing-import]
+        from deepface import DeepFace  # type: ignore
         faces = DeepFace.extract_faces(
             img_path=img_path,
             detector_backend='opencv',
@@ -116,7 +118,10 @@ def verify_adult_face(img_path):
             return {'is_adult':False,'estimated_age':None,'method':'ANTI_SPOOF','reason':'single_face_required'}
         if faces[0].get('is_real') is not True:
             return {'is_adult': False, 'estimated_age': None, 'method': 'ANTI_SPOOF', 'reason': 'liveness_failed'}
-    except Exception:
+    except Exception as exc:
+        msg = str(exc).lower()
+        if 'could not be detected' in msg or 'confirm that the picture is a face' in msg or 'no face' in msg:
+            return {'is_adult': False, 'estimated_age': None, 'method': 'ANTI_SPOOF', 'reason': 'single_face_required'}
         return {'is_adult': False, 'estimated_age': None, 'method': 'ANTI_SPOOF', 'reason': 'liveness_unavailable'}
 
     try:
@@ -136,14 +141,17 @@ def verify_adult_face(img_path):
         if age_val>=18.0:
             return {'is_adult': True, 'estimated_age': age_display, 'method': 'DEEPFACE'}
         return {'is_adult': False, 'estimated_age': age_display, 'method': 'DEEPFACE', 'reason': 'under_age'}
-    except Exception:
-        pass
+    except Exception as exc:
+        msg = str(exc).lower()
+        if 'could not be detected' in msg or 'single_face_required' in msg:
+            return {'is_adult': False, 'estimated_age': None, 'method': 'DEEPFACE', 'reason': 'single_face_required'}
 
     # Optional age fallback is allowed only after the explicit anti-spoof check above passed.
     api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('GOOGLE_API_KEY')
     if api_key:
         try:
-            import google.generativeai as genai
+            # pyrefly: ignore [missing-import]
+            import google.generativeai as genai  # type: ignore
             from PIL import Image
             genai.configure(api_key=api_key)
             model = genai.GenerativeModel('gemini-1.5-flash')

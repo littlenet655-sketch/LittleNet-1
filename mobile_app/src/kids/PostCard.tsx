@@ -1,4 +1,5 @@
 import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import type { InfiniteData } from '@tanstack/react-query';
 import type { FeedItem, FeedPage } from '../api/kidsFeed';
 import { useAuth } from '../auth/AuthProvider';
@@ -69,20 +70,55 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?:
       {item.title ? <Text style={styles.title}>{item.title}</Text> : null}
       {item.caption ? <Text style={styles.caption}>{item.caption}</Text> : null}
       {previewUrl ? <Pressable onPress={onOpen} disabled={!onOpen}><Image source={{ uri: previewUrl }} style={styles.media} /></Pressable> : isVideo ? <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}><Text style={styles.videoLabel}>Video</Text></Pressable> : null}
-      {socialTarget ? <View style={styles.actions}>
-        <Pressable onPress={() => void onLike()} style={styles.action}>
-          <Text style={[styles.icon, item.viewer_liked && styles.liked]}>♡</Text>
-        </Pressable>
-        <Pressable onPress={() => void onSave()} style={styles.action}>
-          <Text style={styles.icon}>{item.viewer_saved ? '▣' : '□'}</Text>
-        </Pressable>
-        <Pressable onPress={onOpen} style={styles.action}>
-          <Text style={styles.icon}>□</Text>
-        </Pressable>
-        <Text style={styles.likeCount}>{item.likes ?? 0} likes</Text>
-        <View style={styles.flex} />
-        <Pressable onPress={onOpen}><Text style={styles.icon}>↗</Text></Pressable>
-      </View> : null}
+      {socialTarget ? (
+        <View style={styles.actions}>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={item.viewer_liked ? 'Unlike post' : 'Like post'}
+            onPress={() => void onLike()}
+            style={styles.action}
+            hitSlop={6}
+          >
+            <Feather
+              name="heart"
+              size={21}
+              color={item.viewer_liked ? colors.danger : colors.ink}
+            />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={item.viewer_saved ? 'Unsave post' : 'Save post'}
+            onPress={() => void onSave()}
+            style={styles.action}
+            hitSlop={6}
+          >
+            <Feather
+              name="bookmark"
+              size={21}
+              color={item.viewer_saved ? colors.brand : colors.ink}
+            />
+          </Pressable>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Comments"
+            onPress={onOpen}
+            style={styles.action}
+            hitSlop={6}
+          >
+            <Feather name="message-circle" size={20} color={colors.ink} />
+          </Pressable>
+          <Text style={styles.likeCount}>{item.likes ?? 0} likes</Text>
+          <View style={styles.flex} />
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Share post"
+            onPress={onOpen}
+            hitSlop={6}
+          >
+            <Feather name="send" size={19} color={colors.ink} />
+          </Pressable>
+        </View>
+      ) : null}
     </View>
   );
 }

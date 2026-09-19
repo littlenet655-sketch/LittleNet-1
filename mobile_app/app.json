@@ -16,6 +16,8 @@
     "android": {
       "package": "com.littlenet.app",
       "versionCode": 1,
+      "usesCleartextTraffic": true,
+      "softwareKeyboardLayoutMode": "resize",
       "adaptiveIcon": {
         "foregroundImage": "../static/icons/app_logo.png",
         "backgroundColor": "#FFF9F2"

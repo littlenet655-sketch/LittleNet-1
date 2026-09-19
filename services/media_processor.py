@@ -321,6 +321,11 @@ def process_media_job(
                 ),
             )
             parent_notify(child_id, "CONTENT_BLOCKED", decision.reason, "/parent/safety/")
+            try:
+                from services.push_notifications import notify_child_content_status
+                notify_child_content_status(child_id, post_id, "BLOCKED", kind)
+            except Exception:
+                pass
             block_and_cleanup_quarantine(post_id, object_key)
             return {"ok": True, "status": "BLOCKED", "reason": decision.reason}
 
@@ -349,6 +354,14 @@ def process_media_job(
                 "Content is waiting for your review",
                 f"/parent/safety/?event={event_id}",
             )
+            try:
+                from services.push_notifications import notify_parent_safety_event, notify_child_content_status
+                pcm = fetch_one("SELECT p.parent_id, u.full_name FROM parent_child_map p JOIN users u ON u.user_id=p.child_id WHERE p.child_id=%s AND p.approved=TRUE", (child_id,))
+                if pcm and pcm.get("parent_id"):
+                    notify_parent_safety_event(int(pcm["parent_id"]), str(pcm.get("full_name") or "Child"), event_id, "REVIEW")
+                notify_child_content_status(child_id, post_id, "REVIEW", kind)
+            except Exception:
+                pass
             return {"ok": True, "status": "REVIEW", "event_id": event_id}
 
         else:  # ALLOW
@@ -399,9 +412,28 @@ def process_media_job(
                     worker_exec_token,
                 ),
             )
+            if media_type == "VIDEO":
+                try:
+                    from services.video_delivery import ingest_post_video
+                    ingest_post_video(
+                        post_id=post_id,
+                        child_id=child_id,
+                        source_r2_key=object_key,
+                        published_ref=published_media_ref,
+                        poster_ref=published_poster_ref,
+                        local_file=final_media_local,
+                    )
+                except Exception:
+                    pass
+
             from services.publication_lifecycle import refresh_publication_visibility
             refresh_publication_visibility(post_id, child_id, is_reel=bool(post.get("is_reel")))
             _notify_approved_followers(post_id, child_id, kind)
+            try:
+                from services.push_notifications import notify_child_content_status
+                notify_child_content_status(child_id, post_id, "ALLOWED", kind)
+            except Exception:
+                pass
             block_and_cleanup_quarantine(post_id, object_key)
             return {
                 "ok": True,

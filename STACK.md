@@ -15,7 +15,7 @@
 - PostgreSQL / Neon
 - Cloudflare R2 private media storage
 - Modal for AI workloads
-- QStash for production asynchronous media-processing dispatch
+- Modal Function.spawn() for production asynchronous media-processing dispatch (QStash retired)
 
 ## Safety architecture
 - Text/PII checks remain server-side.

@@ -56,8 +56,8 @@ export interface CreateChildInput {
   daily_limit?: number;
 }
 
-async function post<T>(path: string, body: Record<string, unknown>, token?: string): Promise<T> {
-  return apiRequest<T>(path, { method: 'POST', body: JSON.stringify(body) }, token);
+async function post<T>(path: string, body: Record<string, unknown>, token?: string, timeoutMs?: number): Promise<T> {
+  return apiRequest<T>(path, { method: 'POST', body: JSON.stringify(body), timeoutMs }, token);
 }
 
 export function login(identifier: string, password: string, mode: LoginMode): Promise<LoginResponse> {
@@ -84,27 +84,26 @@ export function resendParentEmail(pendingToken: string): Promise<{ ok: boolean; 
   return post(routes.parentResendEmail, { pending_token: pendingToken });
 }
 
-/** Guardian liveness/adult verification. Sends a live camera JPEG as base64 JSON. */
+/** Guardian liveness/adult verification. Sends a live camera JPEG as base64 JSON. Allows 60s for serverless AI cold start. */
 export function verifyParentLiveness(pendingToken: string, photoB64: string): Promise<LoginResponse> {
-  return post<LoginResponse>(routes.parentVerifyLiveness, { pending_token: pendingToken, photo_b64: photoB64 });
+  return post<LoginResponse>(routes.parentVerifyLiveness, { pending_token: pendingToken, photo_b64: photoB64 }, undefined, 60000);
 }
 
 export function createChild(token: string, input: CreateChildInput): Promise<{ ok: boolean; child_id: number; next_steps: string[] }> {
   return post(routes.parentCreateChild, { ...input }, token);
 }
 
-/** Child face enrollment with a fresh live camera photo (base64 JSON). */
+/** Child face enrollment with a fresh live camera photo (base64 JSON). Allows 60s for serverless AI cold start. */
 export function enrollChildFace(token: string, photoB64: string): Promise<{ ok: boolean; biometric_key: string; quiz_required: boolean }> {
-  return post(routes.childFaceEnroll, { photo_b64: photoB64 }, token);
+  return post(routes.childFaceEnroll, { photo_b64: photoB64 }, token, 60000);
 }
 
 /**
  * Face-first child login. Requires a fresh camera image every attempt.
- * The device-challenge endpoints are intentionally NOT wrapped here: they are
- * an optional device-auth mechanism and must never stand in for face auth.
+ * Allows 60s for serverless AI cold start.
  */
 export function faceLogin(identifier: string, mode: Extract<LoginMode, 'kids' | 'parent'>, photoB64: string): Promise<LoginResponse> {
-  return post<LoginResponse>(routes.faceLogin, { identifier, mode, photo_b64: photoB64 });
+  return post<LoginResponse>(routes.faceLogin, { identifier, mode, photo_b64: photoB64 }, undefined, 60000);
 }
 
 export function requestPasswordReset(identifier: string): Promise<{ ok: boolean; user_id: number; masked_email: string; is_parent_proxy: boolean; message: string }> {

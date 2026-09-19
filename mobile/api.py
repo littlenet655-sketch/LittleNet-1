@@ -335,8 +335,14 @@ def _save_request_image(prefix: str):
         return None
     if "base64," in raw:
         raw = raw.split("base64,", 1)[1]
+    raw = "".join(raw.split())
+    if not raw:
+        return None
+    missing_padding = len(raw) % 4
+    if missing_padding:
+        raw += "=" * (4 - missing_padding)
     try:
-        blob = base64.b64decode(raw, validate=True)
+        blob = base64.b64decode(raw)
     except Exception:
         return None
     if len(blob) < 1000 or len(blob) > 8 * 1024 * 1024:
@@ -423,6 +429,8 @@ def _media_allowed(uid: int, role: str, ref: str) -> bool:
             return True
         if role == "PARENT":
             return owns(uid, m["sender_child_id"]) and m.get("moderation_status") == "REVIEW"
+        if m.get("moderation_status") != "ALLOWED":
+            return uid == m["sender_child_id"]
         return uid in {m["sender_child_id"], m["receiver_child_id"]} and can_interact(m["sender_child_id"], m["receiver_child_id"])
     f = fetch_one("SELECT child_id FROM child_profiles WHERE profile_picture=%s", (ref,))
     if f:
@@ -1275,7 +1283,13 @@ def register_mobile_api(bp):
         if final_decision.action == "REVIEW":
             parent_notify(uid, "REVIEW_REQUIRED", "A message needs safety review", "/parent/safety/")
         else:
-            notify(peer_id, "MESSAGE", f"{g.mobile_user.get('full_name') or 'Someone'} sent you a message", f"/chat/{uid}/", uid)
+            sender_name = g.mobile_user.get('full_name') or 'A friend'
+            notify(peer_id, "MESSAGE", f"{sender_name} sent you a message", f"/chat/{uid}/", uid)
+            try:
+                from services.push_notifications import notify_new_chat_message
+                notify_new_chat_message(peer_id, sender_name, cid)
+            except Exception:
+                pass
         return jsonify(ok=True, status=final_decision.action)
 
     @bp.route("/api/mobile/v1/kids/follow/<int:child_id>", methods=["POST"])
@@ -2611,6 +2625,7 @@ def register_mobile_api(bp):
         if gate:
             return gate
         uid = int(g.mobile_user["user_id"])
+        mode = request.args.get("mode", "for_you").strip().lower()
         try:
             cursor = max(0, int(request.args.get("cursor", 0)))
         except (TypeError, ValueError):
@@ -2620,7 +2635,7 @@ def register_mobile_api(bp):
         except (TypeError, ValueError):
             limit = 10
         session_id = request.args.get("session_id")
-        page = get_feed_page(uid, surface="FEED", cursor=cursor, limit=limit, session_id=session_id)
+        page = get_feed_page(uid, surface="FEED", cursor=cursor, limit=limit, session_id=session_id, mode=mode)
         from services.media_delivery import resolve_media_delivery
         for item in page["items"]:
             if item.get("media_reference"):
@@ -2650,17 +2665,125 @@ def register_mobile_api(bp):
             limit = 10
         session_id = request.args.get("session_id")
         page = get_feed_page(uid, surface="REELS", cursor=cursor, limit=limit, session_id=session_id)
+        from services.video_delivery import resolve_video_playback
         from services.media_delivery import resolve_media_delivery
         for item in page["items"]:
-            if item.get("media_reference"):
+            post_id = item.get("post_id") or item.get("source_id")
+            if post_id:
+                try:
+                    v_res = resolve_video_playback(int(post_id), viewer_id=uid, viewer_role="CHILD")
+                    if v_res.get("playback_url"):
+                        item["media_url"] = v_res["playback_url"]
+                        item["delivery_type"] = v_res.get("delivery_type", "MP4")
+                        item["playback_expires_at"] = v_res.get("playback_expires_at")
+                        if v_res.get("poster_url"):
+                            item["poster_url"] = v_res["poster_url"]
+                        if v_res.get("aspect_ratio"):
+                            item["aspect_ratio"] = v_res["aspect_ratio"]
+                        if v_res.get("duration_ms"):
+                            item["duration_ms"] = v_res["duration_ms"]
+                except Exception:
+                    pass
+
+            if not item.get("media_url") and item.get("media_reference"):
                 m_res = resolve_media_delivery(item["media_reference"], viewer_id=uid, viewer_role="CHILD")
                 item["media_url"] = m_res.get("url")
                 if m_res.get("expires_at"):
                     item["playback_expires_at"] = m_res["expires_at"]
-            if item.get("poster_reference"):
+            if not item.get("poster_url") and item.get("poster_reference"):
                 p_res = resolve_media_delivery(item["poster_reference"], viewer_id=uid, viewer_role="CHILD")
                 item["poster_url"] = p_res.get("url")
         return jsonify(ok=True, **_clean(page))
+
+    @bp.route("/api/mobile/v2/kids/reels/<int:post_id>/playback")
+    @_require_mobile("CHILD")
+    def mobile_kids_reel_playback_v2(post_id):
+        gate = _child_gate("reels")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        from services.video_delivery import resolve_video_playback
+        playback = resolve_video_playback(post_id, viewer_id=uid, viewer_role="CHILD")
+        if not playback.get("playback_url"):
+            return jsonify(ok=False, error="playback_denied"), 403
+        return jsonify(ok=True, **_clean(playback))
+
+    @bp.route("/api/mobile/v2/media/playback/<int:post_id>")
+    @_require_mobile()
+    def mobile_media_playback_v2(post_id):
+        user = g.mobile_user
+        uid = int(user["user_id"])
+        role = str(user.get("role", "CHILD")).upper()
+        if role == "CHILD":
+            gate = _child_gate()
+            if gate:
+                return gate
+        from services.video_delivery import resolve_video_playback
+        playback = resolve_video_playback(post_id, viewer_id=uid, viewer_role=role)
+        if not playback.get("playback_url"):
+            return jsonify(ok=False, error="playback_denied"), 403
+        return jsonify(ok=True, **_clean(playback))
+
+    @bp.route("/api/mobile/v2/kids/stories/<int:story_id>/view", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_story_view(story_id):
+        gate = _child_gate("stories")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        try:
+            ratio = min(1.0, max(0.0, float(data.get("completion_ratio", 1.0))))
+        except (TypeError, ValueError):
+            ratio = 1.0
+        execute(
+            """INSERT INTO story_views (post_id, child_id, viewed_at, first_viewed_at, last_viewed_at, completion_ratio)
+               VALUES (%s, %s, NOW(), NOW(), NOW(), %s)
+               ON CONFLICT (post_id, child_id)
+               DO UPDATE SET last_viewed_at = NOW(),
+                             completion_ratio = GREATEST(story_views.completion_ratio, EXCLUDED.completion_ratio)""",
+            (story_id, uid, ratio),
+        )
+        count_row = fetch_one("SELECT COUNT(*) AS viewer_count FROM story_views WHERE post_id=%s", (story_id,))
+        return jsonify(ok=True, viewer_count=int(count_row["viewer_count"] if count_row else 1))
+
+    @bp.route("/api/mobile/v2/kids/stories/<int:story_id>/viewers")
+    @_require_mobile("CHILD")
+    def mobile_kids_story_viewers(story_id):
+        gate = _child_gate("stories")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        story = fetch_one("SELECT child_id FROM posts WHERE post_id=%s AND is_story=TRUE", (story_id,))
+        if not story or story["child_id"] != uid:
+            return jsonify(ok=False, error="forbidden_or_not_found"), 403
+        viewers = fetch_all(
+            """SELECT sv.child_id, sv.first_viewed_at, sv.last_viewed_at, sv.completion_ratio,
+                      u.full_name, u.username, cp.profile_picture
+               FROM story_views sv
+               JOIN users u ON u.user_id = sv.child_id
+               LEFT JOIN child_profiles cp ON cp.child_id = sv.child_id
+               WHERE sv.post_id = %s
+               ORDER BY sv.last_viewed_at DESC""",
+            (story_id,),
+        )
+        return jsonify(ok=True, viewers=_clean(viewers))
+
+    @bp.route("/api/mobile/v2/device/register", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile()
+    def mobile_device_register():
+        uid = int(g.mobile_user["user_id"])
+        data = request.get_json(silent=True) or {}
+        token = str(data.get("push_token") or data.get("token") or "").strip()
+        platform = str(data.get("platform") or "android").strip()
+        device_id = data.get("device_identifier")
+        if not token:
+            return jsonify(error="push_token_required"), 400
+        from services.push_notifications import register_device_token
+        ok = register_device_token(uid, platform, token, device_id)
+        return jsonify(ok=ok)
 
     @bp.route("/api/mobile/v2/curated/media/<int:content_id>")
     @_require_mobile("CHILD")

@@ -4,6 +4,14 @@
     "strict": true,
     "noUncheckedIndexedAccess": true
   },
-  "include": ["**/*.ts", "**/*.tsx", ".expo/types/**/*.ts", "expo-env.d.ts"],
-  "exclude": ["tests", "test-dist", "dist", "node_modules"]
+  "include": [
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": [
+    "tests",
+    "test-dist",
+    "dist",
+    "node_modules"
+  ]
 }
