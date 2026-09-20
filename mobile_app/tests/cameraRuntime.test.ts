@@ -1,3 +1,4 @@
+/// <reference types="node" />
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -104,8 +105,9 @@ function harness(detector?: () => Promise<unknown>) {
     index = 0;
     const tree = component.CameraCapture({ label: 'Capture', onCapture: async () => { calls.push('submit'); } });
     const button = findButton(tree, label);
-    assert.ok(button, `Missing button: ${label}`);
-    assert.ok(button.props.onPress);
+    if (!button || typeof button.props?.onPress !== 'function') {
+      throw new Error(`Missing button: ${label}`);
+    }
     button.props.onPress();
     await new Promise<void>((done) => setImmediate(done));
   } };
@@ -123,7 +125,7 @@ test('detector failure and rejected faces never submit or retain retry photos', 
     const run = harness(detector);
     await run.press('Capture');
     assert.deepEqual(run.calls, detector ? ['camera', 'detector'] : ['camera']);
-    const error = run.states[2];
+    const error = run.states[2] as { name?: string; code?: string; message?: string } | null | undefined;
     assert.ok(error && typeof error === 'object' && 'name' in error && 'code' in error && 'message' in error);
     assert.equal(error.name, 'FacePrecheckError');
     assert.ok(error.code === 'native_unavailable' || error.code === 'no_face');
@@ -139,7 +141,7 @@ test('offline retry retains only the locally checked photo and submits on reconn
   run.setOnline(false);
   await run.press('Capture');
   assert.deepEqual(run.calls, ['camera', 'detector']);
-  const pending = run.states[3];
+  const pending = run.states[3] as Record<string, unknown> | null | undefined;
   assert.ok(pending && typeof pending === 'object');
   assert.deepEqual({ ...pending }, photo);
   run.setOnline(true);
