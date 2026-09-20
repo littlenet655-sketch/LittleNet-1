@@ -47,6 +47,14 @@ web_image = (
             "ENABLE_DEV_OTP": "0",
             "STRICT_PRODUCTION_PREFLIGHT": "1",
             "LITTLENET_USE_MODAL_QUEUE": "1",
+            # Ordinary image moderation runs on a scale-to-zero CPU function.
+            # GPU fallback is deliberately off so a transient CPU issue cannot
+            # silently burn T4 credit; the moderation pipeline fails closed.
+            "LITTLENET_USE_MODAL_IMAGE_CPU": "1",
+            "LITTLENET_ALLOW_IMAGE_GPU_FALLBACK": "0",
+            "LITTLENET_IMAGE_MODERATION_MAX_PX": "1600",
+            "LITTLENET_MODERATION_CACHE_VERSION": "2026-09-20-v1",
+            "LITTLENET_MODERATION_CACHE_TTL_DAYS": "30",
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
             "DBMATE_STRICT": "true",
@@ -142,15 +150,16 @@ def web_secret_preflight():
     memory=4096,
     secrets=[web_secret, email_secret, r2_secret],
     timeout=900,
+    scaledown_window=int(os.getenv("MODAL_MEDIA_WORKER_SCALEDOWN_WINDOW", "30")),
     min_containers=0,
     max_containers=1,
 )
 def process_media_job_background(post_id: int, child_id: int, object_key: str, kind: str = "post", lease_token: str | None = None):
     """CPU orchestration worker for asynchronous media processing.
 
-    The worker downloads/sanitizes media and updates Neon/R2. Actual image/video
-    inference is delegated through AI_SERVICE_URL, so the T4 wakes only when the
-    moderation step is reached and scales back to zero afterward.
+    The worker downloads/sanitizes media and updates Neon/R2. Ordinary images
+    are delegated to the scale-to-zero CPU moderation function. GPU inference is
+    reserved for workloads that still require it (for example video/face paths).
     """
     os.chdir("/root/littlenet")
     from services.media_processor import process_media_job
