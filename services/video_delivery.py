@@ -607,6 +607,50 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
         }
 
 
+def video_delivery_healthcheck() -> dict[str, Any]:
+    """Validate the configured video-delivery mode without exposing credentials."""
+    cfs = CloudflareStreamDeliveryProvider()
+    if not cfs.enabled:
+        return {
+            "ok": True,
+            "provider": "R2_SANITIZED_MP4",
+            "adaptive_streaming": False,
+            "mode": "private_r2_fallback",
+        }
+    if not cfs.is_configured():
+        return {
+            "ok": False,
+            "provider": "CLOUDFLARE_STREAM",
+            "adaptive_streaming": True,
+            "mode": "configuration_incomplete",
+        }
+    try:
+        response = requests.get(
+            cfs._api_base,
+            headers={"Authorization": f"Bearer {cfs.api_token}"},
+            params={"per_page": 1},
+            timeout=cfs.api_timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        ok = isinstance(payload, dict) and payload.get("success") is True
+        return {
+            "ok": bool(ok),
+            "provider": "CLOUDFLARE_STREAM",
+            "adaptive_streaming": True,
+            "mode": "api_verified" if ok else "api_unsuccessful",
+        }
+    except Exception as exc:
+        logger.warning("Cloudflare Stream preflight failed: %s", type(exc).__name__)
+        return {
+            "ok": False,
+            "provider": "CLOUDFLARE_STREAM",
+            "adaptive_streaming": True,
+            "mode": "api_unreachable",
+            "error_type": type(exc).__name__,
+        }
+
+
 def get_video_provider() -> VideoDeliveryProvider:
     """Factory returning the active video delivery provider."""
     cfs = CloudflareStreamDeliveryProvider()
