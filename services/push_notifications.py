@@ -8,9 +8,9 @@ Enforces child privacy invariants:
 """
 from __future__ import annotations
 
-import json
 import logging
-import urllib.request
+
+import requests
 from typing import Any
 
 from database.connection import execute, fetch_all
@@ -108,27 +108,30 @@ def send_expo_push(
     ]
 
     try:
-        req = urllib.request.Request(
+        response = requests.post(
             EXPO_PUSH_URL,
-            data=json.dumps(messages).encode("utf-8"),
+            json=messages,
             headers={
                 "Content-Type": "application/json",
                 "Accept": "application/json",
             },
-            method="POST",
+            timeout=8,
         )
-        with urllib.request.urlopen(req, timeout=8) as response:
-            resp_data = json.loads(response.read().decode("utf-8"))
-            data_items = resp_data.get("data") or []
-            for idx, item in enumerate(data_items):
-                if item.get("status") == "error":
-                    details = item.get("details") or {}
-                    if details.get("error") == "DeviceNotRegistered" and idx < len(valid_tokens):
-                        bad_token = valid_tokens[idx]
-                        execute("UPDATE user_device_tokens SET revoked_at = NOW() WHERE push_token = %s", (bad_token,))
-            return True
-    except Exception as exc:
-        logger.warning("Expo push delivery error: %s", exc)
+        response.raise_for_status()
+        resp_data = response.json()
+        data_items = resp_data.get("data") or []
+        for idx, item in enumerate(data_items):
+            if item.get("status") == "error":
+                details = item.get("details") or {}
+                if details.get("error") == "DeviceNotRegistered" and idx < len(valid_tokens):
+                    bad_token = valid_tokens[idx]
+                    execute(
+                        "UPDATE user_device_tokens SET revoked_at = NOW() WHERE push_token = %s",
+                        (bad_token,),
+                    )
+        return True
+    except (requests.RequestException, ValueError) as exc:
+        logger.warning("Expo push delivery error: %s", type(exc).__name__)
         return False
 
 
