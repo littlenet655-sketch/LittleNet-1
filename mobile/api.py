@@ -171,6 +171,21 @@ def _load_claims():
         return None
 
 
+def _mobile_token_revoked(token: str) -> bool:
+    """Check the dedicated revocation store independently of route data lookups."""
+    if not token:
+        return False
+    from database.connection import fetch_one as db_fetch_one
+
+    thash = hashlib.sha256(token.encode()).hexdigest()
+    return bool(
+        db_fetch_one(
+            "SELECT 1 FROM mobile_token_revocations WHERE token_hash=%s",
+            (thash,),
+        )
+    )
+
+
 def _require_mobile(*roles):
     allowed = {r.upper() for r in roles}
 
@@ -181,12 +196,8 @@ def _require_mobile(*roles):
             if not claims:
                 return jsonify(error="mobile_auth_required"), 401
             token = _bearer_token()
-            if token:
-                import hashlib
-                thash = hashlib.sha256(token.encode()).hexdigest()
-                revoked = fetch_one("SELECT 1 FROM mobile_token_revocations WHERE token_hash=%s", (thash,))
-                if revoked:
-                    return jsonify(error="token_revoked"), 401
+            if _mobile_token_revoked(token):
+                return jsonify(error="token_revoked"), 401
             user = fetch_one(
                 "SELECT user_id,username,full_name,email,role,age,account_status,session_version FROM users WHERE user_id=%s",
                 (int(claims.get("uid") or 0),),
