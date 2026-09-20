@@ -196,10 +196,21 @@ def moderate_image_upload_cpu(
             from safety.visual_service import check_image
             media_signals = check_image(path)
 
-        try:
-            model_cache.commit()
-        except Exception:
-            pass
+        # Persist model downloads only when this workload's cache was first
+        # populated. Avoid a Volume commit on every moderation request.
+        cache_markers = []
+        if run_text:
+            cache_markers.append(Path("/cache/.cpu_text_models_ready"))
+        if run_media:
+            cache_markers.append(Path("/cache/.cpu_image_models_ready"))
+        missing_markers = [marker for marker in cache_markers if not marker.exists()]
+        if missing_markers:
+            try:
+                for marker in missing_markers:
+                    marker.write_text("ready", encoding="utf-8")
+                model_cache.commit()
+            except Exception:
+                pass
 
         return {
             "ok": True,
