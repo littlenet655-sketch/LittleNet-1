@@ -81,6 +81,7 @@ def test_image_cpu_cost_guard_defaults_off_outside_modal(monkeypatch):
 
 
 def test_ai_server_bundles_caption_and_image_in_one_request(monkeypatch):
+    prior_server_flag = os.environ.get("LITTLENET_AI_SERVER")
     import ai_server
 
     monkeypatch.setenv("AI_SHARED_SECRET", "unit-test-secret")
@@ -111,6 +112,51 @@ def test_ai_server_bundles_caption_and_image_in_one_request(monkeypatch):
     assert payload["ok"] is True
     assert payload["text_signals"]["category"] == "TEXT"
     assert payload["media_signals"]["category"] == "IMAGE"
+
+    if prior_server_flag is None:
+        os.environ.pop("LITTLENET_AI_SERVER", None)
+    else:
+        os.environ["LITTLENET_AI_SERVER"] = prior_server_flag
+
+
+def test_modal_job_queue_uses_low_cost_worker_for_images(monkeypatch):
+    import sys
+    import types
+    from services.job_queue import ModalJobQueue
+
+    seen = {}
+
+    class Call:
+        object_id = "call-1"
+
+    class Fn:
+        def spawn(self, *args):
+            seen["args"] = args
+            return Call()
+
+    class Function:
+        @staticmethod
+        def from_name(app_name, function_name):
+            seen["app_name"] = app_name
+            seen["function_name"] = function_name
+            return Fn()
+
+    fake_modal = types.SimpleNamespace(Function=Function)
+    monkeypatch.setitem(sys.modules, "modal", fake_modal)
+
+    queue = ModalJobQueue()
+    result = queue.enqueue(
+        "media_processing",
+        {
+            "post_id": 1,
+            "child_id": 2,
+            "object_key": "uploads/r2/quarantine/2/x/source.jpg",
+            "kind": "post",
+        },
+    )
+
+    assert result == "call-1"
+    assert seen["function_name"] == "process_image_job_background"
 
 
 def test_remote_upload_bundle_uses_single_http_post(monkeypatch):
