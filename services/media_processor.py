@@ -441,6 +441,12 @@ def _process_media_job_impl(
         text_needed = bool(combined_text) and not text_signals
         media_needed = not media_signals
 
+        # Preserve the original cache-miss state before inference recalculates
+        # text_needed/media_needed. Fresh inference results should be cached once,
+        # while cache hits should not overwrite/reset existing cache entries.
+        text_cache_miss = text_needed
+        media_cache_miss = media_needed
+
         # Production IMAGE uploads are handled by a direct Modal CPU function.
         # This is the main first-upload cost guard: an ordinary photo does not
         # wake the T4 at all. The same visual models run with LITTLENET_DEVICE=cpu.
@@ -516,12 +522,12 @@ def _process_media_job_impl(
             if media_needed:
                 media_signals, _ = evaluate(child_id, media_type, str(moderation_media_local))
 
-        if combined_text and text_fingerprint and text_signals:
+        if combined_text and text_fingerprint and text_signals and text_cache_miss:
             try:
                 store_cached_signals("TEXT", text_fingerprint, text_signals)
             except Exception:
                 logger.info("Unable to persist text moderation cache for post %s", post_id, exc_info=True)
-        if media_fingerprint and media_signals:
+        if media_fingerprint and media_signals and media_cache_miss:
             try:
                 store_cached_signals(media_type, media_fingerprint, media_signals)
             except Exception:

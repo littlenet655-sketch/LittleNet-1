@@ -98,9 +98,7 @@ def store_cached_signals(content_type: str, fingerprint: str, signals: dict[str,
            VALUES(%s,%s,%s,%s::jsonb,NOW(),NOW(),0)
            ON CONFLICT(content_type, content_sha256, cache_version)
            DO UPDATE SET signals=EXCLUDED.signals,
-                         created_at=NOW(),
-                         last_used_at=NOW(),
-                         hit_count=0""",
+                         last_used_at=NOW()""",
         (
             str(content_type).upper(),
             fingerprint,

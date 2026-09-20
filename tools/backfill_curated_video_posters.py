@@ -26,7 +26,11 @@ R2_PREFIX = "uploads/r2/"
 def _poster_key(delivery_ref: str) -> str:
     ref = str(delivery_ref or "")
     key = ref[len(R2_PREFIX):] if ref.startswith(R2_PREFIX) else ref
-    parent = str(Path(key).parent).replace("\\", "/")
+    p = Path(key)
+    parent = str(p.parent).replace("\\", "/")
+    stem = p.stem
+    if stem and stem != "delivery" and stem != "poster":
+        return f"{parent}/{stem}_poster.jpg"
     return f"{parent}/poster.jpg"
 
 
@@ -97,11 +101,15 @@ def run(*, apply: bool, limit: int) -> dict:
                 poster_path = tmpdir / "poster.jpg"
                 object_storage.download_file(delivery_ref, video_path)
                 _make_poster(video_path, poster_path)
+                if not poster_path.is_file() or poster_path.stat().st_size <= 0:
+                    raise RuntimeError(f"empty_poster_generated: {asset_id}")
                 poster_ref = object_storage.upload_file(
                     str(poster_path),
                     target_key,
                     content_type="image/jpeg",
                 )
+                if object_storage.head_object(poster_ref) is None:
+                    raise RuntimeError(f"uploaded_poster_head_check_failed: {poster_ref}")
 
             execute(
                 """UPDATE curated_media_assets
