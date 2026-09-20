@@ -23,6 +23,7 @@ export const routes = {
   parentRegister: '/api/mobile/v1/auth/parent/register',
   parentVerifyEmail: '/api/mobile/v1/auth/parent/verify-email',
   parentResendEmail: '/api/mobile/v1/auth/parent/resend-email',
+  parentEmailStatus: '/api/mobile/v1/auth/parent/email-status',
   parentVerifyLiveness: '/api/mobile/v1/auth/parent/verify-liveness',
   forgotPassword: '/api/mobile/v1/auth/forgot-password',
   resetPassword: '/api/mobile/v1/auth/reset-password',
