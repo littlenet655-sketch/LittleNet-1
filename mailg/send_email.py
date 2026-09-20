@@ -79,6 +79,7 @@ def validate_resend_production():
         'domain': EXPECTED_RESEND_DOMAIN,
         'domain_status': None,
         'authentication': False,
+        'webhook_configured': bool((os.getenv('RESEND_WEBHOOK_SECRET') or '').strip()),
         'is_production_ready': False,
     }
 
@@ -148,6 +149,13 @@ def validate_resend_production():
         result['error'] = (
             f'Resend domain {EXPECTED_RESEND_DOMAIN} is not verified '
             f'(status: {domain_status or "unknown"}).'
+        )
+        return result
+
+    if not result['webhook_configured']:
+        result['error'] = (
+            'RESEND_WEBHOOK_SECRET is required so LittleNet can distinguish '
+            'provider acceptance from delivered, bounced, failed, or suppressed email.'
         )
         return result
 
