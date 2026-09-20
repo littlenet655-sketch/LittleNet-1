@@ -93,7 +93,7 @@ export function useReelPlayback({
 
   // Preemptive Credential Expiry Check
   const checkCredentialExpiry = useCallback(async () => {
-    if (!currentExpiryAt || !token) return;
+    if (item.source_type !== 'SOCIAL' || !currentExpiryAt || !token) return;
     const nowSec = Math.floor(Date.now() / 1000);
     const remainingSec = currentExpiryAt - nowSec;
     if (remainingSec <= PREEMPTIVE_REFRESH_WINDOW_SEC) {
@@ -116,7 +116,7 @@ export function useReelPlayback({
         // Will retry on error listener if needed
       }
     }
-  }, [currentExpiryAt, item.post_id, item.source_id, token, active, paused, player]);
+  }, [currentExpiryAt, item.post_id, item.source_id, item.source_type, token, active, paused, player]);
 
   // Check credential expiry on active transition and periodically
   useEffect(() => {
@@ -309,7 +309,7 @@ export function useReelPlayback({
       playbackStartedRef.current = false;
     }
     prevActiveRef.current = active;
-  }, [active, item]);
+  }, [active, item.source_type, item.source_id, item.post_id]);
 
   const handleFirstFrameRender = useCallback(() => {
     setFirstFrameRendered(true);
