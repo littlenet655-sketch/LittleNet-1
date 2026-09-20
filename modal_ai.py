@@ -59,8 +59,11 @@ image = (
             "LITTLENET_DETOXIFY_MODEL": "multilingual",
             # Scene-aware sampling protects short scene changes. The bounded
             # uniform fallback prevents long reels from multiplying GPU work.
-            "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "3",
-            "LITTLENET_VIDEO_MAX_FRAMES": "60",
+            # Cost-bounded video scan: short clips retain <=4s temporal spacing.
+            # Long clips stop at 24 frames and fail to REVIEW rather than burning
+            # unbounded GPU time to auto-allow them.
+            "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "4",
+            "LITTLENET_VIDEO_MAX_FRAMES": "24",
             # Longer videos remain private for review if this temporal coverage
             # cannot be met within the full-model frame budget.
             "LITTLENET_VIDEO_MAX_AUTO_ALLOW_GAP_SECONDS": "4",
