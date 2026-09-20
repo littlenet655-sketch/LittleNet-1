@@ -7,6 +7,7 @@ codes are never persisted by this webhook.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -55,7 +56,7 @@ def _verify_svix_signature(raw_body: bytes) -> bool:
         if abs(int(time.time()) - ts) > _MAX_TIMESTAMP_SKEW_SECONDS:
             return False
         signing_secret = _decode_webhook_secret(secret)
-    except (ValueError, TypeError, base64.binascii.Error):
+    except (ValueError, TypeError, binascii.Error):
         return False
 
     signed_payload = msg_id.encode("utf-8") + b"." + timestamp.encode("ascii") + b"." + raw_body
