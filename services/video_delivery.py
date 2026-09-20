@@ -7,6 +7,7 @@ authorization before playback tokens or signed URLs are minted.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -15,6 +16,8 @@ import subprocess
 import time
 from pathlib import Path
 from typing import Any, Optional
+
+import requests
 
 from config import Config
 from database.connection import execute, fetch_one
@@ -254,33 +257,143 @@ class SanitizedMP4DeliveryProvider(VideoDeliveryProvider):
 
 
 class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
-    """Reserved Cloudflare Stream adapter.
+    """Cloudflare Stream adaptive-HLS provider with private playback.
 
-    The current repository does not yet perform real Stream ingestion, readiness
-    polling/webhook verification, or signed private playback token minting.
-    Production therefore keeps this provider disabled and uses the private R2
-    sanitized-MP4 provider until the real Stream contract is implemented and
-    verified end to end.
+    Videos are provisioned through a one-time direct-upload URL with signed
+    playback required from creation. The sanitized private R2 MP4 remains
+    available as a fail-safe while Stream is encoding or unavailable.
     """
 
     def __init__(self) -> None:
         self.account_id = os.getenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "").strip()
         self.api_token = os.getenv("CLOUDFLARE_STREAM_API_TOKEN", "").strip()
         self.subdomain = os.getenv("CLOUDFLARE_STREAM_SUBDOMAIN", "").strip()
+        self.enabled = os.getenv("CLOUDFLARE_STREAM_ENABLED", "0").strip() == "1"
+        self.api_timeout = max(5, min(60, int(os.getenv("CLOUDFLARE_STREAM_API_TIMEOUT_SECONDS", "20"))))
+        self.signing_key_id = os.getenv("CLOUDFLARE_STREAM_SIGNING_KEY_ID", "").strip()
+        self.signing_private_key_b64 = os.getenv("CLOUDFLARE_STREAM_SIGNING_PRIVATE_KEY_B64", "").strip()
 
     @property
     def provider_name(self) -> str:
         return "CLOUDFLARE_STREAM"
 
+    @property
+    def _api_base(self) -> str:
+        return f"https://api.cloudflare.com/client/v4/accounts/{self.account_id}/stream"
+
+    @property
+    def _stream_host(self) -> str:
+        host = self.subdomain.strip().removeprefix("https://").removeprefix("http://").strip("/")
+        if not host:
+            return ""
+        return host if "." in host else f"{host}.cloudflarestream.com"
+
     def is_configured(self) -> bool:
-        requested = os.getenv("CLOUDFLARE_STREAM_ENABLED", "0").strip() == "1"
-        if requested:
-            logger.error(
-                "CLOUDFLARE_STREAM_ENABLED=1 was requested, but the Stream adapter "
-                "is intentionally disabled until real ingestion/status/private-playback "
-                "integration is implemented and verified."
+        if not self.enabled:
+            return False
+        missing = [
+            name
+            for name, value in (
+                ("CLOUDFLARE_STREAM_ACCOUNT_ID", self.account_id),
+                ("CLOUDFLARE_STREAM_API_TOKEN", self.api_token),
+                ("CLOUDFLARE_STREAM_SUBDOMAIN", self._stream_host),
             )
-        return False
+            if not value
+        ]
+        if missing:
+            logger.error("Cloudflare Stream enabled but missing %s", ", ".join(missing))
+            return False
+        return True
+
+    def _api_request(self, method: str, suffix: str, *, json_body: dict[str, Any] | None = None) -> dict[str, Any]:
+        response = requests.request(
+            method,
+            f"{self._api_base}{suffix}",
+            headers={"Authorization": f"Bearer {self.api_token}"},
+            json=json_body,
+            timeout=self.api_timeout,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        if not isinstance(payload, dict) or payload.get("success") is not True:
+            raise RuntimeError("cloudflare_stream_api_unsuccessful")
+        result = payload.get("result")
+        return result if isinstance(result, dict) else {}
+
+    def _video_details(self, uid: str) -> dict[str, Any]:
+        return self._api_request("GET", f"/{uid}")
+
+    @staticmethod
+    def _status_from_details(details: dict[str, Any]) -> str:
+        if details.get("readyToStream") is True:
+            return "READY"
+        state = str((details.get("status") or {}).get("state") or "").lower()
+        if state == "error":
+            return "FAILED"
+        return "ENCODING"
+
+    def _persist_asset(
+        self,
+        *,
+        post_id: int,
+        source_r2_key: str,
+        published_ref: str,
+        poster_ref: str | None,
+        uid: str,
+        status: str,
+        metadata: dict[str, Any],
+        details: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        details = details or {}
+        input_meta = details.get("input") if isinstance(details.get("input"), dict) else {}
+        fallback_duration = float(metadata.get("duration_ms", 15000)) / 1000.0
+        duration_ms = max(1000, int(float(details.get("duration") or fallback_duration) * 1000))
+        width = int(input_meta.get("width") or metadata.get("width", 1080))
+        height = int(input_meta.get("height") or metadata.get("height", 1920))
+        aspect_ratio = metadata.get("aspect_ratio", "9:16")
+
+        existing = fetch_one("SELECT media_id FROM media_assets WHERE post_id=%s", (post_id,))
+        if existing:
+            media_id = existing["media_id"]
+            execute(
+                """UPDATE media_assets
+                   SET published_reference=%s, poster_reference=%s, provider=%s,
+                       provider_asset_id=%s, playback_id=%s, duration_ms=%s,
+                       width=%s, height=%s, aspect_ratio=%s, status=%s, updated_at=NOW()
+                   WHERE media_id=%s""",
+                (
+                    published_ref, poster_ref, self.provider_name, uid, uid,
+                    duration_ms, width, height, aspect_ratio, status, media_id,
+                ),
+            )
+        else:
+            media_id = execute(
+                """INSERT INTO media_assets(
+                       post_id, media_kind, source_r2_key, published_reference,
+                       provider, provider_asset_id, playback_id, poster_reference,
+                       duration_ms, width, height, aspect_ratio, status
+                   ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                   RETURNING media_id""",
+                (
+                    post_id, "REEL", source_r2_key, published_ref,
+                    self.provider_name, uid, uid, poster_ref,
+                    duration_ms, width, height, aspect_ratio, status,
+                ),
+                returning=True,
+            )
+
+        return {
+            "media_id": media_id,
+            "post_id": post_id,
+            "provider": self.provider_name,
+            "provider_asset_id": uid,
+            "playback_id": uid,
+            "duration_ms": duration_ms,
+            "width": width,
+            "height": height,
+            "aspect_ratio": aspect_ratio,
+            "status": status,
+        }
 
     def ingest(
         self,
@@ -291,75 +404,128 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
         local_file: Path | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        fallback = SanitizedMP4DeliveryProvider()
         if not self.is_configured():
-            return SanitizedMP4DeliveryProvider().ingest(
-                post_id, source_r2_key, published_ref, poster_ref, local_file, metadata
+            return fallback.ingest(post_id, source_r2_key, published_ref, poster_ref, local_file, metadata)
+        if not local_file or not Path(local_file).is_file():
+            logger.warning("Cloudflare Stream ingest skipped for post %s: sanitized local file unavailable", post_id)
+            return fallback.ingest(post_id, source_r2_key, published_ref, poster_ref, local_file, metadata)
+
+        local_path = Path(local_file)
+        if local_path.stat().st_size > 190 * 1024 * 1024:
+            logger.warning("Cloudflare Stream ingest skipped for post %s: file exceeds basic upload limit", post_id)
+            return fallback.ingest(post_id, source_r2_key, published_ref, poster_ref, local_file, metadata)
+
+        meta = metadata or probe_video_metadata(local_path)
+        try:
+            provision = self._api_request(
+                "POST",
+                "/direct_upload",
+                json_body={
+                    "maxDurationSeconds": int(getattr(Config, "VIDEO_MAX_SECONDS", 600)),
+                    "requireSignedURLs": True,
+                    "meta": {"littlenet_post_id": str(post_id)},
+                },
             )
+            uid = str(provision.get("uid") or "").strip()
+            upload_url = str(provision.get("uploadURL") or "").strip()
+            if not uid or not upload_url.startswith("https://"):
+                raise RuntimeError("cloudflare_stream_direct_upload_invalid")
 
-        meta = metadata or {}
-        if local_file and local_file.is_file() and not metadata:
-            meta = probe_video_metadata(local_file)
+            with local_path.open("rb") as fh:
+                response = requests.post(
+                    upload_url,
+                    files={"file": (local_path.name, fh, "video/mp4")},
+                    timeout=max(self.api_timeout, 60),
+                )
+            response.raise_for_status()
 
-        # In production Cloudflare Stream, copy from R2 or upload directly via Stream API
-        provider_asset_id = f"cfs_{post_id}_{int(time.time())}"
-        playback_id = provider_asset_id
+            details = self._video_details(uid)
+            status = self._status_from_details(details)
+            return self._persist_asset(
+                post_id=post_id,
+                source_r2_key=source_r2_key,
+                published_ref=published_ref,
+                poster_ref=poster_ref,
+                uid=uid,
+                status=status,
+                metadata=meta,
+                details=details,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Cloudflare Stream ingest failed for post %s; retaining private R2 fallback: %s",
+                post_id,
+                type(exc).__name__,
+            )
+            return fallback.ingest(post_id, source_r2_key, published_ref, poster_ref, local_file, meta)
 
-        existing = fetch_one("SELECT media_id FROM media_assets WHERE post_id=%s", (post_id,))
-        if existing:
-            media_id = existing["media_id"]
+    def _refresh_stream_status(self, media_asset: dict[str, Any]) -> str:
+        uid = str(media_asset.get("provider_asset_id") or media_asset.get("playback_id") or "").strip()
+        if not uid:
+            return "FAILED"
+        try:
+            details = self._video_details(uid)
+            status = self._status_from_details(details)
+            input_meta = details.get("input") if isinstance(details.get("input"), dict) else {}
             execute(
                 """UPDATE media_assets
-                   SET published_reference=%s, poster_reference=%s, provider=%s,
-                       provider_asset_id=%s, playback_id=%s, duration_ms=%s,
-                       width=%s, height=%s, aspect_ratio=%s, status='READY', updated_at=NOW()
+                   SET status=%s,
+                       duration_ms=COALESCE(%s,duration_ms),
+                       width=COALESCE(%s,width),
+                       height=COALESCE(%s,height),
+                       updated_at=NOW()
                    WHERE media_id=%s""",
                 (
-                    published_ref,
-                    poster_ref,
-                    self.provider_name,
-                    provider_asset_id,
-                    playback_id,
-                    meta.get("duration_ms", 15000),
-                    meta.get("width", 1080),
-                    meta.get("height", 1920),
-                    meta.get("aspect_ratio", "9:16"),
-                    media_id,
+                    status,
+                    int(float(details.get("duration") or 0) * 1000) or None,
+                    int(input_meta.get("width") or 0) or None,
+                    int(input_meta.get("height") or 0) or None,
+                    media_asset.get("media_id"),
                 ),
             )
-        else:
-            media_id = execute(
-                """INSERT INTO media_assets(
-                       post_id, media_kind, source_r2_key, published_reference,
-                       provider, provider_asset_id, playback_id, poster_reference,
-                       duration_ms, width, height, aspect_ratio, status
-                   ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                   RETURNING media_id""",
-                (
-                    post_id,
-                    "REEL",
-                    source_r2_key,
-                    published_ref,
-                    self.provider_name,
-                    provider_asset_id,
-                    playback_id,
-                    poster_ref,
-                    meta.get("duration_ms", 15000),
-                    meta.get("width", 1080),
-                    meta.get("height", 1920),
-                    meta.get("aspect_ratio", "9:16"),
-                    "READY",
-                ),
-                returning=True,
+            return status
+        except Exception as exc:
+            logger.warning(
+                "Cloudflare Stream status refresh failed for media %s: %s",
+                media_asset.get("media_id"),
+                type(exc).__name__,
             )
+            return str(media_asset.get("status") or "ENCODING").upper()
 
-        return {
-            "media_id": media_id,
-            "post_id": post_id,
-            "provider": self.provider_name,
-            "provider_asset_id": provider_asset_id,
-            "playback_id": playback_id,
-            "status": "READY",
-        }
+    def _local_signed_token(self, uid: str, expires_at: int) -> str | None:
+        if not self.signing_key_id or not self.signing_private_key_b64:
+            return None
+        try:
+            import jwt
+
+            private_key = base64.b64decode(self.signing_private_key_b64).decode("utf-8")
+            now = int(time.time())
+            return str(
+                jwt.encode(
+                    {"sub": uid, "kid": self.signing_key_id, "exp": expires_at, "nbf": now - 5},
+                    private_key,
+                    algorithm="RS256",
+                    headers={"kid": self.signing_key_id},
+                )
+            )
+        except Exception as exc:
+            logger.warning("Local Cloudflare Stream token signing failed: %s", type(exc).__name__)
+            return None
+
+    def _signed_token(self, uid: str, expires_at: int) -> str:
+        token = self._local_signed_token(uid, expires_at)
+        if token:
+            return token
+        result = self._api_request(
+            "POST",
+            f"/{uid}/token",
+            json_body={"exp": expires_at, "downloadable": False},
+        )
+        token = str(result.get("token") or "").strip()
+        if not token:
+            raise RuntimeError("cloudflare_stream_token_missing")
+        return token
 
     def get_playback_info(
         self,
@@ -380,22 +546,57 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
                 "delivery_mode": "DENIED",
             }
 
-        playback_id = media_asset.get("playback_id")
-        subdomain = self.subdomain or f"customer-{self.account_id[:8]}"
-        hls_url = f"https://{subdomain}.cloudflarestream.com/{playback_id}/manifest/video.m3u8"
+        if not self.is_configured():
+            return SanitizedMP4DeliveryProvider().get_playback_info(
+                media_asset, viewer_id, viewer_role, expires_seconds
+            )
+
+        status = str(media_asset.get("status") or "").upper()
+        if status != "READY":
+            status = self._refresh_stream_status(media_asset)
+        if status != "READY":
+            return SanitizedMP4DeliveryProvider().get_playback_info(
+                media_asset, viewer_id, viewer_role, expires_seconds
+            )
+
+        uid = str(media_asset.get("playback_id") or media_asset.get("provider_asset_id") or "").strip()
+        if not uid:
+            return SanitizedMP4DeliveryProvider().get_playback_info(
+                media_asset, viewer_id, viewer_role, expires_seconds
+            )
+
         ttl = get_playback_ttl(expires_seconds)
         expires_at = int(time.time()) + ttl
+        try:
+            token = self._signed_token(uid, expires_at)
+        except Exception as exc:
+            logger.warning(
+                "Cloudflare Stream token minting failed for media %s: %s",
+                media_asset.get("media_id"),
+                type(exc).__name__,
+            )
+            return SanitizedMP4DeliveryProvider().get_playback_info(
+                media_asset, viewer_id, viewer_role, expires_seconds
+            )
 
         poster_ref = media_asset.get("poster_reference")
-        poster_delivery = resolve_media_delivery(poster_ref, viewer_id=viewer_id, viewer_role=viewer_role) if poster_ref else {}
-
+        poster_delivery = (
+            resolve_media_delivery(
+                poster_ref,
+                viewer_id=viewer_id,
+                viewer_role=viewer_role,
+                expires_seconds=expires_seconds,
+            )
+            if poster_ref
+            else {}
+        )
         return {
             "media_id": media_asset.get("media_id"),
             "post_id": media_asset.get("post_id"),
             "provider": self.provider_name,
-            "playback_id": playback_id,
+            "playback_id": uid,
             "delivery_type": "HLS",
-            "playback_url": hls_url,
+            "playback_url": f"https://{self._stream_host}/{token}/manifest/video.m3u8",
             "playback_expires_at": expires_at,
             "poster_url": poster_delivery.get("url"),
             "duration_ms": media_asset.get("duration_ms"),
