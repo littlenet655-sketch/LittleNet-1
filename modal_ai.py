@@ -210,7 +210,11 @@ def moderate_image_upload_cpu(
                     marker.write_text("ready", encoding="utf-8")
                 model_cache.commit()
             except Exception:
-                pass
+                for marker in missing_markers:
+                    try:
+                        marker.unlink(missing_ok=True)
+                    except Exception:
+                        pass
 
         return {
             "ok": True,
