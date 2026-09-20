@@ -121,6 +121,66 @@ def test_rank_candidates_evaluates_curated_feedback():
         assert ranked[1]['source_id'] == 102
 
 
+def test_rank_candidates_does_not_load_local_clip_by_default(monkeypatch):
+    monkeypatch.delenv('LITTLENET_ENABLE_LOCAL_RECOMMENDATION_MODEL', raising=False)
+    rows = [
+        {
+            'source_type': 'CURATED',
+            'source_id': 1,
+            'content_id': 1,
+            'title': 'Space science',
+            'caption': 'Planets and stars',
+            'category': 'science',
+            'moderation_status': 'ALLOWED',
+            'is_safe': True,
+        }
+    ]
+
+    with patch('services.recommendation._safe_rank_candidates', side_effect=lambda cid, r: r), \
+         patch('services.recommendation.signal_scores', return_value={}), \
+         patch('services.recommendation._profile_terms', return_value=(['science'], 'science')), \
+         patch('safety.remote_client.enabled', return_value=False), \
+         patch('safety.semantic_service.rank_texts') as local_rank:
+        ranked = rank_candidates(cid=42, rows=rows)
+
+    assert ranked[0]['source_id'] == 1
+    local_rank.assert_not_called()
+
+
+def test_cpu_fallback_prefers_fresh_relevant_content(monkeypatch):
+    rows = [
+        {
+            'source_type': 'CURATED',
+            'source_id': 1,
+            'content_id': 1,
+            'title': 'Science experiment',
+            'caption': 'Fun science',
+            'category': 'science',
+            'created_at': '2026-09-20T00:00:00Z',
+            'ranking_metadata': {'editorial_weight': 1.0, 'likes': 5, 'comments_count': 2},
+        },
+        {
+            'source_type': 'CURATED',
+            'source_id': 2,
+            'content_id': 2,
+            'title': 'Science experiment',
+            'caption': 'Fun science',
+            'category': 'science',
+            'created_at': '2025-01-01T00:00:00Z',
+            'ranking_metadata': {'editorial_weight': 1.0, 'likes': 5, 'comments_count': 2},
+        },
+    ]
+
+    with patch('services.recommendation._safe_rank_candidates', side_effect=lambda cid, r: r), \
+         patch('services.recommendation.signal_scores', return_value={}), \
+         patch('services.recommendation._profile_terms', return_value=(['science'], 'science')), \
+         patch('safety.remote_client.enabled', return_value=True), \
+         patch('safety.remote_client.rank_texts', return_value=[]):
+        ranked = rank_candidates(cid=42, rows=rows)
+
+    assert ranked[0]['source_id'] == 1
+
+
 # ---------------------------------------------------------------------------
 # 3. P8 Diversity and Balance Reranking
 # ---------------------------------------------------------------------------
