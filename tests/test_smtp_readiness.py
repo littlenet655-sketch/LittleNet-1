@@ -129,6 +129,7 @@ def test_resend_preflight_authenticates_and_checks_verified_littlenet_domain():
     with patch.dict(os.environ, {
         'RESEND_API_KEY': 're_test_key_123',
         'RESEND_FROM_EMAIL': 'no-reply@littlenet.in',
+        'RESEND_WEBHOOK_SECRET': 'whsec_dGVzdA==',
     }, clear=True):
         with patch('urllib.request.urlopen', return_value=mock_resp) as mock_urlopen:
             result = validate_resend_production()
@@ -139,6 +140,29 @@ def test_resend_preflight_authenticates_and_checks_verified_littlenet_domain():
     request = mock_urlopen.call_args[0][0]
     assert request.full_url == 'https://api.resend.com/domains'
     assert request.headers.get('Authorization') == 'Bearer re_test_key_123'
+
+
+
+def test_resend_preflight_requires_delivery_webhook_secret():
+    mock_resp = MagicMock()
+    mock_resp.status = 200
+    mock_resp.__enter__.return_value = mock_resp
+    mock_resp.read.return_value = json.dumps({
+        'data': [{'name': 'littlenet.in', 'status': 'verified'}],
+    }).encode('utf-8')
+
+    with patch.dict(os.environ, {
+        'RESEND_API_KEY': 're_test_key_123',
+        'RESEND_FROM_EMAIL': 'no-reply@littlenet.in',
+    }, clear=True):
+        with patch('urllib.request.urlopen', return_value=mock_resp):
+            result = validate_resend_production()
+
+    assert result['ok'] is False
+    assert result['authentication'] is True
+    assert result['domain_status'] == 'verified'
+    assert result['webhook_configured'] is False
+    assert 'RESEND_WEBHOOK_SECRET' in result['error']
 
 
 def test_resend_preflight_rejects_api_key_without_printing_it():
