@@ -970,6 +970,41 @@ def register_mobile_api(bp):
             resp["dev_code"] = dev_code
         return jsonify(resp), (200 if ok else 503)
 
+    @bp.route("/api/mobile/v1/auth/parent/email-status", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("60 per 15 minutes")
+    def mobile_parent_email_status():
+        data = request.get_json(silent=True) or {}
+        pending = _load_pending_parent(str(data.get("pending_token") or ""))
+        if not pending:
+            return jsonify(error="pending_verification_expired"), 401
+
+        email = str(pending.get("email") or "").strip().lower()
+        if not email:
+            return jsonify(ok=True, status="UNKNOWN", delivery_failed=False)
+
+        try:
+            row = fetch_one(
+                """SELECT status, updated_at
+                   FROM email_delivery_events
+                   WHERE LOWER(recipient)=LOWER(%s)
+                     AND email_type='PARENT_OTP'
+                   ORDER BY updated_at DESC
+                   LIMIT 1""",
+                (email,),
+            )
+        except Exception:
+            # Older deployments may not have the observability table until the
+            # release migration runs. Do not break OTP verification because of it.
+            row = None
+
+        status = str((row or {}).get("status") or "UNKNOWN").upper()
+        return jsonify(
+            ok=True,
+            status=status,
+            delivery_failed=status in {"BOUNCED", "SUPPRESSED", "FAILED", "COMPLAINED"},
+        )
+
     @bp.route("/api/mobile/v1/auth/forgot-password", methods=["POST"])
     @csrf.exempt
     @limiter.limit("10 per 15 minutes")
