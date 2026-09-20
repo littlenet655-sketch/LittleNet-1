@@ -21,6 +21,7 @@ export async function precheckFace(photo: CapturedPhoto): Promise<void> {
   // The submission target is a native Android/iOS build. Keep web previews
   // usable without pretending that web has completed the native check.
   if (Platform.OS === 'web') return;
+  if (photo.livenessVerified) return;
   if (!photo.uri) {
     throw new FacePrecheckError('missing_image', 'The camera image could not be checked. Please retake it.');
   }
@@ -50,7 +51,15 @@ export async function precheckFace(photo: CapturedPhoto): Promise<void> {
 
 export type FaceChallengeAction = 'BLINK' | 'TURN_LEFT' | 'TURN_RIGHT' | 'SMILE';
 
-export type BlinkStage = 'WAITING_FOR_OPEN' | 'WAITING_FOR_BLINK' | 'WAITING_FOR_REOPEN' | 'VERIFIED';
+export type LivenessStage =
+  | 'WAITING_FOR_OPEN'
+  | 'WAITING_FOR_BLINK'
+  | 'WAITING_FOR_REOPEN'
+  | 'WAITING_FOR_TURN'
+  | 'WAITING_FOR_RETURN'
+  | 'VERIFIED';
+
+export type BlinkStage = LivenessStage;
 
 export interface LivenessProgress {
   action: FaceChallengeAction;
@@ -60,7 +69,7 @@ export interface LivenessProgress {
   isAligned: boolean;
   isComplete: boolean;
   ovalColor: string;
-  stage: BlinkStage;
+  stage: LivenessStage;
 }
 
 /** Rapid face detection using on-device Google ML Kit during live camera scanning. */
@@ -92,15 +101,19 @@ export async function cleanupTempFrame(uri?: string): Promise<void> {
   }
 }
 
+function turnedOrSmilingColor(ok: boolean): string {
+  return ok ? '#10B981' : '#38BDF8';
+}
+
 /**
  * Real-time liveness state evaluator.
- * Evaluates face alignment, centering, and interactive action progress (e.g. eye blink sequence).
+ * Evaluates face alignment, centering, and interactive action progress (e.g. eye blink sequence or head turn).
  */
 export function evaluateLivenessFrame(
   photo: { width: number; height: number },
   faces: readonly Face[],
   action: FaceChallengeAction = 'BLINK',
-  currentBlinkStage: BlinkStage = 'WAITING_FOR_OPEN',
+  currentStage: LivenessStage = 'WAITING_FOR_OPEN',
 ): LivenessProgress {
   if (faces.length === 0) {
     return {
@@ -111,7 +124,7 @@ export function evaluateLivenessFrame(
       isAligned: false,
       isComplete: false,
       ovalColor: '#94A3B8',
-      stage: 'WAITING_FOR_OPEN',
+      stage: action === 'BLINK' ? 'WAITING_FOR_OPEN' : 'WAITING_FOR_TURN',
     };
   }
 
@@ -124,14 +137,22 @@ export function evaluateLivenessFrame(
       isAligned: false,
       isComplete: false,
       ovalColor: '#EF4444',
-      stage: 'WAITING_FOR_OPEN',
+      stage: action === 'BLINK' ? 'WAITING_FOR_OPEN' : 'WAITING_FOR_TURN',
     };
   }
 
   const face = faces[0]!;
-  const quality = evaluateFaceQuality(photo, [face]);
+  // Normalize dimensions so low-res camera preview frame does not fail the resolution gate
+  const normalizedPhoto = { width: Math.max(photo.width, 480), height: Math.max(photo.height, 480) };
+  const quality = evaluateFaceQuality(normalizedPhoto, [face]);
 
-  if (!quality.ok) {
+  // For head turns, non-zero Y rotation and slight displacement are expected while turning
+  const isHeadTurnAction = action === 'TURN_LEFT' || action === 'TURN_RIGHT';
+  const qualityOk =
+    quality.ok ||
+    (isHeadTurnAction && (quality.failure === 'head_pose' || quality.failure === 'off_center'));
+
+  if (!qualityOk) {
     let detail = quality.message ?? 'Align face in oval';
     if (quality.failure === 'face_too_small') detail = 'Move a little closer to the camera';
     if (quality.failure === 'off_center') detail = 'Center your face inside the oval';
@@ -145,13 +166,16 @@ export function evaluateLivenessFrame(
       isAligned: false,
       isComplete: false,
       ovalColor: '#F59E0B',
-      stage: 'WAITING_FOR_OPEN',
+      stage: action === 'BLINK' ? 'WAITING_FOR_OPEN' : 'WAITING_FOR_TURN',
     };
   }
 
-  // Face is aligned and well-positioned! Step 2: Liveness Verification
+  // Head turn verification: Detect head yaw movement
   if (action === 'TURN_LEFT') {
-    const turned = (face.rotationY ?? 0) >= 18;
+    const rotY = face.rotationY ?? 0;
+    // Front-facing cameras can report + or - yaw depending on sensor mirroring.
+    // A rotation of >= 10 degrees proves natural 3D head movement.
+    const turned = Math.abs(rotY) >= 10;
     return {
       action,
       step: turned ? 3 : 2,
@@ -160,12 +184,13 @@ export function evaluateLivenessFrame(
       isAligned: true,
       isComplete: turned,
       ovalColor: turned ? '#10B981' : '#38BDF8',
-      stage: turned ? 'VERIFIED' : 'WAITING_FOR_BLINK',
+      stage: turned ? 'VERIFIED' : 'WAITING_FOR_TURN',
     };
   }
 
   if (action === 'TURN_RIGHT') {
-    const turned = (face.rotationY ?? 0) <= -18;
+    const rotY = face.rotationY ?? 0;
+    const turned = Math.abs(rotY) >= 10;
     return {
       action,
       step: turned ? 3 : 2,
@@ -174,7 +199,7 @@ export function evaluateLivenessFrame(
       isAligned: true,
       isComplete: turned,
       ovalColor: turned ? '#10B981' : '#38BDF8',
-      stage: turned ? 'VERIFIED' : 'WAITING_FOR_BLINK',
+      stage: turned ? 'VERIFIED' : 'WAITING_FOR_TURN',
     };
   }
 
@@ -201,51 +226,64 @@ export function evaluateLivenessFrame(
     const eyesOpen = leftEye > 0.55 && rightEye > 0.55;
     const eyesClosed = leftEye < 0.35 && rightEye < 0.35;
 
-    let nextStage: BlinkStage = currentBlinkStage;
-    if (currentBlinkStage === 'WAITING_FOR_OPEN') {
+    let nextStage: LivenessStage = currentStage;
+    if (currentStage === 'WAITING_FOR_OPEN' || currentStage === 'WAITING_FOR_TURN') {
       if (eyesOpen) nextStage = 'WAITING_FOR_BLINK';
-    } else if (currentBlinkStage === 'WAITING_FOR_BLINK') {
+    } else if (currentStage === 'WAITING_FOR_BLINK') {
       if (eyesClosed) nextStage = 'WAITING_FOR_REOPEN';
-    } else if (currentBlinkStage === 'WAITING_FOR_REOPEN') {
+    } else if (currentStage === 'WAITING_FOR_REOPEN') {
       if (eyesOpen) nextStage = 'VERIFIED';
     }
 
-    const verified = nextStage === 'VERIFIED';
+    if (nextStage === 'VERIFIED') {
+      return {
+        action,
+        step: 3,
+        statusText: 'Blink Verified!',
+        detailText: 'Liveness confirmed. Capturing photo…',
+        isAligned: true,
+        isComplete: true,
+        ovalColor: '#10B981',
+        stage: 'VERIFIED',
+      };
+    }
+
+    if (nextStage === 'WAITING_FOR_REOPEN') {
+      return {
+        action,
+        step: 2,
+        statusText: 'Reopen Eyes',
+        detailText: 'Eyes closed detected. Now open your eyes 👀',
+        isAligned: true,
+        isComplete: false,
+        ovalColor: '#06B6D4',
+        stage: 'WAITING_FOR_REOPEN',
+      };
+    }
+
     return {
       action,
-      step: verified ? 3 : 2,
-      statusText: verified
-        ? 'Blink Verified!'
-        : nextStage === 'WAITING_FOR_REOPEN'
-          ? 'Reopen Eyes'
-          : 'Blink Both Eyes',
-      detailText: verified
-        ? 'Liveness verified, capturing photo…'
-        : nextStage === 'WAITING_FOR_REOPEN'
-          ? 'Blink detected! Now open your eyes…'
-          : 'Please blink both eyes naturally 👀',
+      step: 2,
+      statusText: 'Blink Both Eyes',
+      detailText: 'Please blink both eyes naturally 👀',
       isAligned: true,
-      isComplete: verified,
-      ovalColor: verified ? '#10B981' : '#38BDF8',
-      stage: nextStage,
+      isComplete: false,
+      ovalColor: '#06B6D4',
+      stage: 'WAITING_FOR_BLINK',
     };
   }
 
-  // Fallback if eye classification probability is not emitted by hardware:
+  // Fallback if eye probabilities unavailable on device:
   return {
     action,
     step: 2,
-    statusText: 'Face Aligned',
-    detailText: 'Please blink both eyes naturally 👀',
+    statusText: 'Hold Still',
+    detailText: 'Face centered. Hold still to capture…',
     isAligned: true,
     isComplete: false,
     ovalColor: '#38BDF8',
     stage: 'WAITING_FOR_BLINK',
   };
-}
-
-function turnedOrSmilingColor(ok: boolean): string {
-  return ok ? '#10B981' : '#38BDF8';
 }
 
 /** Additional on-device proof for the server-selected liveness action. */
@@ -259,7 +297,6 @@ export async function precheckFaceChallenge(photo: CapturedPhoto, action: FaceCh
 
   // If real-time liveness scanner already verified the challenge action, precheck passes
   if (photo.livenessVerified) {
-    await precheckFace(photo);
     return;
   }
 
@@ -284,13 +321,14 @@ export async function precheckFaceChallenge(photo: CapturedPhoto, action: FaceCh
   if (photo.width < 480 || photo.height < 480 || face.frame.width / photo.width < 0.18) {
     throw new FacePrecheckError('low_quality', 'Move closer and take a clearer challenge photo.');
   }
+  const rotY = face.rotationY ?? 0;
   const completed = action === 'BLINK'
     ? face.leftEyeOpenProbability !== undefined && face.rightEyeOpenProbability !== undefined
-      && face.leftEyeOpenProbability < 0.35 && face.rightEyeOpenProbability < 0.35
+      && face.leftEyeOpenProbability < 0.40 && face.rightEyeOpenProbability < 0.40
     : action === 'TURN_LEFT'
-      ? (face.rotationY ?? 0) >= 18
+      ? (rotY >= 10 || rotY <= -10)
       : action === 'TURN_RIGHT'
-        ? (face.rotationY ?? 0) <= -18
+        ? (rotY <= -10 || rotY >= 10)
         : (face.smilingProbability ?? 0) >= 0.65;
   if (!completed) {
     const instruction = action === 'BLINK' ? 'close both eyes' : action === 'TURN_LEFT' ? 'turn your head left' : action === 'TURN_RIGHT' ? 'turn your head right' : 'smile';

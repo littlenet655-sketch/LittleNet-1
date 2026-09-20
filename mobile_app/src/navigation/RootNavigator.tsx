@@ -88,26 +88,40 @@ function ChildGateSync() {
   const { session } = useAuth();
 
   useEffect(() => {
-    const state = navigation.getState();
-    const index = state?.index ?? 0;
-    const current = state?.routes[index]?.name as keyof ChildStackParamList | undefined;
-    if (!current) return;
-    const target = resolveChildRoute(session?.onboarding, session?.user.quiz_required ?? true, current);
-    if (current === target) return;
-    navigation.reset({
-      index: 0,
-      routes: [{ name: target } as never],
-    });
+    const timer = setTimeout(() => {
+      try {
+        const state = navigation.getState();
+        const index = state?.index ?? 0;
+        const current = state?.routes[index]?.name as keyof ChildStackParamList | undefined;
+        if (!current) return;
+        const target = resolveChildRoute(session?.onboarding, session?.user.quiz_required ?? true, current);
+        if (current === target) return;
+        navigation.reset({
+          index: 0,
+          routes: [{ name: target } as never],
+        });
+      } catch {
+        // Suppress unhandled reset during mid-transition unmount
+      }
+    }, 150);
+
+    return () => clearTimeout(timer);
   }, [navigation, session?.onboarding, session?.user.quiz_required]);
 
   return null;
 }
 
 function ChildNavigator() {
-  const { signOut } = useAuth();
+  const { session, signOut } = useAuth();
   const [activeLock, setActiveLock] = useState<string | null>(null);
   const handleGateChange = useCallback((gate: string | null) => setActiveLock(gate), []);
   useScreenTimeHeartbeat(handleGateChange);
+
+  const initialRoute = resolveChildRoute(
+    session?.onboarding,
+    session?.user.quiz_required ?? true,
+    'KidsTabs',
+  );
 
   if (activeLock) {
     const quiet = activeLock === 'quiet_hours';
@@ -121,7 +135,7 @@ function ChildNavigator() {
   }
 
   return (
-    <ChildStack.Navigator initialRouteName="KidsHome" screenOptions={cleanStackOptions}>
+    <ChildStack.Navigator initialRouteName={initialRoute} screenOptions={cleanStackOptions}>
       <ChildStack.Screen name="FaceEnroll" component={withGateSync(FaceEnrollScreen)} options={{ title: 'Face setup' }} />
       <ChildStack.Screen name="Quiz" component={withGateSync(QuizScreen)} options={{ title: 'Safety quiz' }} />
       <ChildStack.Screen name="KidsHome" component={withGateSync(KidsHomeScreen)} options={{ title: 'Home' }} />

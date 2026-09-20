@@ -24,7 +24,6 @@ export function KidsTabsHost(props: ChildScreenProps<'KidsTabs'>) {
           {active === 'ReelsTab' ? <ReelsScreen navigation={props.navigation} route={{ ...props.route, name: 'ReelsTab' } as never} /> : null}
           {active === 'ProfileTab' ? <OwnProfileScreen navigation={props.navigation} route={{ ...props.route, name: 'ProfileTab' } as never} /> : null}
           {active !== 'DiscoverTab' && active !== 'CreateTab' && active !== 'ReelsTab' && active !== 'ProfileTab' ? <FeedScreen navigation={props.navigation} route={props.route} /> : null}
-          <Button label="Log out" variant="secondary" onPress={() => void signOut()} />
         </>
       )}
     />

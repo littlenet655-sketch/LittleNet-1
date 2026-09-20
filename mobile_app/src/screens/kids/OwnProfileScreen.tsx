@@ -14,7 +14,7 @@ import { colors, type } from '../../ui/tokens';
 type Tab = 'posts' | 'saved' | 'edit';
 
 export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
-  const { session } = useAuth();
+  const { session, signOut } = useAuth();
   const [tab, setTab] = useState<Tab>('posts');
   const [bio, setBio] = useState('');
   const [name, setName] = useState('');
@@ -65,7 +65,12 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
             <Pressable key={t} onPress={() => setTab(t)}><Text style={[styles.tab, tab === t && styles.tabActive]}>{t.toUpperCase()}</Text></Pressable>
           ))}
         </View>
-          <View style={styles.actions}><Button label="Edit profile" variant="secondary" onPress={() => nav.navigate('EditProfile', {})} /><Button label="Saved content" variant="secondary" onPress={() => nav.navigate('SavedContent', {})} /><Button label="Followers" variant="secondary" onPress={() => nav.navigate('Connections', { mode: 'followers' })} /></View>
+          <View style={styles.actions}>
+            <Button label="Edit profile" variant="secondary" onPress={() => nav.navigate('EditProfile', {})} />
+            <Button label="Saved content" variant="secondary" onPress={() => nav.navigate('SavedContent', {})} />
+            <Button label="Followers" variant="secondary" onPress={() => nav.navigate('Connections', { mode: 'followers' })} />
+            <Button label="Log out" variant="secondary" onPress={() => void signOut()} />
+          </View>
         {tab === 'edit' ? (
           <Card>
             <Field label="Full name" value={name} onChangeText={setName} />
