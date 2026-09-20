@@ -178,7 +178,10 @@ def test_batch_impressions_contract(monkeypatch):
 
         # Valid batch payload
         executed_impressions = []
-        monkeypatch.setattr("services.curated_feed.record_feed_impression", lambda *a, **kw: executed_impressions.append((a, kw)))
+        monkeypatch.setattr(
+            "services.curated_feed.record_feed_impression",
+            lambda *a, **kw: (executed_impressions.append((a, kw)) or True),
+        )
         
         valid_payload = {'events': [
             {'session_id': 's1', 'source_type': 'REEL', 'source_id': 1, 'surface': 'REELS', 'watched_ms': 5000, 'completed': True},
