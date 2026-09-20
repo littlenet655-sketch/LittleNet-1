@@ -20,6 +20,7 @@ from services.video_delivery import (
     get_video_provider,
     probe_video_metadata,
     resolve_video_playback,
+    video_delivery_healthcheck,
 )
 
 
@@ -168,6 +169,34 @@ def test_cloudflare_stream_playback_fail_closed_unauthorized():
         assert res["playback_url"] is None
         assert res["delivery_mode"] == "DENIED"
 
+
+
+def test_video_delivery_healthcheck_private_r2_default(monkeypatch):
+    monkeypatch.delenv("CLOUDFLARE_STREAM_ENABLED", raising=False)
+    result = video_delivery_healthcheck()
+    assert result == {
+        "ok": True,
+        "provider": "R2_SANITIZED_MP4",
+        "adaptive_streaming": False,
+        "mode": "private_r2_fallback",
+    }
+
+
+def test_video_delivery_healthcheck_stream_api(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test")
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"success": True, "result": []}
+    monkeypatch.setattr("services.video_delivery.requests.get", lambda *a, **k: response)
+
+    result = video_delivery_healthcheck()
+    assert result["ok"] is True
+    assert result["provider"] == "CLOUDFLARE_STREAM"
+    assert result["mode"] == "api_verified"
 
 def test_push_notifications_privacy_filter():
     sent_payloads = []
