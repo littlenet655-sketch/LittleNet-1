@@ -44,6 +44,8 @@ web_image = (
             "LITTLENET_PRESIDIO_SPACY_MODEL": "en_core_web_sm",
             "LITTLENET_RESEND_FROM_EMAIL": "no-reply@littlenet.in",
             "LITTLENET_RESEND_DOMAIN_VERIFIED": "1",
+            "ENABLE_DEV_OTP": "0",
+            "CLOUDFLARE_STREAM_ENABLED": "0",
             "STRICT_PRODUCTION_PREFLIGHT": "1",
             "LITTLENET_USE_MODAL_QUEUE": "1",
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",

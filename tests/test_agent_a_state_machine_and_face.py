@@ -376,7 +376,7 @@ def test_v2_upload_complete_size_and_mime_validation(client):
 
         mock_fetch.side_effect = [
             {"user_id": 202, "role": "CHILD", "account_status": "ACTIVE", "age": 10, "is_approved": True}, # auth
-            {"embedding": _valid_vector()}, # face gate
+            {"embedding": _valid_vector(), "model_name": "Facenet512"}, # face gate
         ]
         res = client.post(f"/api/mobile/v2/uploads/{session_data['upload_id']}/complete", headers=headers, json={})
         assert res.status_code == 400
@@ -397,7 +397,7 @@ def test_v2_upload_complete_size_and_mime_validation(client):
 
         mock_fetch.side_effect = [
             {"user_id": 202, "role": "CHILD", "account_status": "ACTIVE", "age": 10, "is_approved": True}, # auth
-            {"embedding": _valid_vector()}, # face gate
+            {"embedding": _valid_vector(), "model_name": "Facenet512"}, # face gate
         ]
         res = client.post(f"/api/mobile/v2/uploads/{session_data['upload_id']}/complete", headers=headers, json={})
         assert res.status_code == 400
@@ -435,7 +435,7 @@ def test_v2_upload_complete_queue_spawn_failure_retryable_503(client):
 
         mock_fetch.side_effect = [
             {"user_id": 202, "role": "CHILD", "account_status": "ACTIVE", "age": 10, "is_approved": True}, # auth
-            {"embedding": _valid_vector()}, # face gate
+            {"embedding": _valid_vector(), "model_name": "Facenet512"}, # face gate
         ]
         res = client.post(f"/api/mobile/v2/uploads/{session_data['upload_id']}/complete", headers=headers, json={})
         assert res.status_code == 503

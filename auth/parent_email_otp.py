@@ -20,6 +20,14 @@ OTP_TTL_MINUTES = 10
 OTP_MAX_ATTEMPTS = 5
 
 
+def _dev_otp_enabled() -> bool:
+    """Return True only for an explicit non-production development override."""
+    return (
+        not Config._PRODUCTION
+        and os.getenv("ENABLE_DEV_OTP", "0").strip() == "1"
+    )
+
+
 def _ensure_table():
     conn = get_db_connection()
     try:
@@ -104,8 +112,8 @@ def _send_code(user_id, email, full_name, code):
         'LittleNet: Your 6-digit parent verification code',
         body,
     ))
-    if not sent or not Config._PRODUCTION:
-        print(f"\n{'='*70}\n[PARENT OTP] Verification code for {email} (User {user_id}): {code}\n{'='*70}\n")
+    if _dev_otp_enabled():
+        print(f"\n{'='*70}\n[PARENT OTP] Development verification code for User {user_id}: {code}\n{'='*70}\n")
     return sent
 
 
@@ -158,7 +166,7 @@ def begin_parent_registration(form):
         conn.close()
 
     sent = _send_code(user_id, email, full_name, code)
-    dev_code = code if (not sent or not Config._PRODUCTION or os.getenv('ENABLE_DEV_OTP', '1') == '1') else None
+    dev_code = code if _dev_otp_enabled() else None
     return {'user_id': user_id, 'email': email, 'full_name': full_name, 'email_sent': sent, 'dev_code': dev_code}
 
 
@@ -260,7 +268,7 @@ def resend_parent_email_otp(user_id, with_code=False):
         conn.close()
 
     sent = _send_code(user_id, user['email'], user['full_name'], code)
-    dev_code = code if (not sent or not Config._PRODUCTION or os.getenv('ENABLE_DEV_OTP', '1') == '1') else None
+    dev_code = code if _dev_otp_enabled() else None
     if not sent and not dev_code:
         if os.getenv('RESEND_API_KEY'):
             err = 'Email delivery failed. Check the verified Resend sender/domain configuration and try again.'

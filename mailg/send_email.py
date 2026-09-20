@@ -10,6 +10,43 @@ EXPECTED_RESEND_DOMAIN = 'littlenet.in'
 RESEND_API_BASE = 'https://api.resend.com'
 
 
+def _email_type_for_subject(subject: str) -> str:
+    subject_l = str(subject or '').lower()
+    if 'parent verification code' in subject_l:
+        return 'PARENT_OTP'
+    if 'password reset' in subject_l:
+        return 'PASSWORD_RESET'
+    if 'safety' in subject_l:
+        return 'SAFETY_NOTICE'
+    return 'TRANSACTIONAL'
+
+
+def _record_provider_acceptance(provider_message_id: str | None, receiver: str, subject: str) -> None:
+    """Record provider acceptance without logging OTP bodies or secrets."""
+    if not provider_message_id:
+        return
+    try:
+        from database.connection import execute
+        execute(
+            """
+            INSERT INTO email_delivery_events(
+                provider_message_id, recipient, provider, email_type, status,
+                created_at, updated_at, last_event_at
+            )
+            VALUES(%s,%s,'RESEND',%s,'ACCEPTED',NOW(),NOW(),NOW())
+            ON CONFLICT(provider_message_id) DO UPDATE SET
+                recipient=EXCLUDED.recipient,
+                email_type=EXCLUDED.email_type,
+                status='ACCEPTED',
+                updated_at=NOW(),
+                last_event_at=NOW()
+            """,
+            (provider_message_id, str(receiver).strip().lower(), _email_type_for_subject(subject)),
+        )
+    except Exception as exc:
+        print(f'[RESEND WARNING] Delivery-state recording failed: {type(exc).__name__}.')
+
+
 def _resend_from_email() -> str:
     """Return the configured LittleNet-owned Resend sender address."""
     return (
@@ -42,6 +79,7 @@ def validate_resend_production():
         'domain': EXPECTED_RESEND_DOMAIN,
         'domain_status': None,
         'authentication': False,
+        'webhook_configured': bool((os.getenv('RESEND_WEBHOOK_SECRET') or '').strip()),
         'is_production_ready': False,
     }
 
@@ -114,6 +152,13 @@ def validate_resend_production():
         )
         return result
 
+    if not result['webhook_configured']:
+        result['error'] = (
+            'RESEND_WEBHOOK_SECRET is required so LittleNet can distinguish '
+            'provider acceptance from delivered, bounced, failed, or suppressed email.'
+        )
+        return result
+
     result.update({
         'ok': True,
         'mail_mode': 'resend_verified',
@@ -154,6 +199,14 @@ def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_nam
     try:
         with urllib.request.urlopen(request, timeout=15) as response:
             if response.status in (200, 201):
+                provider_message_id = None
+                try:
+                    response_payload = json.loads(response.read().decode('utf-8'))
+                    if isinstance(response_payload, dict):
+                        provider_message_id = str(response_payload.get('id') or '').strip() or None
+                except (ValueError, TypeError, UnicodeDecodeError, AttributeError):
+                    provider_message_id = None
+                _record_provider_acceptance(provider_message_id, receiver, subject)
                 return True
             print(f'[RESEND WARNING] Unexpected status {response.status}.')
     except urllib.error.HTTPError as exc:

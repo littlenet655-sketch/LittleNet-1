@@ -450,6 +450,22 @@ CREATE INDEX IF NOT EXISTS idx_item_embeddings_source ON item_embeddings(source_
 -- Performance Composite Indexes
 CREATE INDEX IF NOT EXISTS idx_posts_feed_eligible ON posts(moderation_status, is_safe, is_story, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_reels_eligible ON posts(moderation_status, is_safe, is_story, is_reel, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_content_impressions_child_shown ON content_impressions(child_id, shown_at DESC);
 CREATE INDEX IF NOT EXISTS idx_recommendation_signals_child_src ON recommendation_signals(child_id, source_type, source_id);
-CREATE INDEX IF NOT EXISTS idx_feed_sessions_child_exp ON feed_sessions(child_id, surface, expires_at);
+
+
+-- Transactional email delivery lifecycle (provider acceptance != delivery).
+CREATE TABLE IF NOT EXISTS email_delivery_events (
+  event_id BIGSERIAL PRIMARY KEY,
+  provider_message_id TEXT UNIQUE NOT NULL,
+  recipient TEXT NOT NULL,
+  provider VARCHAR(32) NOT NULL DEFAULT 'RESEND',
+  email_type VARCHAR(40) NOT NULL DEFAULT 'TRANSACTIONAL',
+  status VARCHAR(30) NOT NULL DEFAULT 'ACCEPTED'
+    CHECK (status IN ('ACCEPTED','SENT','DELIVERED','DELIVERY_DELAYED','BOUNCED','SUPPRESSED','FAILED','COMPLAINED')),
+  failure_reason TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_event_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_email_delivery_recipient_status
+  ON email_delivery_events(recipient, status, updated_at DESC);

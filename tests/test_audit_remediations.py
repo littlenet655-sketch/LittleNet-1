@@ -88,10 +88,8 @@ def test_revoked_token_is_rejected(monkeypatch):
     user = {"user_id": 101, "role": "CHILD", "account_status": "ACTIVE", "full_name": "Child"}
     token = _issue_token(user)
 
-    monkeypatch.setattr(
-        "mobile.api.fetch_one",
-        lambda query, params=(): {"token_hash": "exists"} if "mobile_token_revocations" in query else user,
-    )
+    monkeypatch.setattr("mobile.api._mobile_token_revoked", lambda token_value: True)
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): user)
 
     with app.test_client() as client:
         resp = client.get(

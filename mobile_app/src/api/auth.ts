@@ -84,6 +84,23 @@ export function resendParentEmail(pendingToken: string): Promise<{ ok: boolean; 
   return post(routes.parentResendEmail, { pending_token: pendingToken });
 }
 
+export type ParentEmailDeliveryStatus =
+  | 'UNKNOWN'
+  | 'ACCEPTED'
+  | 'SENT'
+  | 'DELIVERED'
+  | 'DELIVERY_DELAYED'
+  | 'BOUNCED'
+  | 'SUPPRESSED'
+  | 'FAILED'
+  | 'COMPLAINED';
+
+export function fetchParentEmailStatus(
+  pendingToken: string,
+): Promise<{ ok: boolean; status: ParentEmailDeliveryStatus; delivery_failed: boolean }> {
+  return post(routes.parentEmailStatus, { pending_token: pendingToken });
+}
+
 /** Guardian liveness/adult verification. Sends a live camera JPEG as base64 JSON. Allows 60s for serverless AI cold start. */
 export function verifyParentLiveness(pendingToken: string, photoB64: string): Promise<LoginResponse> {
   return post<LoginResponse>(routes.parentVerifyLiveness, { pending_token: pendingToken, photo_b64: photoB64 }, undefined, 60000);

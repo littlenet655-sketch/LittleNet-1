@@ -171,6 +171,21 @@ def _load_claims():
         return None
 
 
+def _mobile_token_revoked(token: str) -> bool:
+    """Check the dedicated revocation store independently of route data lookups."""
+    if not token:
+        return False
+    from database.connection import fetch_one as db_fetch_one
+
+    thash = hashlib.sha256(token.encode()).hexdigest()
+    return bool(
+        db_fetch_one(
+            "SELECT 1 FROM mobile_token_revocations WHERE token_hash=%s",
+            (thash,),
+        )
+    )
+
+
 def _require_mobile(*roles):
     allowed = {r.upper() for r in roles}
 
@@ -181,12 +196,8 @@ def _require_mobile(*roles):
             if not claims:
                 return jsonify(error="mobile_auth_required"), 401
             token = _bearer_token()
-            if token:
-                import hashlib
-                thash = hashlib.sha256(token.encode()).hexdigest()
-                revoked = fetch_one("SELECT 1 FROM mobile_token_revocations WHERE token_hash=%s", (thash,))
-                if revoked:
-                    return jsonify(error="token_revoked"), 401
+            if _mobile_token_revoked(token):
+                return jsonify(error="token_revoked"), 401
             user = fetch_one(
                 "SELECT user_id,username,full_name,email,role,age,account_status,session_version FROM users WHERE user_id=%s",
                 (int(claims.get("uid") or 0),),
@@ -969,6 +980,41 @@ def register_mobile_api(bp):
         if dev_code:
             resp["dev_code"] = dev_code
         return jsonify(resp), (200 if ok else 503)
+
+    @bp.route("/api/mobile/v1/auth/parent/email-status", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("60 per 15 minutes")
+    def mobile_parent_email_status():
+        data = request.get_json(silent=True) or {}
+        pending = _load_pending_parent(str(data.get("pending_token") or ""))
+        if not pending:
+            return jsonify(error="pending_verification_expired"), 401
+
+        email = str(pending.get("email") or "").strip().lower()
+        if not email:
+            return jsonify(ok=True, status="UNKNOWN", delivery_failed=False)
+
+        try:
+            row = fetch_one(
+                """SELECT status, updated_at
+                   FROM email_delivery_events
+                   WHERE LOWER(recipient)=LOWER(%s)
+                     AND email_type='PARENT_OTP'
+                   ORDER BY updated_at DESC
+                   LIMIT 1""",
+                (email,),
+            )
+        except Exception:
+            # Older deployments may not have the observability table until the
+            # release migration runs. Do not break OTP verification because of it.
+            row = None
+
+        status = str((row or {}).get("status") or "UNKNOWN").upper()
+        return jsonify(
+            ok=True,
+            status=status,
+            delivery_failed=status in {"BOUNCED", "SUPPRESSED", "FAILED", "COMPLAINED"},
+        )
 
     @bp.route("/api/mobile/v1/auth/forgot-password", methods=["POST"])
     @csrf.exempt

@@ -38,11 +38,14 @@ def test_video_delivery_provider_selection(monkeypatch):
     assert isinstance(p, SanitizedMP4DeliveryProvider)
     assert p.provider_name == "R2_SANITIZED_MP4"
 
+    # Credentials alone must never activate the incomplete Stream adapter.
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
     monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
     monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
     p2 = get_video_provider()
-    assert isinstance(p2, CloudflareStreamDeliveryProvider)
-    assert p2.provider_name == "CLOUDFLARE_STREAM"
+    assert isinstance(p2, SanitizedMP4DeliveryProvider)
+    assert p2.provider_name == "R2_SANITIZED_MP4"
+    assert CloudflareStreamDeliveryProvider().is_configured() is False
 
 
 def test_sanitized_mp4_playback_authorized():
@@ -84,15 +87,14 @@ def test_cloudflare_stream_playback_fail_closed_unauthorized():
 def test_push_notifications_privacy_filter():
     sent_payloads = []
 
-    def mock_urlopen(req, timeout=None):
-        data = json.loads(req.data.decode("utf-8"))
-        sent_payloads.extend(data)
+    def mock_post(url, json=None, headers=None, timeout=None):
+        sent_payloads.extend(json or [])
         mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({"data": [{"status": "ok"}]}).encode("utf-8")
-        mock_resp.__enter__.return_value = mock_resp
+        mock_resp.raise_for_status.return_value = None
+        mock_resp.json.return_value = {"data": [{"status": "ok"}]}
         return mock_resp
 
-    with patch("urllib.request.urlopen", side_effect=mock_urlopen):
+    with patch("services.push_notifications.requests.post", side_effect=mock_post):
         tokens = ["ExponentPushToken[abc123xyz]"]
         leaky_data = {
             "postId": 42,

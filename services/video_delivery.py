@@ -254,9 +254,13 @@ class SanitizedMP4DeliveryProvider(VideoDeliveryProvider):
 
 
 class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
-    """Adaptive streaming provider using Cloudflare Stream (HLS/DASH).
+    """Reserved Cloudflare Stream adapter.
 
-    Activates when CLOUDFLARE_STREAM_ACCOUNT_ID and CLOUDFLARE_STREAM_API_TOKEN are configured.
+    The current repository does not yet perform real Stream ingestion, readiness
+    polling/webhook verification, or signed private playback token minting.
+    Production therefore keeps this provider disabled and uses the private R2
+    sanitized-MP4 provider until the real Stream contract is implemented and
+    verified end to end.
     """
 
     def __init__(self) -> None:
@@ -269,7 +273,14 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
         return "CLOUDFLARE_STREAM"
 
     def is_configured(self) -> bool:
-        return bool(self.account_id and self.api_token)
+        requested = os.getenv("CLOUDFLARE_STREAM_ENABLED", "0").strip() == "1"
+        if requested:
+            logger.error(
+                "CLOUDFLARE_STREAM_ENABLED=1 was requested, but the Stream adapter "
+                "is intentionally disabled until real ingestion/status/private-playback "
+                "integration is implemented and verified."
+            )
+        return False
 
     def ingest(
         self,
@@ -470,7 +481,15 @@ def resolve_video_playback(
 
     provider_name = asset.get("provider")
     if provider_name == "CLOUDFLARE_STREAM":
-        provider: VideoDeliveryProvider = CloudflareStreamDeliveryProvider()
+        stream_provider = CloudflareStreamDeliveryProvider()
+        # Historical hardening builds could have persisted placeholder Stream
+        # asset IDs before real Stream ingestion existed. Never construct a fake
+        # HLS URL from those rows: serve the already-sanitized private R2
+        # published reference until a verified Stream provider is available.
+        provider: VideoDeliveryProvider = (
+            stream_provider if stream_provider.is_configured()
+            else SanitizedMP4DeliveryProvider()
+        )
     else:
         provider = SanitizedMP4DeliveryProvider()
 
