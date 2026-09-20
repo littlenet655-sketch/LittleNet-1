@@ -28,6 +28,7 @@ export function useReelPlayback({
 }) {
   const [playbackState, setPlaybackState] = useState<PlaybackState>('IDLE');
   const [currentSource, setCurrentSource] = useState<string | null>(item.media_url ?? null);
+  const [currentExpiryAt, setCurrentExpiryAt] = useState<number | null>(item.playback_expires_at ?? null);
   const [firstFrameRendered, setFirstFrameRendered] = useState(false);
   const [isDebouncedBuffering, setIsDebouncedBuffering] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -36,6 +37,8 @@ export function useReelPlayback({
   const metricsRef = useRef<ReelMetricsTracker>(new ReelMetricsTracker(item, 'REELS'));
   const bufferingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const isMountedRef = useRef(true);
+  const playbackStartedRef = useRef(false);
+  const sourceFetchInFlightRef = useRef(false);
 
   const player = useVideoPlayer(null, (instance) => {
     instance.loop = true;
@@ -48,22 +51,53 @@ export function useReelPlayback({
 
   // Keep source up to date when item updates
   useEffect(() => {
-    if (item.media_url && item.media_url !== currentSource) {
-      setCurrentSource(item.media_url);
+    setCurrentSource(item.media_url ?? null);
+    setCurrentExpiryAt(item.playback_expires_at ?? null);
+    playbackStartedRef.current = false;
+    sourceFetchInFlightRef.current = false;
+    metricsRef.current = new ReelMetricsTracker(item, 'REELS');
+  }, [item.source_type, item.source_id, item.post_id, item.media_url, item.playback_expires_at]);
+
+  const requestFreshPlayback = useCallback(async () => {
+    if (!token || sourceFetchInFlightRef.current) return null;
+    const postId = item.post_id || item.source_id;
+    if (item.source_type !== 'SOCIAL' || typeof postId !== 'number') return null;
+
+    sourceFetchInFlightRef.current = true;
+    try {
+      const res = await refreshReelPlayback(token, postId);
+      if (res.ok && res.playback_url && isMountedRef.current) {
+        setCurrentSource(res.playback_url);
+        setCurrentExpiryAt(res.playback_expires_at ?? null);
+        metricsRef.current.onCredentialRefreshed();
+        return res.playback_url;
+      }
+      return null;
+    } finally {
+      sourceFetchInFlightRef.current = false;
     }
-  }, [item.media_url]);
+  }, [item.post_id, item.source_id, item.source_type, token]);
+
+  // Social Reels use just-in-time playback credentials. Curated media can keep
+  // the already-authorized media URL supplied by the feed.
+  useEffect(() => {
+    if (nearby && !currentSource && item.source_type === 'SOCIAL') {
+      void requestFreshPlayback();
+    }
+  }, [nearby, currentSource, item.source_type, requestFreshPlayback]);
 
   // Preemptive Credential Expiry Check
   const checkCredentialExpiry = useCallback(async () => {
-    if (!item.playback_expires_at || !token) return;
+    if (!currentExpiryAt || !token) return;
     const nowSec = Math.floor(Date.now() / 1000);
-    const remainingSec = item.playback_expires_at - nowSec;
+    const remainingSec = currentExpiryAt - nowSec;
     if (remainingSec <= PREEMPTIVE_REFRESH_WINDOW_SEC) {
       const postId = item.post_id || item.source_id;
       try {
         const res = await refreshReelPlayback(token, postId);
         if (res.ok && res.playback_url && isMountedRef.current) {
           setCurrentSource(res.playback_url);
+          setCurrentExpiryAt(res.playback_expires_at ?? null);
           metricsRef.current.onCredentialRefreshed();
           if (sourceRef.current) {
             sourceRef.current = res.playback_url;
@@ -77,7 +111,7 @@ export function useReelPlayback({
         // Will retry on error listener if needed
       }
     }
-  }, [item.playback_expires_at, item.post_id, item.source_id, token, active, paused, player]);
+  }, [currentExpiryAt, item.post_id, item.source_id, token, active, paused, player]);
 
   // Check credential expiry on active transition and periodically
   useEffect(() => {
@@ -108,6 +142,7 @@ export function useReelPlayback({
           void refreshReelPlayback(token, postId).then((res) => {
             if (res.ok && res.playback_url && isMountedRef.current) {
               setCurrentSource(res.playback_url);
+              setCurrentExpiryAt(res.playback_expires_at ?? null);
               metricsRef.current.onCredentialRefreshed();
               void player.replaceAsync(res.playback_url).then(() => {
                 if (active && !paused) player.play();
@@ -119,8 +154,10 @@ export function useReelPlayback({
       }
 
       if (status === 'loading') {
-        setPlaybackState('PREPARING');
-        metricsRef.current.onBufferingStarted();
+        setPlaybackState(playbackStartedRef.current ? 'BUFFERING' : 'PREPARING');
+        if (playbackStartedRef.current) {
+          metricsRef.current.onBufferingStarted();
+        }
         if (!bufferingTimerRef.current) {
           bufferingTimerRef.current = setTimeout(() => {
             if (isMountedRef.current) {
@@ -138,8 +175,8 @@ export function useReelPlayback({
         }
         setIsDebouncedBuffering(false);
         setPlaybackState('READY');
-        setFirstFrameRendered(true);
-        metricsRef.current.onFirstFrame();
+        // readyToPlay means the decoder can begin; keep the poster visible until
+        // the native VideoView confirms an actual first frame was rendered.
         setErrorMessage(null);
       }
     });
@@ -147,6 +184,7 @@ export function useReelPlayback({
     const playingSub = player.addListener('playingChange', ({ isPlaying }) => {
       if (!isMountedRef.current) return;
       if (isPlaying) {
+        playbackStartedRef.current = true;
         setPlaybackState('PLAYING');
         setIsDebouncedBuffering(false);
         metricsRef.current.onPlayingStarted();
@@ -224,6 +262,7 @@ export function useReelPlayback({
         const res = await refreshReelPlayback(token, postId);
         if (res.ok && res.playback_url && isMountedRef.current) {
           setCurrentSource(res.playback_url);
+          setCurrentExpiryAt(res.playback_expires_at ?? null);
           metricsRef.current.onCredentialRefreshed();
           await player.replaceAsync(res.playback_url);
           if (active && !paused) player.play();
