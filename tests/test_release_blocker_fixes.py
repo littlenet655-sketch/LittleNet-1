@@ -112,3 +112,35 @@ def test_cloudflare_stream_adapter_stays_disabled(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "token")
 
     assert CloudflareStreamDeliveryProvider().is_configured() is False
+
+def test_historical_stream_asset_falls_back_to_private_r2(monkeypatch):
+    import services.video_delivery as vd
+
+    asset = {
+        "media_id": 9,
+        "post_id": 77,
+        "provider": "CLOUDFLARE_STREAM",
+        "playback_id": "placeholder_stream_id",
+        "published_reference": "uploads/r2/published/reel-77.mp4",
+        "poster_reference": None,
+        "duration_ms": 15000,
+        "width": 720,
+        "height": 1280,
+        "aspect_ratio": "9:16",
+    }
+    monkeypatch.setattr(vd, "get_video_asset", lambda post_id: asset)
+
+    seen = {}
+    def fake_r2_playback(self, media_asset, viewer_id, viewer_role, expires_seconds=vd.DEFAULT_SIGNED_URL_TTL):
+        seen["provider"] = self.provider_name
+        seen["asset"] = media_asset
+        return {"playback_url": "https://signed-r2.example/reel.mp4", "delivery_type": "MP4"}
+
+    monkeypatch.setattr(vd.SanitizedMP4DeliveryProvider, "get_playback_info", fake_r2_playback)
+
+    result = vd.resolve_video_playback(77, viewer_id=5, viewer_role="CHILD")
+
+    assert seen["provider"] == "R2_SANITIZED_MP4"
+    assert seen["asset"]["published_reference"].endswith("reel-77.mp4")
+    assert result["delivery_type"] == "MP4"
+
