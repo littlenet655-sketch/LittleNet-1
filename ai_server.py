@@ -159,80 +159,10 @@ def face_adult_endpoint():
 
 
 
-@app.post("/ai/jobs/process-media")
-def process_media_job_endpoint():
-    """Receiver endpoint for QStash background media processing dispatch.
 
-    Verifies Upstash signature on the exact raw request body using official
-    Receiver (QSTASH_CURRENT_SIGNING_KEY / QSTASH_NEXT_SIGNING_KEY), checking:
-    iss=Upstash, sub=canonical endpoint, exp, nbf, body=SHA256(raw body).
-    Also validates forwarded AI_SHARED_SECRET for defense in depth when configured.
-    Rejects unauthorized or tampered requests before any parsing or processing.
-    """
-    from services.qstash_verifier import verify_qstash_signature
-
-    current_key = (os.getenv("QSTASH_CURRENT_SIGNING_KEY") or "").strip()
-    next_key = (os.getenv("QSTASH_NEXT_SIGNING_KEY") or "").strip()
-    signature = request.headers.get("Upstash-Signature", "").strip()
-
-    # Canonical destination URL
-    canonical_url = (os.getenv("QSTASH_MODAL_ENDPOINT") or "").strip() or request.base_url
-
-    raw_body = request.get_data()
-
-    is_signed_qstash = bool(
-        current_key
-        and signature
-        and verify_qstash_signature(
-            body=raw_body,
-            signature=signature,
-            current_key=current_key,
-            next_key=next_key,
-            url=canonical_url,
-        )
-    )
-
-    if not is_signed_qstash:
-        return jsonify(
-            {
-                "ok": False,
-                "error": "unauthorized",
-                "message": "Invalid or missing QStash signature",
-            }
-        ), 401
-
-    # Defense in depth: if AI_SHARED_SECRET is configured on Modal receiver,
-    # the forwarded X-LittleNet-AI-Key header must also match.
-    configured_ai_secret = (os.getenv("AI_SHARED_SECRET") or "").strip()
-    if configured_ai_secret and not authorized():
-        return jsonify(
-            {
-                "ok": False,
-                "error": "unauthorized",
-                "message": "Invalid or missing shared secret",
-            }
-        ), 401
-
-    # Parse JSON only after signature and defense-in-depth authorization succeed
-    try:
-        data = json.loads(raw_body.decode("utf-8")) if raw_body else {}
-    except Exception:
-        return jsonify({"ok": False, "error": "invalid_json_payload"}), 400
-
-    payload = data.get("payload") if isinstance(data.get("payload"), dict) else data
-
-    post_id = payload.get("post_id")
-    child_id = payload.get("child_id")
-    object_key = payload.get("object_key")
-    kind = payload.get("kind", "post")
-
-    if not (post_id and child_id and object_key):
-        return jsonify({"ok": False, "error": "missing_required_payload_fields"}), 400
-
-    from services.media_processor import process_media_job
-
-    res = process_media_job(int(post_id), int(child_id), str(object_key), str(kind))
-    return jsonify({"ok": True, "result": res}), 200
+# Background media processing is dispatched by the web app through Modal
+# Function.spawn(). The retired QStash receiver was removed to avoid carrying
+# a second unauthoritative production job path.
 
 
 if __name__ == "__main__":
