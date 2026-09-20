@@ -5,6 +5,9 @@ Never returns an empty feed solely because the child has zero approved social co
 """
 from __future__ import annotations
 
+import math
+import os
+from datetime import datetime, timezone
 from typing import Any
 
 from database.connection import fetch_all, fetch_one
@@ -19,6 +22,13 @@ from services.curated_feed import (
 )
 from services.social import _age_group
 from services.recommendation_signals import signal_scores
+
+
+def _flag(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _profile_terms(cid: int) -> tuple[list[str], str]:
@@ -122,11 +132,51 @@ def _text_for(item: dict[str, Any]) -> str:
     return " ".join(str(p or "") for p in parts)[:500]
 
 
+def _recency_score(item: dict[str, Any]) -> float:
+    """Small freshness bonus with a 14-day decay; malformed dates get no bonus."""
+    meta = item.get("ranking_metadata") or {}
+    raw = (
+        meta.get("created_at")
+        or item.get("created_at")
+        or meta.get("published_at")
+        or item.get("published_at")
+    )
+    if not raw:
+        return 0.0
+    try:
+        if isinstance(raw, datetime):
+            created = raw
+        else:
+            created = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        age_days = max(0.0, (datetime.now(timezone.utc) - created.astimezone(timezone.utc)).total_seconds() / 86400.0)
+        return 1.5 * math.exp(-age_days / 14.0)
+    except (TypeError, ValueError, OverflowError):
+        return 0.0
+
+
+def _engagement_score(item: dict[str, Any]) -> float:
+    """Bounded popularity signal so viral content cannot swamp child interests."""
+    meta = item.get("ranking_metadata") or {}
+    try:
+        likes = max(0.0, float(meta.get("likes") or item.get("likes") or 0))
+    except (TypeError, ValueError):
+        likes = 0.0
+    try:
+        comments = max(0.0, float(meta.get("comments_count") or item.get("comments_count") or 0))
+    except (TypeError, ValueError):
+        comments = 0.0
+    return min(2.0, 0.25 * math.log1p(likes) + 0.35 * math.log1p(comments))
+
+
 def _fallback_score(item: dict[str, Any], terms: list[str]) -> float:
+    """Fast CPU-only rank score used for normal production feed requests."""
     hay = _text_for(item).lower()
     score = 0.0
     for term in terms:
-        if term.lower() in hay:
+        normalized = term.strip().lower()
+        if normalized and normalized in hay:
             score += 3.0
 
     meta = item.get("ranking_metadata") or {}
@@ -135,8 +185,9 @@ def _fallback_score(item: dict[str, Any], terms: list[str]) -> float:
     if item.get("category") in EDUCATIONAL_CATEGORIES or item.get("content_category") in EDUCATIONAL_CATEGORIES:
         score += 1.0
     if item.get("source_type") == "CURATED":
-        score += float(meta.get("editorial_weight") or 1.0)
-    score += min(float(meta.get("likes") or item.get("likes") or 0), 100.0) / 100.0
+        score += min(2.0, max(0.0, float(meta.get("editorial_weight") or 1.0)))
+    score += _engagement_score(item)
+    score += _recency_score(item)
     return score
 
 
@@ -153,12 +204,16 @@ def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         from safety import remote_client
 
         if remote_client.enabled():
+            # remote_client.rank_texts() is itself guarded by AI_ENABLE_REMOTE_RANKING=0
+            # by default, so normal feed requests do not wake the Modal T4.
             ranked = remote_client.rank_texts(
                 profile_text,
                 [{"id": p.get("source_id", p.get("post_id")), "text": _text_for(p)} for p in rows],
             )
             ai_scores = {int(x["id"]): float(x["score"]) for x in ranked}
-        else:
+        elif _flag("LITTLENET_ENABLE_LOCAL_RECOMMENDATION_MODEL", False):
+            # Local CLIP ranking is also opt-in. The default web path stays lightweight
+            # and avoids loading PyTorch/Transformers solely for recommendations.
             from safety.semantic_service import rank_texts
 
             scores = rank_texts(profile_text, [_text_for(p) for p in rows])
