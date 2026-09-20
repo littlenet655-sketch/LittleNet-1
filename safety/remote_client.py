@@ -91,6 +91,40 @@ def moderate_file(content_type: str, path: str) -> dict:
     return _moderation_signals(r)
 
 
+def moderate_upload(content_type: str, path: str, text: str = "") -> dict:
+    """Moderate upload text + media in one protected AI request.
+
+    This keeps one upload on one GPU container wake instead of making separate
+    caption/media round-trips. The AI service still returns independent signals
+    so the web worker can apply policy normally.
+    """
+    with open(path, "rb") as fh:
+        r = requests.post(  # nosec B113 - timeout is explicitly bounded by _timeout()
+            _base() + "/ai/moderate-upload",
+            data={
+                "content_type": content_type.upper(),
+                "text": (text or "")[:4000],
+            },
+            files={"file": (Path(path).name, fh)},
+            headers=_headers(),
+            timeout=_timeout(),
+        )
+    r.raise_for_status()
+    data = _json_object(r, "moderate_upload")
+    if data.get("ok") is not True:
+        raise ValueError(str(data.get("error") or "moderate_upload_failed"))
+    text_signals = data.get("text_signals")
+    media_signals = data.get("media_signals")
+    if not isinstance(text_signals, dict):
+        text_signals = {}
+    if not isinstance(media_signals, dict) or not media_signals:
+        raise ValueError("moderate_upload_media_signals_missing")
+    return {
+        "text_signals": text_signals,
+        "media_signals": media_signals,
+    }
+
+
 def face_embedding(path: str) -> list[float]:
     with open(path, "rb") as fh:
         r = requests.post(  # nosec B113 - timeout is explicitly bounded by _timeout()
