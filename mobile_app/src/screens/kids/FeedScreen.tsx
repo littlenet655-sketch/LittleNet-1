@@ -1,5 +1,6 @@
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import { useState } from 'react';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View, type ViewToken } from 'react-native';
+import { useRef, useState } from 'react';
+import { useIsFocused } from '@react-navigation/native';
 import { ApiError } from '../../api/client';
 import { submitRecommendationAction } from '../../api/recommendation';
 import { useAuth } from '../../auth/AuthProvider';
@@ -7,14 +8,27 @@ import { PostCard } from '../../kids/PostCard';
 import { useFeed } from '../../kids/useFeed';
 import { socialPostTarget, socialProfileTarget } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
-import { useIsOnline } from '../../query/client';
+import { useIsForeground, useIsOnline } from '../../query/client';
+import type { FeedItem } from '../../api/kidsFeed';
 import { BrandHeader, DisabledFeature, EmptyState, ErrorState, GateNotice, LoadingState, OfflineBanner, Screen, Skeleton } from '../../ui/components';
 
 export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const online = useIsOnline();
+  const focused = useIsFocused();
+  const foreground = useIsForeground();
   const { session } = useAuth();
   const [tab, setTab] = useState<'For You' | 'Friends' | 'Learn'>('For You');
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
+  const [activeVideoKey, setActiveVideoKey] = useState<string | null>(null);
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60, minimumViewTime: 250 }).current;
+  const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: ViewToken[] }) => {
+    const visibleVideo = viewableItems.find((entry) => {
+      const item = entry.item as FeedItem | undefined;
+      return Boolean(entry.isViewable && item?.media_type?.toUpperCase() === 'VIDEO');
+    });
+    const item = visibleVideo?.item as FeedItem | undefined;
+    setActiveVideoKey(item ? `${item.source_type}:${item.source_id}` : null);
+  }).current;
   const feedMode = tab === 'Friends' ? 'friends' : tab === 'Learn' ? 'learn' : 'for_you';
   const feed = useFeed('feed', 10, feedMode);
 
@@ -51,14 +65,28 @@ export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         data={feed.items.filter((it) => !hiddenKeys.has(`${it.source_type}:${it.source_id}`))}
         keyExtractor={(it) => `${it.source_type}:${it.source_id}`}
         refreshControl={<RefreshControl refreshing={feed.refreshing} onRefresh={feed.refresh} />}
-        ListHeaderComponent={<><BrandHeader title="LittleNet" subtitle="Kind posts from friends." /><View style={styles.tabs}>{(['For You', 'Friends', 'Learn'] as const).map((item) => <Pressable key={item} onPress={() => setTab(item)}><Text style={[styles.tab, tab === item && styles.active]}>{item}</Text></Pressable>)}</View><OfflineBanner online={online} />{feed.error ? <GateNotice error={feed.error} /> : null}</>}
+        ListHeaderComponent={<><BrandHeader title="LittleNet" subtitle="Kind posts from friends." /><View style={styles.tabs}>{(['For You', 'Friends', 'Learn'] as const).map((item) => <Pressable key={item} onPress={() => { setActiveVideoKey(null); setTab(item); }}><Text style={[styles.tab, tab === item && styles.active]}>{item}</Text></Pressable>)}</View><OfflineBanner online={online} />{feed.error ? <GateNotice error={feed.error} /> : null}</>}
         ListEmptyComponent={<EmptyState title="Nothing here yet" body="When friends share kind posts, they will appear here." />}
         renderItem={({ item }) => {
           const post = socialPostTarget(item);
           const profile = socialProfileTarget(item);
           const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
-          return <PostCard item={item} onOpen={post ? () => nav.navigate('PostDetail', post) : undefined} onProfile={profile ? () => nav.navigate('OtherProfile', profile) : undefined} onNotInterested={tab === 'Friends' ? undefined : () => void notInterested(item.source_type, item.source_id)} />;
+          const key = `${item.source_type}:${item.source_id}`;
+          return <PostCard
+            item={item}
+            onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}
+            onProfile={profile ? () => nav.navigate('OtherProfile', profile) : undefined}
+            onNotInterested={tab === 'Friends' ? undefined : () => void notInterested(item.source_type, item.source_id)}
+            inlineVideoPlayback
+            videoActive={focused && foreground && activeVideoKey === key}
+          />;
         }}
+        onViewableItemsChanged={onViewableItemsChanged}
+        viewabilityConfig={viewabilityConfig}
+        windowSize={5}
+        maxToRenderPerBatch={4}
+        initialNumToRender={4}
+        removeClippedSubviews
         onEndReached={feed.loadMore}
         onEndReachedThreshold={0.5}
       />

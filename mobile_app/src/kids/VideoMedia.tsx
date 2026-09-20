@@ -12,12 +12,16 @@ export function VideoMedia({
   active = true,
   height = 380,
   onComplete,
+  nativeControls = true,
+  loop = false,
 }: {
   source: string;
   posterUrl?: string | null;
   active?: boolean;
   height?: number;
   onComplete?: () => void;
+  nativeControls?: boolean;
+  loop?: boolean;
 }) {
   const foreground = useIsForeground();
   const player = useVideoPlayer(null);
@@ -25,6 +29,10 @@ export function VideoMedia({
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const playableSource = active && foreground ? source : null;
+
+  useEffect(() => {
+    player.loop = loop;
+  }, [loop, player]);
 
   useEffect(() => {
     const subscription = player.addListener('statusChange', ({ status, error: playbackError }) => {
@@ -72,7 +80,7 @@ export function VideoMedia({
 
   return (
     <View style={[styles.shell, { height }]}>
-      <NativeVideoView player={player} style={styles.video} contentFit="cover" nativeControls onFirstFrameRender={() => setReady(true)} />
+      <NativeVideoView player={player} style={styles.video} contentFit="cover" nativeControls={nativeControls} onFirstFrameRender={() => setReady(true)} />
       {!ready && posterUrl ? <Image source={{ uri: posterUrl }} style={styles.overlay} /> : null}
       {!ready && !posterUrl && !error ? <View style={styles.overlayCenter}><Text style={styles.loading}>Loading video…</Text></View> : null}
       {error ? <View style={styles.overlayCenter}><Text style={styles.error}>Playback failed.</Text><Button label="Retry" onPress={() => void retry()} /></View> : null}

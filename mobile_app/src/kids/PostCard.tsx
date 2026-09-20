@@ -7,10 +7,25 @@ import { queryClient } from '../query/client';
 import { invalidateSocialCaches, kidsKeys } from '../query/keys';
 import { toggleLike, toggleSave } from '../api/kidsSocial';
 import { isPubliclyVisible, runSocialPostAction, socialPostTarget } from './social';
+import { VideoMedia } from './VideoMedia';
 import { Avatar, CategoryBadge, TimeAgo } from '../ui/social';
 import { colors, radius, spacing, type } from '../ui/tokens';
 
-export function PostCard({ item, onOpen, onProfile, onNotInterested }: { item: FeedItem; onOpen?: () => void; onProfile?: () => void; onNotInterested?: () => void }) {
+export function PostCard({
+  item,
+  onOpen,
+  onProfile,
+  onNotInterested,
+  inlineVideoPlayback = false,
+  videoActive = false,
+}: {
+  item: FeedItem;
+  onOpen?: () => void;
+  onProfile?: () => void;
+  onNotInterested?: () => void;
+  inlineVideoPlayback?: boolean;
+  videoActive?: boolean;
+}) {
   const { session } = useAuth();
   if (!isPubliclyVisible(item)) return null;
   const socialTarget = socialPostTarget(item);
@@ -82,7 +97,35 @@ export function PostCard({ item, onOpen, onProfile, onNotInterested }: { item: F
       </View>
       {item.title ? <Text style={styles.title}>{item.title}</Text> : null}
       {item.caption ? <Text style={styles.caption}>{item.caption}</Text> : null}
-      {previewUrl ? <Pressable onPress={onOpen} disabled={!onOpen}><Image source={{ uri: previewUrl }} style={styles.media} /></Pressable> : isVideo ? <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}><Text style={styles.videoLabel}>Video</Text></Pressable> : null}
+      {isVideo ? (
+        inlineVideoPlayback && videoActive && item.media_url ? (
+          <View style={styles.inlineVideo}>
+            <VideoMedia
+              source={item.media_url}
+              posterUrl={item.poster_url}
+              active={videoActive}
+              height={300}
+              nativeControls={false}
+              loop
+            />
+          </View>
+        ) : previewUrl ? (
+          <Pressable onPress={onOpen} disabled={!onOpen} style={styles.videoPoster}>
+            <Image source={{ uri: previewUrl }} style={styles.media} />
+            <View style={styles.playBadge} pointerEvents="none">
+              <Feather name="play" size={24} color="#FFFFFF" />
+            </View>
+          </Pressable>
+        ) : (
+          <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}>
+            <Text style={styles.videoLabel}>Video</Text>
+          </Pressable>
+        )
+      ) : previewUrl ? (
+        <Pressable onPress={onOpen} disabled={!onOpen}>
+          <Image source={{ uri: previewUrl }} style={styles.media} />
+        </Pressable>
+      ) : null}
       {socialTarget ? (
         <View style={styles.actions}>
           <Pressable
@@ -146,6 +189,9 @@ const styles = StyleSheet.create({
   caption: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 22 },
   media: { marginTop: 10, width: '100%', height: 300, borderRadius: 0, backgroundColor: colors.line },
   videoLabel: { margin: 'auto', color: colors.muted, fontWeight: '700' },
+  inlineVideo: { marginTop: 10, width: '100%', height: 300, backgroundColor: colors.ink },
+  videoPoster: { position: 'relative' },
+  playBadge: { position: 'absolute', left: '50%', top: '50%', marginLeft: -24, marginTop: -24, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 8, paddingHorizontal: spacing.md },
   action: { paddingVertical: 5 },
   actionText: { color: colors.brandDark, fontWeight: '700' },
