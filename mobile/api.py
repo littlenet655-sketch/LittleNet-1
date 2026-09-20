@@ -2844,33 +2844,38 @@ def register_mobile_api(bp):
             limit = 10
         session_id = request.args.get("session_id")
         page = get_feed_page(uid, surface="REELS", cursor=cursor, limit=limit, session_id=session_id)
-        from services.video_delivery import resolve_video_playback
         from services.media_delivery import resolve_media_delivery
         for item in page["items"]:
-            post_id = item.get("post_id") or item.get("source_id")
-            if post_id:
-                try:
-                    v_res = resolve_video_playback(int(post_id), viewer_id=uid, viewer_role="CHILD")
-                    if v_res.get("playback_url"):
-                        item["media_url"] = v_res["playback_url"]
-                        item["delivery_type"] = v_res.get("delivery_type", "MP4")
-                        item["playback_expires_at"] = v_res.get("playback_expires_at")
-                        if v_res.get("poster_url"):
-                            item["poster_url"] = v_res["poster_url"]
-                        if v_res.get("aspect_ratio"):
-                            item["aspect_ratio"] = v_res["aspect_ratio"]
-                        if v_res.get("duration_ms"):
-                            item["duration_ms"] = v_res["duration_ms"]
-                except Exception:
-                    pass
+            source_type = str(item.get("source_type") or "").upper()
 
-            if not item.get("media_url") and item.get("media_reference"):
-                m_res = resolve_media_delivery(item["media_reference"], viewer_id=uid, viewer_role="CHILD")
+            # Social Reels use just-in-time playback credentials. This avoids
+            # minting signed R2/Stream credentials for every item in a page that
+            # the child may never watch. The mobile player requests the current
+            # and adjacent Reel through /reels/<post_id>/playback.
+            if source_type == "SOCIAL":
+                item["media_url"] = None
+                item["playback_expires_at"] = None
+                item["playback_ready"] = True
+                item["delivery_type"] = "JIT"
+            elif item.get("media_reference"):
+                # Curated Reel assets are not rows in posts, so they retain the
+                # already-authorized media URL until a dedicated curated
+                # playback-token route is introduced.
+                m_res = resolve_media_delivery(
+                    item["media_reference"],
+                    viewer_id=uid,
+                    viewer_role="CHILD",
+                )
                 item["media_url"] = m_res.get("url")
                 if m_res.get("expires_at"):
                     item["playback_expires_at"] = m_res["expires_at"]
-            if not item.get("poster_url") and item.get("poster_reference"):
-                p_res = resolve_media_delivery(item["poster_reference"], viewer_id=uid, viewer_role="CHILD")
+
+            if item.get("poster_reference"):
+                p_res = resolve_media_delivery(
+                    item["poster_reference"],
+                    viewer_id=uid,
+                    viewer_role="CHILD",
+                )
                 item["poster_url"] = p_res.get("url")
         return jsonify(ok=True, **_clean(page))
 
