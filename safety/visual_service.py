@@ -109,6 +109,33 @@ def _yolo_objects(path):
 
 
 def check_image(path):
+    # Prefer the scale-to-zero CPU tier for all web-side image moderation,
+    # including the legacy/Jinja upload path. Inside an AI worker this client is
+    # disabled, so local model execution continues without recursion.
+    if os.getenv('LITTLENET_AI_SERVER') != '1':
+        try:
+            from services.modal_image_moderation import (
+                allow_gpu_fallback as image_gpu_fallback_allowed,
+                enabled as modal_image_cpu_enabled,
+                moderate_image_upload as moderate_image_upload_cpu,
+            )
+            if modal_image_cpu_enabled():
+                try:
+                    result=moderate_image_upload_cpu(path,run_text=False,run_media=True)
+                    signals=result.get('media_signals') or {}
+                    signals['compute_tier']='modal_cpu'
+                    return normalize_signals(signals,category='IMAGE')
+                except Exception:
+                    if not image_gpu_fallback_allowed():
+                        return normalize_signals({
+                            'category':'IMAGE',
+                            'total_safety_failure':True,
+                            'errors':['modal_cpu_image_moderation_unavailable'],
+                            'compute_tier':'modal_cpu_failed_closed',
+                        },category='IMAGE')
+        except Exception:
+            pass
+
     from .remote_client import enabled,moderate_file
     if enabled():
         try:return normalize_signals(moderate_file('IMAGE',path),category='IMAGE')
