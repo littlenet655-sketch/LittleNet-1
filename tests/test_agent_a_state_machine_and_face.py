@@ -610,3 +610,50 @@ def test_resolve_parent_review_block_deletes_quarantine(client):
         assert res.get_json()["ok"] is True
         assert res.get_json()["result"] == "BLOCK"
         mock_cleanup.assert_called_once_with(post_id, "uploads/r2/quarantine/202/pic.jpg")
+
+
+def test_child_face_skip_rejected_with_403(client):
+    headers = _child_headers(202)
+    with patch("mobile.api.fetch_one", return_value={"user_id": 202, "role": "CHILD", "account_status": "ACTIVE"}), \
+         patch("mobile.api.execute") as mock_exec:
+        res = client.post("/api/mobile/v1/kids/face/skip", headers=headers)
+        assert res.status_code == 403
+        data = res.get_json()
+        assert data["ok"] is False
+        assert data["error"] == "parent_approval_required"
+        mock_exec.assert_not_called()
+
+
+def test_child_face_skip_does_not_update_db(client):
+    headers = _child_headers(202)
+    with patch("mobile.api.fetch_one", return_value={"user_id": 202, "role": "CHILD", "account_status": "ACTIVE"}), \
+         patch("mobile.api.execute") as mock_exec:
+        res = client.post("/api/mobile/v1/kids/face/skip", headers=headers)
+        assert res.status_code == 403
+        for call_args in mock_exec.call_args_list:
+            assert "face_enrollment_skipped" not in str(call_args)
+
+
+def test_normal_child_face_enrollment_endpoint(client):
+    headers = _child_headers(202)
+    dummy_img = BytesIO(b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 50)
+    with patch("mobile.api.fetch_one", return_value={"user_id": 202, "role": "CHILD", "account_status": "ACTIVE"}), \
+         patch("mobile.api.has_face_profile", return_value=False), \
+         patch("mobile.api.enroll", return_value={"enrolled": True, "embedding": _valid_vector()}) as mock_enroll, \
+         patch("mobile.api.execute") as mock_exec, \
+         patch("mobile.api.needs_onboarding_quiz", return_value=False):
+        res = client.post(
+            "/api/mobile/v1/kids/face/enroll",
+            headers=headers,
+            data={"photo": (dummy_img, "face.jpg")},
+            content_type="multipart/form-data",
+        )
+        assert res.status_code == 200
+        data = res.get_json()
+        assert data["ok"] is True
+        assert "biometric_key" in data
+        mock_enroll.assert_called_once()
+        # Verify face_enrollment_skipped was set to FALSE on successful enrollment
+        found_unskip = any("face_enrollment_skipped=FALSE" in str(c) for c in mock_exec.call_args_list)
+        assert found_unskip is True
+

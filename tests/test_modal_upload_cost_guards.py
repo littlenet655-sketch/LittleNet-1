@@ -298,3 +298,20 @@ def test_check_image_prefers_cpu_and_never_calls_gpu(monkeypatch):
         gpu.assert_not_called()
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+def test_modal_deploy_workflow_migration_order_and_warmup_flag():
+    workflow_path = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "deploy-modal.yml"
+    assert workflow_path.is_file(), "deploy-modal.yml not found"
+    content = workflow_path.read_text(encoding="utf-8")
+
+    # 1. Warmup flag must use --confirm-gpu-warmup to pass modal_ai.py cost guard
+    assert "modal run modal_ai.py --confirm-gpu-warmup" in content
+
+    # 2. Database migration must execute before deploying web and AI apps
+    init_db_idx = content.index("modal run modal_web.py --init-db")
+    deploy_web_idx = content.index("modal deploy modal_web.py")
+    deploy_ai_idx = content.index("modal deploy modal_ai.py")
+
+    assert init_db_idx < deploy_web_idx, "DB migration must appear before modal deploy modal_web.py"
+    assert init_db_idx < deploy_ai_idx, "DB migration must appear before modal deploy modal_ai.py"

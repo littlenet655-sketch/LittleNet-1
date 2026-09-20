@@ -56,15 +56,15 @@ jobs:
           test -n "$MODAL_TOKEN_ID"
           test -n "$MODAL_TOKEN_SECRET"
           modal token info
-      - run: modal deploy modal_ai.py
-      - run: modal deploy modal_web.py
       - name: Apply database schema and migrations
         if: ${{ inputs.migrate_database }}
         run: modal run modal_web.py --init-db
+      - run: modal deploy modal_ai.py
+      - run: modal deploy modal_web.py
       - run: modal run modal_web.py --seed
       - name: Warm and validate every locked-scope AI model
         if: ${{ inputs.warm_ai_models }}
-        run: modal run modal_ai.py
+        run: modal run modal_ai.py --confirm-gpu-warmup
       - name: Run DB, AI, Presidio, liveness, mail, R2 and BASE_URL preflight
         run: modal run modal_web.py --preflight
       - name: Validate public readiness and mobile API

@@ -1241,16 +1241,11 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("CHILD")
     def mobile_child_face_skip():
-        uid = int(g.mobile_user["user_id"])
-        execute(
-            "UPDATE child_profiles SET face_enrollment_skipped=TRUE, updated_at=NOW() WHERE child_id=%s",
-            (uid,),
-        )
         return jsonify(
-            ok=True,
-            skipped=True,
-            quiz_required=bool(needs_onboarding_quiz(uid)),
-        )
+            ok=False,
+            error="parent_approval_required",
+            message="Face enrollment can only be skipped with parent approval.",
+        ), 403
 
     @bp.route("/api/mobile/v1/kids/home")
     @_require_mobile("CHILD")
