@@ -21,8 +21,15 @@ OTP_MAX_ATTEMPTS = 5
 
 
 def _dev_otp_enabled() -> bool:
-    """Return True only for an explicit non-production development override."""
-    return bool(Config.ENABLE_DEV_OTP and not Config._PRODUCTION)
+    """Return True only for an explicit non-production development override.
+
+    Read the environment at call time so tests/dev tooling can explicitly toggle
+    the override without relying on Config's import-time snapshot. Production is
+    still a hard deny regardless of the environment value.
+    """
+    raw = os.getenv("ENABLE_DEV_OTP", "0").strip().lower()
+    requested = raw in {"1", "true", "yes", "on"}
+    return bool(requested and not Config._PRODUCTION)
 
 
 def _ensure_table():
@@ -163,7 +170,7 @@ def begin_parent_registration(form):
         conn.close()
 
     sent = _send_code(user_id, email, full_name, code)
-    dev_code = code if Config.ENABLE_DEV_OTP and not Config._PRODUCTION else None
+    dev_code = code if _dev_otp_enabled() else None
     return {'user_id': user_id, 'email': email, 'full_name': full_name, 'email_sent': sent, 'dev_code': dev_code}
 
 
