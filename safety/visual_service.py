@@ -140,7 +140,27 @@ def check_image(path):
     if enabled():
         try:return normalize_signals(moderate_file('IMAGE',path),category='IMAGE')
         except Exception:return normalize_signals({'category':'IMAGE','total_safety_failure':True,'errors':['remote_ai_unavailable']},category='IMAGE')
+
+    # Preferred local path once the private V2/V3 checkpoints are staged on the
+    # persistent Modal model-cache volume. Two EfficientNet-B0 specialists are
+    # much lighter than running NudeNet + FalconsAI + YOLO + CLIP for every
+    # ordinary image. If either checkpoint is missing or inference fails, the
+    # existing detector stack remains the fail-safe fallback.
+    trained_error=None
+    try:
+        from . import littlenet_trained_image
+        if littlenet_trained_image.available():
+            try:
+                trained=littlenet_trained_image.predict(path)
+                trained['compute_tier']='trained_cpu' if _runtime_device()=='cpu' else 'trained_gpu'
+                return normalize_signals(trained,category='IMAGE')
+            except Exception as exc:
+                trained_error=f'trained_image:{type(exc).__name__}'
+    except Exception as exc:
+        trained_error=f'trained_image_loader:{type(exc).__name__}'
+
     adult=sexual=violence=weapon=general=0.0;ran=0;errors=[];details={}
+    if trained_error:errors.append(trained_error)
     for name,fn in [('nudenet',lambda:_nudenet(path)),('falconsai',lambda:_falconsai(path))]:
         try:
             score=float(timed_call(name,fn,timeout_seconds(name,90)));ran+=1;adult=max(adult,score);sexual=max(sexual,score);details[name]=score
