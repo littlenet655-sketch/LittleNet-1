@@ -157,11 +157,13 @@ def moderate_image_upload_cpu(
     os.environ["LITTLENET_AI_SERVER"] = "1"
     os.environ["LITTLENET_DEVICE"] = "cpu"
 
-    suffix = Path(filename or "upload.jpg").suffix.lower()
-    if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
-        suffix = ".jpg"
-    fd, path = tempfile.mkstemp(prefix="littlenet_cpu_image_", suffix=suffix)
-    os.close(fd)
+    path = None
+    if run_media:
+        suffix = Path(filename or "upload.jpg").suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+            suffix = ".jpg"
+        fd, path = tempfile.mkstemp(prefix="littlenet_cpu_image_", suffix=suffix)
+        os.close(fd)
 
     def jsonable(value):
         if isinstance(value, dict):
@@ -176,10 +178,11 @@ def moderate_image_upload_cpu(
         return value
 
     try:
-        with open(path, "wb") as fh:
-            fh.write(file_bytes or b"")
-        if os.path.getsize(path) <= 0:
-            raise ValueError("image_payload_empty")
+        if run_media:
+            with open(path, "wb") as fh:
+                fh.write(file_bytes or b"")
+            if os.path.getsize(path) <= 0:
+                raise ValueError("image_payload_empty")
 
         text_signals = {}
         media_signals = {}
@@ -202,10 +205,11 @@ def moderate_image_upload_cpu(
             "compute_tier": "cpu",
         }
     finally:
-        try:
-            os.unlink(path)
-        except OSError:
-            pass
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 @app.function(
