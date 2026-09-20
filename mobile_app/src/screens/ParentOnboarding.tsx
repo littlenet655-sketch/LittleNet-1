@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { registerParent, resendParentEmail, verifyParentEmail, verifyParentLiveness } from '../api/auth';
+import { fetchParentEmailStatus, registerParent, resendParentEmail, verifyParentEmail, verifyParentLiveness } from '../api/auth';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { CameraCapture } from '../camera/CameraCapture';
@@ -212,6 +212,47 @@ export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerif
       ? 'Email delivery may be slow. You can resend the code below.'
       : ''
   );
+
+  useEffect(() => {
+    if (devCode) return undefined;
+
+    let cancelled = false;
+    const checkDelivery = async () => {
+      try {
+        const response = await fetchParentEmailStatus(pendingToken);
+        if (cancelled) return;
+
+        if (response.delivery_failed) {
+          const message =
+            response.status === 'SUPPRESSED'
+              ? 'This email address is suppressed after an earlier delivery problem. Check the address or use a different email.'
+              : response.status === 'BOUNCED'
+                ? 'The email provider rejected this address. Check that the mailbox exists and use a valid email.'
+                : 'The verification email could not be delivered. Check the address and try again.';
+          setError(message);
+          setInfo('');
+          return;
+        }
+
+        if (response.status === 'DELIVERED') {
+          setError('');
+          setInfo('Verification email delivered. Enter the 6-digit code from your inbox.');
+        } else if (response.status === 'DELIVERY_DELAYED') {
+          setInfo('Your email provider reports a delivery delay. You can wait or resend the code.');
+        }
+      } catch {
+        // Delivery telemetry is advisory; OTP entry and resend must keep working
+        // even if the status endpoint is temporarily unavailable.
+      }
+    };
+
+    void checkDelivery();
+    const timer = setInterval(() => void checkDelivery(), 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [devCode, pendingToken]);
 
   async function submit() {
     if (otp.trim().length !== 6) {
