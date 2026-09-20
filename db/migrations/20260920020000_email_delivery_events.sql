@@ -1,3 +1,4 @@
+-- migrate:up
 -- Track transactional email lifecycle without storing OTP bodies or secrets.
 CREATE TABLE IF NOT EXISTS email_delivery_events (
   event_id BIGSERIAL PRIMARY KEY,
@@ -15,3 +16,6 @@ CREATE TABLE IF NOT EXISTS email_delivery_events (
 
 CREATE INDEX IF NOT EXISTS idx_email_delivery_recipient_status
   ON email_delivery_events(recipient, status, updated_at DESC);
+
+-- migrate:down
+DROP TABLE IF EXISTS email_delivery_events;
