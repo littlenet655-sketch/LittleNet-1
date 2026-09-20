@@ -450,7 +450,7 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
                 response = requests.post(
                     upload_url,
                     files={"file": (local_path.name, fh, "video/mp4")},
-                    timeout=max(self.api_timeout, 60),
+                    timeout=180,
                 )
             response.raise_for_status()
 
