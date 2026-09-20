@@ -82,6 +82,16 @@ def _setup_child_and_parent(child_id: int, username: str):
         (child_id,),
     )
     execute(
+        """INSERT INTO child_profiles(child_id, parent_id, full_name, age, face_enrollment_skipped)
+           VALUES(%s, 990, %s, 10, FALSE)
+           ON CONFLICT (child_id) DO UPDATE SET
+             parent_id=EXCLUDED.parent_id,
+             full_name=EXCLUDED.full_name,
+             age=EXCLUDED.age,
+             face_enrollment_skipped=FALSE""",
+        (child_id, f"{username} Name"),
+    )
+    execute(
         """INSERT INTO parent_safety_settings(child_id, parent_id, safety_level)
            VALUES(%s, 990, 'STRICT')
            ON CONFLICT (child_id) DO UPDATE SET safety_level='STRICT'""",

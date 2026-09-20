@@ -52,6 +52,9 @@ image = (
             "LITTLENET_AI_SERVER": "1",
             "LITTLENET_DEVICE": "cuda",
             "LITTLENET_MODEL_CACHE": "/cache/models",
+            "LITTLENET_ENABLE_TRAINED_IMAGE_ENSEMBLE": "1",
+            "LITTLENET_TRAINED_IMAGE_V2_PATH": "/cache/models/littlenet_core_safety_v2.pth",
+            "LITTLENET_TRAINED_IMAGE_V3_PATH": "/cache/models/littlenet_weapons_violence_v3.pth",
             "HF_HOME": "/cache/huggingface",
             "HF_HUB_CACHE": "/cache/huggingface/hub",
             "TORCH_HOME": "/cache/torch",
@@ -237,6 +240,43 @@ def moderate_image_upload_cpu(
 
 
 @app.function(
+    image=image,
+    cpu=2.0,
+    memory=4096,
+    volumes={"/cache": model_cache},
+    timeout=300,
+    min_containers=0,
+    max_containers=1,
+)
+def trained_image_preflight():
+    """CPU-only verification that the private V2/V3 artifacts are staged and loadable."""
+    os.chdir("/root/littlenet")
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ["LITTLENET_DEVICE"] = "cpu"
+    os.environ["LITTLENET_AI_SERVER"] = "1"
+    from safety import littlenet_trained_image as trained
+
+    v2, v3 = trained.paths()
+    report = {
+        "available": trained.available(),
+        "v2": {"path": str(v2), "exists": v2.is_file(), "bytes": v2.stat().st_size if v2.is_file() else 0},
+        "v3": {"path": str(v3), "exists": v3.is_file(), "bytes": v3.stat().st_size if v3.is_file() else 0},
+    }
+    if report["available"]:
+        try:
+            _, v2_ckpt, _, v3_ckpt = trained._models()
+            report["v2"]["labels"] = list(v2_ckpt.get("labels") or [])
+            report["v3"]["labels"] = list(v3_ckpt.get("labels") or [])
+            report["loadable"] = True
+        except Exception as exc:
+            report["loadable"] = False
+            report["error"] = f"{type(exc).__name__}: {exc}"
+    else:
+        report["loadable"] = False
+    return report
+
+
+@app.function(
     image=secret_preflight_image,
     secrets=[ai_secret],
     timeout=60,
@@ -378,6 +418,7 @@ def warm_models():
 def main(
     confirm_gpu_warmup: bool = False,
     prepare_face_cache_only: bool = False,
+    trained_image_preflight_only: bool = False,
     secret_preflight: bool = False,
 ):
     """Cost-guarded maintenance entrypoint."""
@@ -389,9 +430,16 @@ def main(
         report = prepare_face_cache.remote()
         print(f"OK   face-cache: {report}")
         return
+    if trained_image_preflight_only:
+        report = trained_image_preflight.remote()
+        print(f"trained-image-preflight {json.dumps(report, sort_keys=True)}")
+        if not report.get("available") or not report.get("loadable"):
+            raise RuntimeError(f"LittleNet trained image ensemble is not ready: {report}")
+        return
     if not confirm_gpu_warmup:
         print("GPU warmup skipped. This command is intentionally cost-guarded.")
         print("Cheap face-cache preparation: modal run modal_ai.py --prepare-face-cache-only")
+        print("CPU trained-image check: modal run modal_ai.py --trained-image-preflight-only")
         print("Full GPU validation only when intentional: modal run modal_ai.py --confirm-gpu-warmup")
         return
     report = warm_models.remote()

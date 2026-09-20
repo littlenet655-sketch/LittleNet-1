@@ -63,6 +63,22 @@ def _seed_role_fixture():
         """,
         (CHILD_ID, PARENT_ID, ADMIN_ID, OTHER_PARENT_ID, CHILD_ID, PARENT_ID, ADMIN_ID, OTHER_PARENT_ID),
     )
+    _db_exec(
+        """INSERT INTO child_profiles(child_id,parent_id,full_name,age,face_enrollment_skipped)
+           VALUES(%s,%s,'CI Child',12,FALSE)
+           ON CONFLICT(child_id) DO UPDATE SET
+             parent_id=EXCLUDED.parent_id,
+             full_name=EXCLUDED.full_name,
+             age=EXCLUDED.age,
+             face_enrollment_skipped=FALSE""",
+        (CHILD_ID, PARENT_ID),
+    )
+    _db_exec(
+        """INSERT INTO child_quiz_progress(child_id,quiz_required)
+           VALUES(%s,FALSE)
+           ON CONFLICT(child_id) DO UPDATE SET quiz_required=FALSE""",
+        (CHILD_ID,),
+    )
     # Seed a schema-valid embedding. This fixture only proves
     # authenticated role guards; real face/liveness behavior is covered separately.
     embedding = json.dumps([0.05] * 512)

@@ -55,7 +55,8 @@ web_image = (
             "LITTLENET_USE_MODAL_TEXT_CPU": "1",
             "LITTLENET_ALLOW_TEXT_GPU_FALLBACK": "0",
             "LITTLENET_IMAGE_MODERATION_MAX_PX": "1600",
-            "LITTLENET_MODERATION_CACHE_VERSION": "2026-09-20-v1",
+            # Bumped because the trained V2/V3 image ensemble changes image evidence.
+            "LITTLENET_MODERATION_CACHE_VERSION": "2026-09-20-v2-trained-image",
             "LITTLENET_MODERATION_CACHE_TTL_DAYS": "30",
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
             "DBMATE_NO_DUMP_SCHEMA": "true",
@@ -255,9 +256,15 @@ def web_preflight(deep_ai_probe: bool = False):
           to_regclass('public.comments')::text AS comments,
           to_regclass('public.followers')::text AS followers,
           to_regclass('public.quizzes')::text AS quizzes,
-          to_regclass('public.media_delete_outbox')::text AS media_delete_outbox
+          to_regclass('public.media_delete_outbox')::text AS media_delete_outbox,
+          to_regclass('public.moderation_signal_cache')::text AS moderation_signal_cache,
+          to_regclass('public.recommendation_signals')::text AS recommendation_signals,
+          to_regclass('public.feed_sessions')::text AS feed_sessions
     """) or {})
-    required_tables = ("users", "child_profiles", "posts", "comments", "followers", "quizzes", "media_delete_outbox")
+    required_tables = (
+        "users", "child_profiles", "posts", "comments", "followers", "quizzes",
+        "media_delete_outbox", "moderation_signal_cache", "recommendation_signals", "feed_sessions",
+    )
     schema_ok = all(schema.get(name) for name in required_tables)
     quiz_count = 0
     if schema_ok:
