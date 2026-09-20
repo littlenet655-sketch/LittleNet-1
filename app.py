@@ -12,6 +12,7 @@ from parent.routes import parent_bp
 from parent.api import parent_api_bp
 from quiz.routes import quiz_bp
 from admin.routes import admin_bp
+from mailg.webhooks import resend_webhook_bp
 from database.connection import fetch_one, execute
 from services.usage import lock_state,heartbeat,start_session
 from quiz.service import quiz_due, needs_onboarding_quiz
@@ -48,7 +49,7 @@ def create_app():
             return redirect('/login/?error=Your+session+was+refreshed.+Please+enter+your+credentials+to+continue.')
         return render_template('csrf_error.html', reason=e.description), 400
 
-    for bp in [auth_bp,api_bp,content_search_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp]:
+    for bp in [auth_bp,api_bp,content_search_bp,child_bp,upload_bp,child_message_bp,parent_bp,parent_api_bp,quiz_bp,admin_bp,resend_webhook_bp]:
         app.register_blueprint(bp)
 
     @app.before_request
