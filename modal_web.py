@@ -198,6 +198,24 @@ def process_media_job_background(post_id: int, child_id: int, object_key: str, k
     return process_media_job(int(post_id), int(child_id), str(object_key), str(kind), lease_token=lease_token)
 
 
+@app.function(
+    image=web_image,
+    secrets=[web_secret, r2_secret],
+    timeout=1800,
+    min_containers=0,
+    max_containers=1,
+)
+def curated_poster_backfill(apply: bool = False, limit: int = 250):
+    """Run the curated poster repair inside Modal with production DB/R2 secrets.
+
+    Dry-run is the default. The apply path modifies only poster/thumbnail
+    references after a successful poster upload.
+    """
+    os.chdir("/root/littlenet")
+    from tools.backfill_curated_video_posters import run
+    return run(apply=bool(apply), limit=int(limit))
+
+
 @app.function(image=web_image, secrets=[web_secret], timeout=300)
 def init_database():
     os.chdir("/root/littlenet")
@@ -343,6 +361,9 @@ def main(
     seed: bool = False,
     preflight: bool = False,
     reconcile_media: bool = False,
+    backfill_curated_posters: bool = False,
+    apply_curated_posters: bool = False,
+    curated_poster_limit: int = 250,
     deep_ai_probe: bool = False,
     secret_preflight: bool = False,
 ):
@@ -360,6 +381,14 @@ def main(
         print("media reconciliation", report.get("media_delete_outbox"))
         if not report.get("media_delete_outbox", {}).get("ok"):
             raise RuntimeError(f"LittleNet media reconciliation failed: {report}")
+    if backfill_curated_posters or apply_curated_posters:
+        report = curated_poster_backfill.remote(
+            apply=bool(apply_curated_posters),
+            limit=int(curated_poster_limit),
+        )
+        print("curated poster backfill", json.dumps(report, default=str))
+        if report.get("failures"):
+            raise RuntimeError(f"Curated poster backfill reported failures: {report}")
     if preflight:
         report = web_preflight.remote(deep_ai_probe=deep_ai_probe)
         print("preflight", report)
