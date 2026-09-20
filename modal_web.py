@@ -256,9 +256,15 @@ def web_preflight(deep_ai_probe: bool = False):
           to_regclass('public.comments')::text AS comments,
           to_regclass('public.followers')::text AS followers,
           to_regclass('public.quizzes')::text AS quizzes,
-          to_regclass('public.media_delete_outbox')::text AS media_delete_outbox
+          to_regclass('public.media_delete_outbox')::text AS media_delete_outbox,
+          to_regclass('public.moderation_signal_cache')::text AS moderation_signal_cache,
+          to_regclass('public.recommendation_signals')::text AS recommendation_signals,
+          to_regclass('public.feed_sessions')::text AS feed_sessions
     """) or {})
-    required_tables = ("users", "child_profiles", "posts", "comments", "followers", "quizzes", "media_delete_outbox")
+    required_tables = (
+        "users", "child_profiles", "posts", "comments", "followers", "quizzes",
+        "media_delete_outbox", "moderation_signal_cache", "recommendation_signals", "feed_sessions",
+    )
     schema_ok = all(schema.get(name) for name in required_tables)
     quiz_count = 0
     if schema_ok:
