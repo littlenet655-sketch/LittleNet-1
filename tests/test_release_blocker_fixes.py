@@ -46,6 +46,9 @@ def test_resend_webhook_rejects_invalid_signature(monkeypatch):
     monkeypatch.setenv("RESEND_WEBHOOK_SECRET", "whsec_" + base64.b64encode(b"secret").decode())
     app = Flask(__name__)
     app.config["TESTING"] = True
+    from mailg import webhooks as webhook_module
+    webhook_module.csrf.init_app(app)
+    webhook_module.limiter.init_app(app)
     app.register_blueprint(resend_webhook_bp)
 
     client = app.test_client()
