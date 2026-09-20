@@ -204,7 +204,7 @@ def _send_via_resend(api_key, receiver, subject, body, from_email=None, from_nam
                     response_payload = json.loads(response.read().decode('utf-8'))
                     if isinstance(response_payload, dict):
                         provider_message_id = str(response_payload.get('id') or '').strip() or None
-                except (ValueError, UnicodeDecodeError, AttributeError):
+                except (ValueError, TypeError, UnicodeDecodeError, AttributeError):
                     provider_message_id = None
                 _record_provider_acceptance(provider_message_id, receiver, subject)
                 return True
