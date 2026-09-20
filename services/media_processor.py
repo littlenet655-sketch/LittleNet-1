@@ -22,6 +22,7 @@ from safety.moderation_service import evaluate, record, safety_level
 from safety.policy import decide
 from services import object_storage
 from services.media_sanitizer import strip_video_audio_in_place
+from services.moderation_cache import cached_or_none_for_file, cached_or_none_for_text, store_cached_signals
 from services.social import parent_notify
 
 logger = logging.getLogger(__name__)
@@ -107,6 +108,31 @@ def _make_video_derivatives(source_path: Path, temp_dir: Path) -> tuple[Path, Pa
     except Exception as exc:
         raise RuntimeError(f"video_transcoding_failed: {exc}") from exc
 
+
+
+def _make_image_moderation_proxy(source_path: Path, temp_dir: Path) -> Path:
+    """Create a bounded JPEG used only for AI transfer/inference.
+
+    The clean full-resolution image remains the publication source. Most visual
+    safety models resize internally (224-640px), so sending multi-megapixel
+    originals wastes web/GPU-container time without improving their input.
+    """
+    from PIL import Image
+
+    try:
+        max_px = int(os.getenv("LITTLENET_IMAGE_MODERATION_MAX_PX", "1600"))
+    except (TypeError, ValueError):
+        max_px = 1600
+    max_px = max(640, min(max_px, 2048))
+
+    proxy = temp_dir / "moderation_image.jpg"
+    with Image.open(source_path) as img:
+        work = img.convert("RGB")
+        work.thumbnail((max_px, max_px))
+        work.save(proxy, format="JPEG", quality=88, optimize=True)
+    if not proxy.is_file() or proxy.stat().st_size <= 0:
+        raise RuntimeError("moderation_image_proxy_empty")
+    return proxy
 
 
 def _merge_signals(text_signals: dict | None, media_signals: dict | None) -> dict:
@@ -356,9 +382,79 @@ def _process_media_job_impl(
                 raise RuntimeError(f"image_sanitization_failed: {exc}") from exc
 
         # AI Moderation
-        text_signals, _ = evaluate(child_id, "TEXT", combined_text) if combined_text else ({}, None)
+        #
+        # Cost controls:
+        # 1) reuse exact, versioned model signals when safe to do so;
+        # 2) send caption + media in one protected AI request when both miss;
+        # 3) for images, send a bounded proxy to AI while publishing the clean
+        #    full-resolution source.
+        moderation_media_local = final_media_local
+        if media_type == "IMAGE":
+            moderation_media_local = _make_image_moderation_proxy(Path(final_media_local), temp_dir)
+
+        text_fingerprint = None
+        text_signals = {}
+        if combined_text:
+            try:
+                text_fingerprint, text_signals = cached_or_none_for_text(combined_text)
+            except Exception:
+                logger.info("Text moderation cache unavailable for post %s", post_id, exc_info=True)
+                text_signals = {}
+
+        media_fingerprint = None
+        media_signals = {}
+        try:
+            media_fingerprint, media_signals = cached_or_none_for_file(media_type, moderation_media_local)
+        except Exception:
+            logger.info("Media moderation cache unavailable for post %s", post_id, exc_info=True)
+            media_signals = {}
+
+        text_needed = bool(combined_text) and not text_signals
+        media_needed = not media_signals
+
+        if text_needed and media_needed:
+            from safety.remote_client import enabled as remote_ai_enabled, moderate_upload
+
+            if remote_ai_enabled():
+                try:
+                    bundled = moderate_upload(media_type, str(moderation_media_local), combined_text)
+                    text_signals = bundled.get("text_signals") or {}
+                    media_signals = bundled.get("media_signals") or {}
+                except Exception:
+                    # Do not fan one failed upload into two more GPU retries.
+                    # Fail closed and let the existing redrive flow retry later.
+                    logger.warning("Bundled AI moderation failed for post %s", post_id, exc_info=True)
+                    text_signals = {
+                        "category": "TEXT",
+                        "total_safety_failure": True,
+                        "errors": ["remote_ai_upload_bundle_unavailable"],
+                    }
+                    media_signals = {
+                        "category": media_type,
+                        "total_safety_failure": True,
+                        "errors": ["remote_ai_upload_bundle_unavailable"],
+                    }
+            else:
+                text_signals, _ = evaluate(child_id, "TEXT", combined_text)
+                media_signals, _ = evaluate(child_id, media_type, str(moderation_media_local))
+        else:
+            if text_needed:
+                text_signals, _ = evaluate(child_id, "TEXT", combined_text)
+            if media_needed:
+                media_signals, _ = evaluate(child_id, media_type, str(moderation_media_local))
+
+        if combined_text and text_fingerprint and text_signals:
+            try:
+                store_cached_signals("TEXT", text_fingerprint, text_signals)
+            except Exception:
+                logger.info("Unable to persist text moderation cache for post %s", post_id, exc_info=True)
+        if media_fingerprint and media_signals:
+            try:
+                store_cached_signals(media_type, media_fingerprint, media_signals)
+            except Exception:
+                logger.info("Unable to persist media moderation cache for post %s", post_id, exc_info=True)
+
         _renew_worker_lease(post_id, worker_exec_token, 300)
-        media_signals, _ = evaluate(child_id, media_type, str(final_media_local))
         merged = _merge_signals(text_signals, media_signals)
         decision = decide(merged, safety_level(child_id), Config.ADULT_HARD_BLOCK_THRESHOLD)
         event_id = record(child_id, media_type, post_id, merged, decision)
