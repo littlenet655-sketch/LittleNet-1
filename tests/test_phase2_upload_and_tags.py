@@ -190,16 +190,11 @@ def test_upload_session_creation(client, app):
 
 def test_upload_complete_and_ownership_security(client, app):
     with app.app_context():
-        execute(
-            """INSERT INTO users(user_id, username, full_name, email, password_hash, role, age, dob, account_status)
-               VALUES(993, 'kid_a', 'Kid A', 'kida@test.com', 'scrypt:test', 'CHILD', 10, '2014-01-01', 'ACTIVE')
-               ON CONFLICT DO NOTHING"""
-        )
-        execute(
-            """INSERT INTO users(user_id, username, full_name, email, password_hash, role, age, dob, account_status)
-               VALUES(994, 'kid_b', 'Kid B', 'kidb@test.com', 'scrypt:test', 'CHILD', 10, '2014-01-01', 'ACTIVE')
-               ON CONFLICT DO NOTHING"""
-        )
+        # Upload completion is a gated child action. Provision both children
+        # through the shared test helper so face enrollment, quiz state and
+        # parent controls match a real eligible child.
+        _setup_child_and_parent(993, "kid_a")
+        _setup_child_and_parent(994, "kid_b")
 
         # Create session belonging to kid_a (993)
         u_id = str(uuid.uuid4())
@@ -259,11 +254,7 @@ def test_upload_complete_and_ownership_security(client, app):
 
 def test_upload_complete_dispatch_failure_marks_uploaded_and_retryable(client, app):
     with app.app_context():
-        execute(
-            """INSERT INTO users(user_id, username, full_name, email, password_hash, role, age, dob, account_status)
-               VALUES(996, 'kid_dispatch_err', 'Kid Dispatch', 'kiddisp@test.com', 'scrypt:test', 'CHILD', 10, '2014-01-01', 'ACTIVE')
-               ON CONFLICT DO NOTHING"""
-        )
+        _setup_child_and_parent(996, "kid_dispatch_err")
         u_id = str(uuid.uuid4())
         obj_key = f"uploads/r2/quarantine/996/{u_id}/source.mp4"
         execute(
