@@ -107,7 +107,7 @@ export function verifyParentLiveness(pendingToken: string, photoB64: string): Pr
 }
 
 export function createChild(token: string, input: CreateChildInput): Promise<{ ok: boolean; child_id: number; next_steps: string[] }> {
-  return post(routes.parentCreateChild, { ...input }, token);
+  return post(routes.parentCreateChild, { ...input }, token, 60000);
 }
 
 /** Child face enrollment with a fresh live camera photo (base64 JSON). Allows 60s for serverless AI cold start. */

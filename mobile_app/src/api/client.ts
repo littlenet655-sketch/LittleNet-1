@@ -194,7 +194,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
         // Caller cancellation is intentional: never retry, never misreport.
         throw parseErrorResponse(0, { error: 'request_cancelled' });
       }
-      const aborted = error instanceof DOMException && error.name === 'AbortError';
+      const aborted = (error instanceof Error && error.name === 'AbortError') || (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError');
       const networkError = parseErrorResponse(0, { error: aborted ? 'request_timeout' : 'network_unreachable' });
       if (shouldRetryRequest(method, attempt, 0)) {
         attempt += 1;
