@@ -481,7 +481,15 @@ def resolve_video_playback(
 
     provider_name = asset.get("provider")
     if provider_name == "CLOUDFLARE_STREAM":
-        provider: VideoDeliveryProvider = CloudflareStreamDeliveryProvider()
+        stream_provider = CloudflareStreamDeliveryProvider()
+        # Historical hardening builds could have persisted placeholder Stream
+        # asset IDs before real Stream ingestion existed. Never construct a fake
+        # HLS URL from those rows: serve the already-sanitized private R2
+        # published reference until a verified Stream provider is available.
+        provider: VideoDeliveryProvider = (
+            stream_provider if stream_provider.is_configured()
+            else SanitizedMP4DeliveryProvider()
+        )
     else:
         provider = SanitizedMP4DeliveryProvider()
 
