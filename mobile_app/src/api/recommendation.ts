@@ -1,7 +1,7 @@
 import { apiRequest, routes } from './client';
 
-export type RecommendationSourceType = 'SOCIAL';
-export type RecommendationAction = 'NOT_INTERESTED';
+export type RecommendationSourceType = 'SOCIAL' | 'CURATED';
+export type RecommendationAction = 'NOT_INTERESTED' | 'HIDE' | 'SEARCH_CLICK';
 
 export interface RecommendationActionInput {
   source_type: RecommendationSourceType;
