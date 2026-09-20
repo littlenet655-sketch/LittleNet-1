@@ -1,4 +1,8 @@
-"""High-load synthetic benchmarking and performance measurement for LittleNet.
+"""In-process LittleNet pipeline benchmark.
+
+This script is useful for regression profiling, NOT evidence of real concurrent
+users or production capacity. For real staging load, use tools/k6_load_test.js
+against an authorized HTTPS deployment and retain the raw k6 output.
 
 Measures:
 - GET /api/mobile/v2/kids/feed
@@ -89,6 +93,9 @@ def run_benchmark_stage(app, concurrency: int, duration_sec: float = 2.0):
     total_requests = 0
     start_time = time.monotonic()
     end_time = start_time + duration_sec
+    # Flask's in-process test client benchmark intentionally caps worker
+    # threads. requested_concurrency is a scenario label, not a claim that this
+    # process generated that many simultaneous network clients.
     num_workers = min(concurrency, 16)
 
     def worker_loop(worker_id: int):
@@ -131,7 +138,9 @@ def run_benchmark_stage(app, concurrency: int, duration_sec: float = 2.0):
     error_rate = (errors / total_requests) * 100.0 if total_requests > 0 else 0.0
 
     return {
-        "concurrency": concurrency,
+        "requested_concurrency": concurrency,
+        "actual_worker_threads": num_workers,
+        "benchmark_type": "in_process_flask_test_client",
         "total_requests": total_requests,
         "rps": round(rps, 1),
         "p50_ms": round(p50, 2),
@@ -155,13 +164,19 @@ def run_all_stages():
     print("\n=======================================================", flush=True)
     print("LITTLENET HIGH-LOAD BENCHMARK SUITE (P24)", flush=True)
     print("=======================================================", flush=True)
-    print(f"{'Concurrency':<12} | {'RPS':<10} | {'p50 (ms)':<10} | {'p95 (ms)':<10} | {'p99 (ms)':<10} | {'Error %':<8}", flush=True)
+    print("NOTE: this is an in-process regression profiler; it is not a production load-test result.", flush=True)
+    print(f"{'Scenario':<12} | {'Workers':<8} | {'RPS':<10} | {'p50 (ms)':<10} | {'p95 (ms)':<10} | {'p99 (ms)':<10} | {'Error %':<8}", flush=True)
     print("-" * 72, flush=True)
 
     for c in stages:
         res = run_benchmark_stage(app, concurrency=c, duration_sec=2.0)
         results.append(res)
-        print(f"{res['concurrency']:<12} | {res['rps']:<10} | {res['p50_ms']:<10} | {res['p95_ms']:<10} | {res['p99_ms']:<10} | {res['error_rate_pct']:<8}", flush=True)
+        print(
+            f"{res['requested_concurrency']:<12} | {res['actual_worker_threads']:<8} | "
+            f"{res['rps']:<10} | {res['p50_ms']:<10} | {res['p95_ms']:<10} | "
+            f"{res['p99_ms']:<10} | {res['error_rate_pct']:<8}",
+            flush=True,
+        )
 
     print("=======================================================\n", flush=True)
     return results

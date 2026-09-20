@@ -45,7 +45,6 @@ web_image = (
             "LITTLENET_RESEND_FROM_EMAIL": "no-reply@littlenet.in",
             "LITTLENET_RESEND_DOMAIN_VERIFIED": "1",
             "ENABLE_DEV_OTP": "0",
-            "CLOUDFLARE_STREAM_ENABLED": "0",
             "STRICT_PRODUCTION_PREFLIGHT": "1",
             "LITTLENET_USE_MODAL_QUEUE": "1",
             "DBMATE_MIGRATIONS_DIR": "/root/littlenet/db/migrations",
@@ -205,6 +204,7 @@ def web_preflight(deep_ai_probe: bool = False):
     from services.object_storage import healthcheck as r2_healthcheck
     from services.media_outbox import reconcile_pending_deletes
     from services.job_queue import validate_job_queue_config
+    from services.video_delivery import video_delivery_healthcheck
 
     db = fetch_one("SELECT 1 ok")
     schema = dict(fetch_one("""
@@ -256,6 +256,7 @@ def web_preflight(deep_ai_probe: bool = False):
     # LittleNet sender. It must never pass through SMTP or a sandbox sender.
     mail = _mail_healthcheck(strict_production=True)
     r2 = r2_healthcheck()
+    video_delivery = video_delivery_healthcheck()
     if r2.get("ok") and schema.get("media_delete_outbox"):
         try:
             media_outbox = reconcile_pending_deletes(100)
@@ -275,6 +276,7 @@ def web_preflight(deep_ai_probe: bool = False):
         "base_url": {"ok": public_base_url, "value": base_url},
         "mail": mail,
         "r2": r2,
+        "video_delivery": video_delivery,
         "media_delete_outbox": media_outbox,
     }
     strict_mail = os.getenv("STRICT_PRODUCTION_PREFLIGHT", "").strip().lower() in {"1", "true", "yes"}
@@ -283,7 +285,7 @@ def web_preflight(deep_ai_probe: bool = False):
     report["ok"] = bool(
         report["database"] and schema_ok and quiz_count > 0 and ai.get("ok")
         and queue.get("ok") and pii_ok and liveness_assets and public_base_url
-        and mail_passes and r2.get("ok") and media_outbox.get("ok")
+        and mail_passes and r2.get("ok") and video_delivery.get("ok") and media_outbox.get("ok")
     )
     return json.loads(json.dumps(report, default=str))
 

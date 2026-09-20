@@ -104,14 +104,17 @@ def test_resend_webhook_updates_delivery_state(monkeypatch):
     assert "Mailbox does not exist" in params[3]
 
 
-def test_cloudflare_stream_adapter_stays_disabled(monkeypatch):
+def test_cloudflare_stream_requires_complete_opt_in(monkeypatch):
     from services.video_delivery import CloudflareStreamDeliveryProvider
 
     monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
     monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acct")
     monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "token")
-
+    monkeypatch.delenv("CLOUDFLARE_STREAM_SUBDOMAIN", raising=False)
     assert CloudflareStreamDeliveryProvider().is_configured() is False
+
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test")
+    assert CloudflareStreamDeliveryProvider().is_configured() is True
 
 def test_historical_stream_asset_falls_back_to_private_r2(monkeypatch):
     import services.video_delivery as vd

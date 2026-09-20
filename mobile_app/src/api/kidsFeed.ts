@@ -11,6 +11,10 @@ export interface FeedItem {
   media_url?: string | null;
   poster_url?: string | null;
   playback_expires_at?: number | null;
+  playback_ready?: boolean;
+  delivery_type?: 'JIT' | 'MP4' | 'HLS' | string;
+  duration_ms?: number;
+  aspect_ratio?: string;
   title?: string;
   caption?: string;
   content_category?: string;

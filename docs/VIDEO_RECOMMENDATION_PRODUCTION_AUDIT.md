@@ -1,104 +1,83 @@
 # LittleNet Video & Recommendation Production Audit
 
-**Audit date:** 2026-09-20  
-**Fix branch:** `fix/release-blockers-20260920`
+**Re-audit date:** 20 September 2026
 
-## Verified implementation
+## Video implementation
 
-### Reel player
+### Mobile player
 
-The React Native app currently uses `expo-video` and has:
+Current React Native Reel playback includes:
 
-- a single active Reel;
-- current/adjacent loading bounds;
-- poster until first frame;
-- background/focus pause behavior;
-- buffering state with debounce;
-- signed playback credential refresh;
-- batched impression telemetry.
+- exactly one active Reel;
+- bounded adjacent loading;
+- native `expo-video` player;
+- short-form buffer policy;
+- poster until actual first-frame render;
+- debounced buffering UI;
+- background/focus pause;
+- JIT playback credentials for social Reels;
+- pre-expiry credential refresh using the refreshed expiry value;
+- bounded retry;
+- impression batching;
+- corrected completion/replay and initial-load/rebuffer telemetry semantics.
 
-These are implementation facts. Physical-device TTFF and rebuffer-rate numbers are **UNVERIFIED** until a current APK run captures them.
+Physical TTFF/rebuffer numbers remain **UNVERIFIED** until captured from a current Android APK.
 
-### Private R2 video delivery
+### Private R2 fallback
 
-The working fallback is private Cloudflare R2 sanitized-MP4 delivery:
+The sanitized private R2 MP4 remains the always-available fallback. Raw quarantine media is not used as public playback.
 
-```text
-R2 quarantine
- -> moderation
- -> sanitize/transcode
- -> private published object
- -> authorized short-lived signed URL
- -> expo-video
-```
+### Cloudflare Stream adaptive path
 
-The playback TTL is centralized so the API expiry metadata and R2 presigned URL use the same effective TTL.
+The repository now contains a real opt-in provider implementation:
 
-### Cloudflare Stream
+1. LittleNet first moderates/sanitizes the video.
+2. Backend provisions a one-time Stream direct-upload URL with `requireSignedURLs=true`.
+3. The sanitized MP4 is uploaded to that URL.
+4. The real Cloudflare UID and processing state are stored in `media_assets`.
+5. Playback polls provider readiness when needed.
+6. READY assets receive a short-lived signed token.
+7. Mobile receives the signed HLS manifest URL.
+8. If Stream is not ready/configured/reachable, playback falls back to private R2 MP4.
 
-A provider abstraction exists, but the previous adapter did not perform actual Stream ingestion. It invented a provider/playback identifier and constructed an HLS URL without uploading the asset or proving READY state.
+For higher token volume, the provider supports a Stream signing key stored only in backend secrets; the token API remains a lower-volume fallback.
 
-For safety, the Stream provider is now **intentionally disabled**. Setting `CLOUDFLARE_STREAM_ENABLED=1` does not activate the incomplete adapter. LittleNet continues to use the private R2 sanitized-MP4 provider.
-
-Cloudflare Stream must not be marked LIVE or READY until real ingestion, provider status verification and private playback signing are implemented.
+**Live Cloudflare Stream ingestion/HLS remains UNVERIFIED until credentials are configured and a real asset is exercised.**
 
 ## Recommendation implementation
 
-The current v2 feed/Reels flow now routes merged eligible candidates through `services.recommendation.rank_candidates()` before diversity/balance reranking and stable feed-session persistence.
-
-The current flow is therefore stronger than the previous fixed 2-social/1-curated interleave.
-
-Implemented signals include positive/negative recommendation feedback and curated-item signal support. Hard safety/parent/privacy eligibility remains before recommendation scoring.
-
-## pgvector
-
-The schema includes `item_embeddings embedding vector(384)`, so CI must run a PostgreSQL image with pgvector installed. The GitHub workflow now uses:
+The active v2 feed/Reels session path applies:
 
 ```text
-pgvector/pgvector:pg16
+hard eligibility
+ -> social + curated candidate retrieval
+ -> feedback/profile ranking
+ -> diversity rerank
+ -> stable feed session
+ -> page hydration
 ```
 
-A successful live Neon pgvector configuration does not by itself prove that every CI/bootstrap environment is valid; CI must pass independently.
+Safety, parent controls, age, block/mute and publication state remain before ranking. Mobile batches watch/completion/replay/like/save impression signals.
+
+The current system is a safe hybrid ranking baseline; it is not represented as Instagram/YouTube proprietary ranking.
+
+## Scale changes
+
+- Social Reel list pages no longer mint a video playback credential for every item. Playback is requested only by the nearby player window.
+- Feed sessions prevent full reranking on every pagination request.
+- Remote GPU ranking remains opt-in so feed requests do not wake Modal T4 by default.
+- k6 requires an explicit staging URL/token and has an optional 10 -> 1000 VU profile.
+- The Python benchmark is explicitly labelled an in-process regression profiler and exposes its actual worker-thread cap.
 
 ## Performance evidence
 
-The previously documented exact values such as:
-
-- 620.8 RPS at 1000 users;
-- TTFF p75 = 1.18 s;
-- rebuffer ratio = 0.34%;
-- fixed per-stage ranking latencies;
-
-are **not treated as verified release evidence unless the raw benchmark output is retained and tied to the current commit/environment**.
-
-Current production audit status:
-
-| Measurement | Status |
+| Measurement | Current evidence |
 |---|---|
-| 10-user load | UNVERIFIED on current branch |
-| 50-user load | UNVERIFIED on current branch |
-| 100-user load | UNVERIFIED on current branch |
-| 250-user load | UNVERIFIED on current branch |
-| 500-user load | UNVERIFIED on current branch |
-| 1000-user load | UNVERIFIED on current branch |
-| Android TTFF p75 | UNVERIFIED on current build |
-| Android rebuffer ratio | UNVERIFIED on current build |
-| Cloudflare Stream HLS/ABR | UNVERIFIED / provider disabled |
+| Backend/RN regression | automated CI evidence |
+| Android TTFF | UNVERIFIED |
+| Android rebuffer ratio | UNVERIFIED |
+| Adaptive HLS/ABR | source implemented; LIVE UNVERIFIED |
+| 10/50/100/250/500/1000 VU staging | UNVERIFIED |
+| Production DB pool under load | UNVERIFIED |
 
-## Required next evidence
-
-Before claiming large-scale readiness:
-
-1. run green CI against pgvector-enabled PostgreSQL;
-2. build/install the current Android artifact;
-3. capture real TTFF, stall and credential-refresh data;
-4. run load tests against an isolated staging environment;
-5. retain raw k6/Locust output with commit SHA;
-6. measure database connection use and API error rate;
-7. implement and verify real Cloudflare Stream ingestion before enabling it.
-
-## Current conclusion
-
-The Reel controller, private R2 fallback, recommendation ranker wiring and telemetry architecture are useful production-candidate foundations. They are not evidence of Instagram/YouTube-scale performance by themselves.
-
-The accurate status is **IMPLEMENTED / AUTOMATED VERIFICATION IN PROGRESS**, with Cloudflare Stream and physical-device performance still **UNVERIFIED**.
+No exact throughput/latency number should be quoted until raw output is retained with environment and commit SHA.

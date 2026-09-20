@@ -1,6 +1,6 @@
 # LittleNet on Modal
 
-_Last updated: 2026-09-07_
+_Last updated: 2026-09-20_
 
 ## Architecture
 
@@ -29,7 +29,7 @@ MODAL_TOKEN_ID
 MODAL_TOKEN_SECRET
 ```
 
-These are intentionally not committed. The 2026-09-07 live-release run proved they are currently missing from GitHub Actions. Add them in the repository Actions secrets, then rerun **Deploy & Validate LittleNet Live**.
+These values are intentionally not committed. The deployment workflow validates them at runtime and fails before spending GPU credits when they are absent or invalid.
 
 ## Modal secrets
 
@@ -49,15 +49,31 @@ AI_SERVICE_URL
 AI_SHARED_SECRET
 ```
 
-The live release preflight additionally requires a real public `BASE_URL`, working private R2 storage, and working Resend credentials. Put the web and R2 values in `littlenet-web-secrets`:
+The live release preflight additionally requires a real public `BASE_URL`, working private R2 storage, and working Resend credentials.
+
+Put `BASE_URL` in `littlenet-web-secrets`. Put private media credentials in the separately mounted `littlenet-r2` secret:
 
 ```text
-BASE_URL
 R2_ACCOUNT_ID
 R2_ACCESS_KEY_ID
 R2_SECRET_ACCESS_KEY
 R2_BUCKET
+R2_SIGNED_URL_TTL
 ```
+
+Optional adaptive video settings also belong in `littlenet-r2` because that secret is mounted only on backend functions:
+
+```text
+CLOUDFLARE_STREAM_ENABLED=1
+CLOUDFLARE_STREAM_ACCOUNT_ID
+CLOUDFLARE_STREAM_API_TOKEN
+CLOUDFLARE_STREAM_SUBDOMAIN
+CLOUDFLARE_STREAM_API_TIMEOUT_SECONDS
+CLOUDFLARE_STREAM_SIGNING_KEY_ID
+CLOUDFLARE_STREAM_SIGNING_PRIVATE_KEY_B64
+```
+
+Leave `CLOUDFLARE_STREAM_ENABLED` unset/0 until real Stream credentials are configured. LittleNet then stays on its private sanitized R2 MP4 path.
 
 For mail, configure the verified Resend production sender in the `littlenet-email` Modal secret. `modal_web.py` attaches this secret to the live web function; updating only a local Replit secret or only `littlenet-web-secrets` does not refresh the running deployment.
 
@@ -78,19 +94,24 @@ RESEND_FROM_NAME
 The sender must be a domain-verified LittleNet address. Configure a Resend webhook for `https://<public-littlenet-web-url>/webhooks/resend` and subscribe to delivery, bounce, failed, suppressed and complaint events. `RESEND_WEBHOOK_SECRET` must be the signing secret for that webhook. LittleNet deliberately does not fall back to a sandbox sender, SMTP, or demo delivery because parent OTP success must prove real inbox delivery.
 
 
-A complete example is:
+A complete split-secret example is:
 
 ```bash
-modal secret create littlenet-web-secrets \
+modal secret create littlenet-web-secrets --force \
   DATABASE_URL="postgresql://..." \
   SECRET_KEY="<long-random-flask-secret>" \
   AI_SERVICE_URL="https://<modal-ai-web-url>" \
   AI_SHARED_SECRET="<same-shared-secret>" \
-  BASE_URL="https://<public-littlenet-web-url>" \
+  BASE_URL="https://<public-littlenet-web-url>"
+```
+
+```bash
+modal secret create littlenet-r2 --force \
   R2_ACCOUNT_ID="<cloudflare-account-id>" \
   R2_ACCESS_KEY_ID="<r2-access-key>" \
   R2_SECRET_ACCESS_KEY="<r2-secret-key>" \
   R2_BUCKET="<private-bucket-name>" \
+  R2_SIGNED_URL_TTL="600"
 ```
 
 ```bash
@@ -101,7 +122,7 @@ modal secret create littlenet-email --force \
   RESEND_FROM_NAME="LittleNet"
 ```
 
-The release preflight validates the database/schema, quiz bank, AI health, Presidio PII detection, MediaPipe liveness assets, public `BASE_URL`, Resend delivery, and R2 bucket access instead of silently falling back to demo behavior.
+The release preflight validates the database/schema, quiz bank, AI configuration, Presidio PII detection, MediaPipe liveness assets, public `BASE_URL`, Resend readiness, R2 bucket access and the configured video-delivery provider. If Stream is disabled, the private R2 fallback is the accepted provider; if Stream is enabled, its API configuration must pass.
 
 ## Recommended release path
 

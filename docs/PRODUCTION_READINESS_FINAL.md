@@ -1,89 +1,87 @@
 # LittleNet Production Readiness Assessment
 
 **Assessment date:** 2026-09-20  
-**Fix branch:** `fix/release-blockers-20260920`  
-**Classification:** **PRODUCTION CANDIDATE — VERIFICATION PENDING**
+**Re-audit branch:** `audit/repo-completion-20260920`  
+**Classification:** **PRODUCTION CANDIDATE — LIVE/DEVICE VERIFICATION PENDING**
 
-This document uses evidence states consistently:
+Evidence states:
 
 - **IMPLEMENTED** — source exists.
-- **AUTOMATED_TESTED** — covered by automated tests.
-- **LIVE_SERVICE_VERIFIED** — exercised against the configured live service.
-- **DEVICE_VERIFIED** — exercised on a physical Android device with the current build.
-- **UNVERIFIED** — no current evidence is available.
+- **AUTOMATED_TESTED** — current automated suite covers the contract.
+- **LIVE_SERVICE_VERIFIED** — exercised against the configured external service.
+- **DEVICE_VERIFIED** — exercised on a physical Android device using the current artifact.
+- **UNVERIFIED** — current evidence is missing.
 
-A source implementation is not treated as live or device verification.
+## Current repository gates
 
-## Critical release gates
-
-| Gate | Current state | Evidence / blocker |
+| Gate | State | Evidence / remaining requirement |
 |---|---|---|
-| Clean PostgreSQL bootstrap | **AUTOMATED_TESTED** | PR CI uses `pgvector/pgvector:pg16`, applies dbmate migrations, and completed successfully. |
-| Backend regression suite | **AUTOMATED_TESTED** | PR CI completed with **407 passed, 2 skipped**; migration-critical and Agent-A suites also passed. |
-| Python security scan | **AUTOMATED_TESTED** | PR `python-security` job passed after replacing the Expo push `urlopen` path. |
-| Secret scan | **AUTOMATED_TESTED** | PR Gitleaks job passed on the current fix branch. |
-| Mobile TypeScript | **AUTOMATED_TESTED** | Current PR React Native workflow passed `npm run typecheck`. |
-| Mobile tests | **AUTOMATED_TESTED** | Current PR React Native workflow passed **83/83** tests across 19 suites. |
-| Expo dependency alignment | **AUTOMATED_TESTED** | `expo 57.0.24`, `expo-image-picker ~57.0.19`; current PR reports **Dependencies are up to date**. |
-| Android export | **AUTOMATED_TESTED** | Current PR Android export passed and produced the Hermes Android bundle. This is not physical-device verification. |
-| Production OTP secrecy | **IMPLEMENTED** | Production cannot expose/print `dev_code`; development OTP now requires explicit non-production opt-in. |
-| Resend acceptance vs delivery | **IMPLEMENTED** | Provider acceptance is recorded separately; verified webhook records delivered/bounced/suppressed/failed states. |
-| Resend webhook | **IMPLEMENTED / LIVE UNVERIFIED** | Requires `RESEND_WEBHOOK_SECRET` and a live Resend webhook configuration pointing to `/webhooks/resend`. |
-| Direct R2 media pipeline | **IMPLEMENTED** | Private sanitized MP4 remains the authoritative production fallback. |
-| Cloudflare Stream | **DISABLED / UNVERIFIED** | Adapter is intentionally fail-closed because real Stream ingestion, readiness confirmation, and private token minting are not yet implemented. |
-| Recommendation ranker wiring | **AUTOMATED_TESTED** | Current feed-session creation calls `rank_candidates()` and the recommendation/feed regression suite passed; large-scale load claims remain unverified. |
-| Physical guardian camera | **UNVERIFIED** | Must be tested with current APK on Android hardware. |
-| Physical child face enrollment/login | **UNVERIFIED** | Must be tested with current APK and live AI service. |
-| Physical Reel playback | **UNVERIFIED** | Must be tested on current APK with real network transitions. |
-| Push delivery to device | **UNVERIFIED** | Requires a current Expo push token and physical device. |
+| Clean PostgreSQL + pgvector bootstrap | **AUTOMATED_TESTED** | CI uses pgvector PostgreSQL and dbmate migrations. |
+| Backend regression | **AUTOMATED_TESTED** | Base main passed 407 tests with 2 skips; this re-audit branch must pass CI before merge. |
+| Python security + secret scan | **AUTOMATED_TESTED** | Base main green; rerun required on this branch. |
+| React Native TypeScript/tests/export | **AUTOMATED_TESTED** | Base main passed typecheck, 83/83 tests and Android export; rerun required after JIT Reel changes. |
+| Production OTP secrecy | **AUTOMATED_TESTED** | Production cannot expose/print `dev_code`. |
+| Resend lifecycle receiver | **IMPLEMENTED** | Signed webhook handler stores accepted/delivered/bounced/suppressed/failed states. |
+| Resend account webhook | **UNVERIFIED** | Connected Resend account currently has no configured webhook; configure it before live release. |
+| Private R2 media fallback | **AUTOMATED_TESTED** | Sanitized private MP4 + signed playback remains authoritative fallback. |
+| Adaptive Cloudflare Stream | **IMPLEMENTED / LIVE UNVERIFIED** | Real direct upload, real UID/status, signed HLS and R2 fallback exist; remains opt-in pending credentials and live proof. |
+| Recommendation/feed sessions | **AUTOMATED_TESTED** | Safe ranking + stable sessions + feedback/impression batching exist. |
+| Social Reel JIT playback | **IMPLEMENTED** | Page metadata no longer mints playback credentials for unseen social Reels; current/adjacent player fetches JIT. |
+| APK release workflow | **IMPLEMENTED** | EAS workflow now waits for a preview APK, downloads it and retains build/SHA evidence. Must be triggered with real Expo credentials. |
+| Guardian camera | **UNVERIFIED ON DEVICE** | Physical current-APK test required. |
+| Child face enrollment/login | **UNVERIFIED ON DEVICE** | Physical current-APK test required. |
+| Reel TTFF/rebuffer/background resume | **UNVERIFIED ON DEVICE** | Must be measured on current APK. |
+| Two-child publication visibility | **UNVERIFIED ON DEVICE** | Must be proven with two eligible demo children. |
+| Push delivery | **UNVERIFIED ON DEVICE** | Requires real Expo device token. |
 
-## OTP security contract
+## Production OTP contract
 
-Production must satisfy all of the following:
+Production must satisfy:
 
-1. `ENABLE_DEV_OTP` is absent or `0`.
-2. The registration/resend APIs never return `dev_code` in production.
+1. `ENABLE_DEV_OTP` absent or `0`.
+2. No production registration/resend response returns `dev_code`.
 3. OTP values are not printed to production logs.
-4. A Resend HTTP 200/201 is treated as provider acceptance, not proof of mailbox delivery.
-5. Resend webhook events update the delivery lifecycle.
-6. Bounced/suppressed addresses are surfaced to the OTP screen.
-7. Hard-bounced addresses are not automatically unsuppressed.
+4. Resend API acceptance is not treated as delivery.
+5. The live Resend webhook points to `/webhooks/resend` and its signing secret is mounted in Modal.
+6. Hard-bounced addresses are not automatically unsuppressed.
 
-## Video delivery contract
+## Video contract
 
-The verified production fallback remains:
+Default safe path:
 
 ```text
-mobile
-  -> signed private R2 quarantine upload
-  -> moderation
-  -> sanitized H.264 MP4 + poster
-  -> private published R2 object
-  -> short-lived authorized signed playback URL
-  -> expo-video
+direct private R2 quarantine
+ -> moderation
+ -> sanitize / strip user audio
+ -> private published R2 MP4 + poster
+ -> authorized signed playback
 ```
 
-Cloudflare Stream is **not** considered implemented merely because a provider class exists. It remains disabled until all of these are implemented and verified:
+Optional adaptive path when explicitly configured:
 
-- real Stream API ingestion;
-- real provider UID persistence;
-- PROCESSING -> READY status from provider evidence;
-- signed/private playback credentials;
-- webhook or reliable status polling;
-- deletion/retry behavior;
-- Android HLS/ABR device verification.
+```text
+same sanitized MP4
+ -> Cloudflare Stream one-time private direct upload
+ -> real Stream UID
+ -> ENCODING
+ -> readiness poll
+ -> READY
+ -> short-lived signed HLS
+```
+
+If Stream is unavailable, not configured, still encoding or token generation fails, LittleNet returns to the private sanitized R2 MP4. Stream is not a moderation authority and never bypasses the LittleNet ALLOW gate.
 
 ## Final release requirement
 
-LittleNet may be called **PRODUCTION READY** only after the current commit has:
+Do not label LittleNet **PRODUCTION READY** until the current merged commit has:
 
-1. green backend, security, secret-scan and mobile CI;
-2. clean schema/migration bootstrap;
-3. live Resend webhook configuration and one delivered + one controlled failure verification;
-4. real OTP flow without `dev_code`;
-5. current APK installation on physical Android;
-6. guardian camera, child face, upload/moderation and Reel playback device journeys;
-7. REVIEW/BLOCK non-leakage verification;
-8. current evidence recorded with commit SHA and device/build identifiers.
-
-Until those gates are complete, the correct classification is **PRODUCTION CANDIDATE — VERIFICATION PENDING**.
+1. green backend/security/mobile CI;
+2. live Modal deployment + strict preflight;
+3. enabled Resend webhook + delivered OTP evidence;
+4. current EAS preview APK artifact;
+5. physical Android parent/guardian/child face journey;
+6. safe image and Reel ALLOW/playback journey;
+7. second-child visibility;
+8. REVIEW/BLOCK non-leakage;
+9. push delivery if push is part of the demo claim;
+10. raw staging load evidence before making high-scale performance claims.

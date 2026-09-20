@@ -20,6 +20,7 @@ from services.video_delivery import (
     get_video_provider,
     probe_video_metadata,
     resolve_video_playback,
+    video_delivery_healthcheck,
 )
 
 
@@ -38,15 +39,137 @@ def test_video_delivery_provider_selection(monkeypatch):
     assert isinstance(p, SanitizedMP4DeliveryProvider)
     assert p.provider_name == "R2_SANITIZED_MP4"
 
-    # Credentials alone must never activate the incomplete Stream adapter.
+    # Stream activates only with an explicit flag and complete server-side config.
     monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
     monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
     monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test")
     p2 = get_video_provider()
-    assert isinstance(p2, SanitizedMP4DeliveryProvider)
-    assert p2.provider_name == "R2_SANITIZED_MP4"
-    assert CloudflareStreamDeliveryProvider().is_configured() is False
+    assert isinstance(p2, CloudflareStreamDeliveryProvider)
+    assert p2.provider_name == "CLOUDFLARE_STREAM"
+    assert p2.is_configured() is True
 
+
+
+def test_cloudflare_stream_ingest_uses_private_direct_upload(tmp_path, monkeypatch):
+    video = tmp_path / "sanitized.mp4"
+    video.write_bytes(b"video-bytes")
+
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test")
+
+    provider = CloudflareStreamDeliveryProvider()
+    seen = {"api": [], "upload": []}
+
+    def fake_api(method, suffix, json_body=None):
+        seen["api"].append((method, suffix, json_body))
+        if suffix == "/direct_upload":
+            return {"uid": "stream_uid_1", "uploadURL": "https://upload.videodelivery.net/once"}
+        if suffix == "/stream_uid_1":
+            return {
+                "uid": "stream_uid_1",
+                "readyToStream": False,
+                "status": {"state": "inprogress"},
+                "duration": 12,
+                "input": {"width": 720, "height": 1280},
+            }
+        raise AssertionError(suffix)
+
+    upload_response = MagicMock()
+    upload_response.raise_for_status.return_value = None
+
+    monkeypatch.setattr(provider, "_api_request", fake_api)
+    monkeypatch.setattr("services.video_delivery.requests.post", lambda url, files, timeout: (seen["upload"].append((url, timeout)) or upload_response))
+    monkeypatch.setattr("services.video_delivery.fetch_one", lambda *a, **k: {"media_id": 44})
+    writes = []
+    monkeypatch.setattr("services.video_delivery.execute", lambda sql, params=(), **kwargs: writes.append((sql, params)))
+
+    result = provider.ingest(
+        post_id=101,
+        source_r2_key="uploads/r2/quarantine/101/source.mp4",
+        published_ref="uploads/r2/published/101/clean.mp4",
+        poster_ref="uploads/r2/published/101/poster.jpg",
+        local_file=video,
+        metadata={"duration_ms": 12000, "width": 720, "height": 1280, "aspect_ratio": "9:16"},
+    )
+
+    provision = seen["api"][0]
+    assert provision[0:2] == ("POST", "/direct_upload")
+    assert provision[2]["requireSignedURLs"] is True
+    assert seen["upload"][0][0].startswith("https://upload.videodelivery.net/")
+    assert result["provider_asset_id"] == "stream_uid_1"
+    assert result["status"] == "ENCODING"
+    assert writes
+
+
+
+def test_cloudflare_stream_ingest_reuses_existing_uid_on_retry(tmp_path, monkeypatch):
+    video = tmp_path / "sanitized.mp4"
+    video.write_bytes(b"video-bytes")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test")
+
+    provider = CloudflareStreamDeliveryProvider()
+    existing = {
+        "media_id": 44,
+        "post_id": 101,
+        "provider": "CLOUDFLARE_STREAM",
+        "provider_asset_id": "stream_uid_existing",
+        "playback_id": "stream_uid_existing",
+        "published_reference": "uploads/r2/published/101/clean.mp4",
+        "status": "ENCODING",
+    }
+    monkeypatch.setattr("services.video_delivery.get_video_asset", lambda _post_id: existing)
+    monkeypatch.setattr(
+        provider,
+        "_api_request",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("retry must not provision another Stream asset")),
+    )
+
+    result = provider.ingest(
+        post_id=101,
+        source_r2_key="uploads/r2/quarantine/101/source.mp4",
+        published_ref=existing["published_reference"],
+        poster_ref=None,
+        local_file=video,
+    )
+
+    assert result["provider_asset_id"] == "stream_uid_existing"
+    assert result["status"] == "ENCODING"
+
+def test_cloudflare_stream_ready_playback_uses_signed_hls(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test.cloudflarestream.com")
+
+    provider = CloudflareStreamDeliveryProvider()
+    asset = {
+        "media_id": 44,
+        "post_id": 101,
+        "published_reference": "uploads/r2/published/101/clean.mp4",
+        "poster_reference": None,
+        "provider_asset_id": "stream_uid_1",
+        "playback_id": "stream_uid_1",
+        "status": "READY",
+        "duration_ms": 12000,
+        "width": 720,
+        "height": 1280,
+        "aspect_ratio": "9:16",
+    }
+
+    monkeypatch.setattr("services.video_delivery.is_authorized_viewer", lambda *a, **k: True)
+    monkeypatch.setattr(provider, "_signed_token", lambda uid, expires_at: "signed.jwt.token")
+    result = provider.get_playback_info(asset, viewer_id=7, viewer_role="CHILD", expires_seconds=300)
+
+    assert result["delivery_type"] == "HLS"
+    assert result["provider"] == "CLOUDFLARE_STREAM"
+    assert result["playback_url"] == "https://customer-test.cloudflarestream.com/signed.jwt.token/manifest/video.m3u8"
+    assert result["playback_expires_at"] > int(__import__("time").time())
 
 def test_sanitized_mp4_playback_authorized():
     asset = {
@@ -83,6 +206,34 @@ def test_cloudflare_stream_playback_fail_closed_unauthorized():
         assert res["playback_url"] is None
         assert res["delivery_mode"] == "DENIED"
 
+
+
+def test_video_delivery_healthcheck_private_r2_default(monkeypatch):
+    monkeypatch.delenv("CLOUDFLARE_STREAM_ENABLED", raising=False)
+    result = video_delivery_healthcheck()
+    assert result == {
+        "ok": True,
+        "provider": "R2_SANITIZED_MP4",
+        "adaptive_streaming": False,
+        "mode": "private_r2_fallback",
+    }
+
+
+def test_video_delivery_healthcheck_stream_api(monkeypatch):
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test")
+
+    response = MagicMock()
+    response.raise_for_status.return_value = None
+    response.json.return_value = {"success": True, "result": []}
+    monkeypatch.setattr("services.video_delivery.requests.get", lambda *a, **k: response)
+
+    result = video_delivery_healthcheck()
+    assert result["ok"] is True
+    assert result["provider"] == "CLOUDFLARE_STREAM"
+    assert result["mode"] == "api_verified"
 
 def test_push_notifications_privacy_filter():
     sent_payloads = []

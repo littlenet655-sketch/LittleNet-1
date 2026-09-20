@@ -1,57 +1,82 @@
 import http from 'k6/http';
-import { check, sleep } from 'k6';
+import { check, fail, sleep } from 'k6';
+
+const FULL = (__ENV.LOAD_PROFILE || '').toLowerCase() === 'full';
 
 export const options = {
-  stages: [
-    { duration: '10s', target: 5 },  // 5 VUs for 10s
-    { duration: '15s', target: 10 }, // 10 VUs for 15s
-    { duration: '5s', target: 0 },   // ramp-down
-  ],
+  stages: FULL
+    ? [
+        { duration: '20s', target: 10 },
+        { duration: '20s', target: 50 },
+        { duration: '20s', target: 100 },
+        { duration: '30s', target: 250 },
+        { duration: '30s', target: 500 },
+        { duration: '30s', target: 1000 },
+        { duration: '15s', target: 0 },
+      ]
+    : [
+        { duration: '10s', target: 5 },
+        { duration: '20s', target: 10 },
+        { duration: '10s', target: 0 },
+      ],
   thresholds: {
-    http_req_failed: ['rate<0.05'], // < 5% error rate
+    http_req_failed: ['rate<0.02'],
+    http_req_duration: ['p(95)<1000'],
   },
 };
 
-const BASE_URL = __ENV.BASE_URL || 'http://127.0.0.1:5000';
-const TOKEN = __ENV.TOKEN || 'eyJ1aWQiOjM4LCJyb2xlIjoiQ0hJTEQiLCJuYW1lIjoiQ2hpbGQgQWNjZXB0YW5jZSBBIn0.aqPb3g.PI-RBZSfcoQWVJewQt8AF9ynCZY';
+const BASE_URL = (__ENV.BASE_URL || '').replace(/\/+$/, '');
+const TOKEN = __ENV.TOKEN || '';
+const REEL_ID = Number(__ENV.REEL_ID || '0');
+
+export function setup() {
+  if (!BASE_URL) {
+    fail('BASE_URL is required; run load tests only against an authorized staging environment.');
+  }
+  if (!/^https:\/\//.test(BASE_URL) && __ENV.ALLOW_HTTP_LOCAL !== '1') {
+    fail('BASE_URL must use HTTPS unless ALLOW_HTTP_LOCAL=1 is explicitly set for localhost.');
+  }
+  if (!TOKEN) {
+    fail('TOKEN is required; no bearer token is committed to the repository.');
+  }
+  return {};
+}
 
 const headers = {
-  'Authorization': `Bearer ${TOKEN}`,
+  Authorization: 'Bearer ' + TOKEN,
   'Content-Type': 'application/json',
 };
 
+function expectNonServerError(name, response) {
+  const checks = {};
+  checks[name + ': no server error'] = (r) => r.status < 500;
+  checks[name + ': not unauthorized'] = (r) => r.status !== 401;
+  check(response, checks);
+}
+
 export default function () {
-  // 1. Health check (unauthenticated)
-  const resHealth = http.get(`${BASE_URL}/healthz`);
-  check(resHealth, { 'healthz status is 200': (r) => r.status === 200 });
+  const resHealth = http.get(BASE_URL + '/healthz');
+  check(resHealth, { 'healthz: 200': (r) => r.status === 200 });
 
-  // 2. Mobile Health
-  const resMobHealth = http.get(`${BASE_URL}/api/mobile/v1/health`);
-  check(resMobHealth, { 'mobile health status is 200': (r) => r.status === 200 });
+  const resMobile = http.get(BASE_URL + '/api/mobile/v1/health');
+  check(resMobile, { 'mobile health: 200': (r) => r.status === 200 });
 
-  // 3. Profile metadata
-  const resProfile = http.get(`${BASE_URL}/api/mobile/v1/kids/profile`, { headers });
-  check(resProfile, { 'profile status is 200': (r) => r.status === 200 });
+  const resFeed = http.get(BASE_URL + '/api/mobile/v2/kids/feed?cursor=0&limit=10&mode=for_you', { headers });
+  expectNonServerError('feed', resFeed);
 
-  // 4. Feed metadata
-  const resFeed = http.get(`${BASE_URL}/api/mobile/v2/kids/feed?cursor=0&limit=10`, { headers });
-  check(resFeed, { 'feed status is 200': (r) => r.status === 200 });
+  const resReels = http.get(BASE_URL + '/api/mobile/v2/kids/reels?cursor=0&limit=8', { headers });
+  expectNonServerError('reels metadata', resReels);
 
-  // 5. Reels metadata
-  const resReels = http.get(`${BASE_URL}/api/mobile/v1/kids/reels?limit=10`, { headers });
-  check(resReels, { 'reels status is 200': (r) => r.status === 200 });
+  const resDiscover = http.get(BASE_URL + '/api/mobile/v2/kids/discover', { headers });
+  expectNonServerError('discover', resDiscover);
 
-  // 6. Notifications
-  const resNotif = http.get(`${BASE_URL}/api/mobile/v1/kids/notifications`, { headers });
-  check(resNotif, { 'notifications status is 200': (r) => r.status === 200 });
+  const resNotifications = http.get(BASE_URL + '/api/mobile/v1/kids/notifications', { headers });
+  expectNonServerError('notifications', resNotifications);
 
-  // 7. Chat GET
-  const resChat = http.get(`${BASE_URL}/api/mobile/v1/kids/chat/40?limit=10`, { headers });
-  check(resChat, { 'chat status is 200': (r) => r.status === 200 });
+  if (REEL_ID > 0) {
+    const playback = http.get(BASE_URL + '/api/mobile/v2/kids/reels/' + REEL_ID + '/playback', { headers });
+    expectNonServerError('playback credential', playback);
+  }
 
-  // 8. Discover metadata
-  const resDiscover = http.get(`${BASE_URL}/api/mobile/v2/kids/discover`, { headers });
-  check(resDiscover, { 'discover status is 200': (r) => r.status === 200 });
-
-  sleep(0.5);
+  sleep(FULL ? 0.2 : 0.5);
 }

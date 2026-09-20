@@ -8,6 +8,8 @@ export class ReelMetricsTracker {
   private durationSec = 0;
   private hasCompleted = false;
   private replays = 0;
+  private endedCount = 0;
+  private hasStartedPlayback = false;
   private ttffMs: number | null = null;
   private playRequestedAt: number | null = null;
   private rebufferCount = 0;
@@ -36,6 +38,7 @@ export class ReelMetricsTracker {
   }
 
   onPlayingStarted(): void {
+    this.hasStartedPlayback = true;
     this.lastActiveTimestamp = Date.now();
     if (this.rebufferStartedAt) {
       this.totalRebufferMs += Math.max(0, Date.now() - this.rebufferStartedAt);
@@ -51,6 +54,9 @@ export class ReelMetricsTracker {
   }
 
   onBufferingStarted(): void {
+    if (!this.hasStartedPlayback) {
+      return;
+    }
     if (this.lastActiveTimestamp) {
       this.totalWatchMs += Math.max(0, Date.now() - this.lastActiveTimestamp);
       this.lastActiveTimestamp = null;
@@ -73,8 +79,13 @@ export class ReelMetricsTracker {
   }
 
   onPlayToEnd(): void {
+    // The first natural end is completion, not a replay. Because the player
+    // loops, only subsequent completed loops count as replays.
+    if (this.endedCount > 0) {
+      this.replays += 1;
+    }
+    this.endedCount += 1;
     this.hasCompleted = true;
-    this.replays += 1;
   }
 
   onCredentialRefreshed(): void {

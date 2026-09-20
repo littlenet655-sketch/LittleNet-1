@@ -1,4 +1,4 @@
-name: Build LittleNet Android with EAS
+name: Build LittleNet Android APK with EAS
 
 on:
   workflow_dispatch:
@@ -9,7 +9,7 @@ permissions:
 jobs:
   build-android:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: mobile_app
@@ -21,7 +21,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '22.13.0'
+          node-version: '24'
           cache: npm
           cache-dependency-path: mobile_app/package-lock.json
       - name: Require Expo release configuration
@@ -30,6 +30,11 @@ jobs:
           test -n "$EXPO_OWNER" || (echo 'Missing EXPO_OWNER repository variable' && exit 1)
           test -n "$EXPO_PROJECT_ID" || (echo 'Missing EXPO_PROJECT_ID repository variable' && exit 1)
       - run: npm ci
+      - name: Validate mobile source before remote build
+        run: |
+          npm run typecheck
+          npm test
+          npx expo install --check
       - name: Inject account-owned EAS identifiers for this build only
         run: |
           node - <<'NODE'
@@ -39,4 +44,55 @@ jobs:
           p.expo.extra = { ...(p.expo.extra || {}), eas: { projectId: process.env.EXPO_PROJECT_ID } };
           fs.writeFileSync('app.json', JSON.stringify(p, null, 2) + '\n');
           NODE
-      - run: npx eas-cli@latest build --platform android --profile production --non-interactive --no-wait
+      - name: Build current HEAD preview APK and wait for completion
+        run: |
+          set -euo pipefail
+          npx eas-cli@latest build \
+            --platform android \
+            --profile preview \
+            --non-interactive \
+            --wait \
+            --json > ../eas-build.json
+      - name: Extract and download APK artifact
+        working-directory: .
+        env:
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          node - <<'NODE'
+          const fs = require('fs');
+          const raw = JSON.parse(fs.readFileSync('eas-build.json', 'utf8'));
+          const build = Array.isArray(raw) ? raw[0] : raw;
+          if (!build || typeof build !== 'object') throw new Error('EAS build JSON did not contain a build object');
+          const status = String(build.status || '').toUpperCase();
+          if (status !== 'FINISHED') throw new Error(`EAS build did not finish successfully: ${status || 'UNKNOWN'}`);
+          const buildId = String(build.id || '');
+          const buildUrl = String(build.artifacts?.buildUrl || build.artifacts?.applicationArchiveUrl || '');
+          if (!buildId || !buildUrl.startsWith('https://')) throw new Error('EAS build did not expose a downloadable Android artifact');
+          const metadata = {
+            commit_sha: process.env.GIT_SHA,
+            build_id: buildId,
+            status,
+            artifact_url: buildUrl,
+            completed_at: build.completedAt || null,
+            profile: build.buildProfile || 'preview',
+          };
+          fs.writeFileSync('eas-build-metadata.json', JSON.stringify(metadata, null, 2) + '\n');
+          fs.writeFileSync('eas-artifact-url.txt', buildUrl + '\n');
+          NODE
+          curl --fail-with-body --location --retry 3 --retry-all-errors \
+            --output LittleNet-current-main.apk \
+            "$(cat eas-artifact-url.txt)"
+          test -s LittleNet-current-main.apk
+          unzip -t LittleNet-current-main.apk >/dev/null
+          sha256sum LittleNet-current-main.apk | tee LittleNet-current-main.apk.sha256
+      - name: Upload current-HEAD APK evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: littlenet-current-main-apk
+          path: |
+            LittleNet-current-main.apk
+            LittleNet-current-main.apk.sha256
+            eas-build.json
+            eas-build-metadata.json
+          if-no-files-found: error
+          retention-days: 14
