@@ -6,11 +6,14 @@ reserved for workloads that actually need it (for example video/face paths).
 from __future__ import annotations
 
 import os
+from io import BytesIO
 from pathlib import Path
 from typing import Any
 
 
 def enabled() -> bool:
+    if os.getenv("LITTLENET_AI_SERVER") == "1":
+        return False
     raw = os.getenv("LITTLENET_USE_MODAL_IMAGE_CPU", "0").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 
@@ -39,13 +42,28 @@ def moderate_image_upload(
     ).strip() or "moderate_image_upload_cpu"
 
     fn = modal.Function.from_name(app_name, function_name)
-    payload = Path(path).read_bytes()
+
+    # Bound cross-function transfer size. Safety models resize internally, so
+    # shipping the camera's original multi-megapixel JPEG only adds latency and
+    # CPU/network billing.
+    from PIL import Image, ImageOps
+    try:
+        max_px = int(os.getenv("LITTLENET_IMAGE_MODERATION_MAX_PX", "1600"))
+    except (TypeError, ValueError):
+        max_px = 1600
+    max_px = max(640, min(max_px, 2048))
+    with Image.open(path) as raw:
+        work = ImageOps.exif_transpose(raw).convert("RGB")
+        work.thumbnail((max_px, max_px))
+        buf = BytesIO()
+        work.save(buf, format="JPEG", quality=88, optimize=True)
+        payload = buf.getvalue()
     if not payload:
         raise RuntimeError("image_payload_empty")
 
     result = fn.remote(
         payload,
-        Path(path).name,
+        "moderation.jpg",
         (text or "")[:4000],
         bool(run_text),
         bool(run_media),
