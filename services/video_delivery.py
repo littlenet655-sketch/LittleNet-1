@@ -417,6 +417,20 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
             return fallback.ingest(post_id, source_r2_key, published_ref, poster_ref, local_file, metadata)
 
         meta = metadata or probe_video_metadata(local_path)
+
+        # Idempotency for worker retries: if this post already has a real Stream
+        # UID in flight/ready, reuse it instead of creating a second billable
+        # video. FAILED assets may be retried with a fresh upload.
+        existing_asset = get_video_asset(post_id)
+        if (
+            existing_asset
+            and str(existing_asset.get("provider") or "").upper() == self.provider_name
+            and existing_asset.get("provider_asset_id")
+            and str(existing_asset.get("status") or "").upper() in {"ENCODING", "READY"}
+        ):
+            return dict(existing_asset)
+
+        uid = ""
         try:
             provision = self._api_request(
                 "POST",
@@ -453,6 +467,14 @@ class CloudflareStreamDeliveryProvider(VideoDeliveryProvider):
                 details=details,
             )
         except Exception as exc:
+            # If provisioning succeeded but a later step failed, remove the
+            # orphaned Stream object best-effort so retries do not accumulate
+            # unused billable assets.
+            if uid:
+                try:
+                    self._api_request("DELETE", f"/{uid}")
+                except Exception:
+                    logger.warning("Could not remove orphaned Cloudflare Stream asset for post %s", post_id)
             logger.warning(
                 "Cloudflare Stream ingest failed for post %s; retaining private R2 fallback: %s",
                 post_id,
