@@ -1,6 +1,7 @@
 """Backfill missing poster images for already-published curated videos.
 
 Safe defaults:
+- requires the normal production DATABASE_URL + R2 credentials at execution time
 - dry-run unless --apply is provided
 - does not re-moderate or modify delivery/original video objects
 - skips non-ALLOWED / unsafe assets
