@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://backend.test.invalid';
 
 import { setUnauthorizedHandler } from '../src/api/client';
-import { fetchFeedV2 } from '../src/api/kidsFeed';
+import { fetchFeedV2, fetchReelsV2, refreshReelPlayback } from '../src/api/kidsFeed';
 import { addComment, toggleLike, toggleSave } from '../src/api/kidsSocial';
 import { dedupeFeed, isPubliclyVisible, isTerminalStage, processingStage, runSocialPostAction, shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget } from '../src/kids/social';
 
@@ -32,6 +32,31 @@ describe('agentC feed pagination/dedupe/refresh', () => {
     assert.ok(seen[0]?.url.includes('/api/mobile/v2/kids/feed?cursor=0'));
     const merged = dedupeFeed([...page.items, ...page.items, { source_type: 'SOCIAL' as const, source_id: 2, post_id: 2 }]);
     assert.equal(merged.length, 2);
+  });
+
+  it('loads Reel metadata separately from just-in-time playback credentials', async () => {
+    stub();
+    nextStatus = 200;
+    nextPayload = {
+      ok: true,
+      items: [{ source_type: 'SOCIAL', source_id: 7, post_id: 7, media_url: null, delivery_type: 'JIT', playback_ready: true }],
+      next_cursor: 1,
+      has_more: false,
+      session_id: 'reel-s',
+    };
+    const page = await fetchReelsV2('tok', 0, 8);
+    assert.equal(page.items[0]?.media_url, null);
+    assert.equal(page.items[0]?.delivery_type, 'JIT');
+    assert.ok(seen[0]?.url.includes('/api/mobile/v2/kids/reels?cursor=0'));
+
+    nextPayload = {
+      ok: true,
+      playback_url: 'https://private.invalid/reel.m3u8',
+      playback_expires_at: 1800000000,
+    };
+    const playback = await refreshReelPlayback('tok', 7);
+    assert.equal(playback.playback_url, 'https://private.invalid/reel.m3u8');
+    assert.ok(seen[1]?.url.endsWith('/api/mobile/v2/kids/reels/7/playback'));
   });
 
   it('like/unlike and save/unsave hit real routes', async () => {
