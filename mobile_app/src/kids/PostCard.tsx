@@ -10,7 +10,7 @@ import { isPubliclyVisible, runSocialPostAction, socialPostTarget } from './soci
 import { Avatar, CategoryBadge, TimeAgo } from '../ui/social';
 import { colors, radius, spacing, type } from '../ui/tokens';
 
-export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?: () => void; onProfile?: () => void }) {
+export function PostCard({ item, onOpen, onProfile, onNotInterested }: { item: FeedItem; onOpen?: () => void; onProfile?: () => void; onNotInterested?: () => void }) {
   const { session } = useAuth();
   if (!isPubliclyVisible(item)) return null;
   const socialTarget = socialPostTarget(item);
@@ -66,6 +66,17 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?:
           <TimeAgo value={item.created_at} />
         </View>
         <CategoryBadge label={item.content_category} />
+        {onNotInterested ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Not interested"
+            onPress={onNotInterested}
+            hitSlop={8}
+            style={styles.dismiss}
+          >
+            <Feather name="eye-off" size={18} color={colors.muted} />
+          </Pressable>
+        ) : null}
       </Pressable>
       {item.title ? <Text style={styles.title}>{item.title}</Text> : null}
       {item.caption ? <Text style={styles.caption}>{item.caption}</Text> : null}
@@ -137,6 +148,7 @@ const styles = StyleSheet.create({
   actionText: { color: colors.brandDark, fontWeight: '700' },
   likeCount: { color: colors.ink, fontSize: type.caption, fontWeight: '700' },
   flex: { flex: 1 },
+  dismiss: { padding: 6 },
   icon: { color: colors.ink, fontSize: 24, lineHeight: 24 },
   liked: { color: colors.danger },
 });
