@@ -107,7 +107,8 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
                 label="Capture challenge photo"
                 busyLabel="Checking Face…"
                 busy={busy}
-                instruction="Hold the requested pose while capturing. The app checks the action locally and the server performs anti-spoof and identity checks."
+                livenessAction={challenge.action}
+                instruction="Google ML Kit will automatically scan your face and detect the challenge action. Photo captures automatically."
                 validatePhoto={(photo) => precheckFaceChallenge(photo, challenge.action)}
                 onCapture={onCapture}
               />
@@ -197,7 +198,14 @@ export function FaceEnrollScreen(_props: ChildScreenProps<'FaceEnroll'>) {
           {error ? <GateNotice error={error} /> : null}
           {checking ? <Notice tone="ok" message="Face enrolled. Checking what is next…" /> : null}
 
-          <CameraCapture label="Save My Face Key" busyLabel="Enrolling Face…" busy={busy} onCapture={onCapture} />
+          <CameraCapture
+            label="Save My Face Key"
+            busyLabel="Enrolling Face…"
+            busy={busy}
+            livenessAction="BLINK"
+            instruction="Google ML Kit will scan your face and ask you to blink naturally to confirm liveness."
+            onCapture={onCapture}
+          />
         </Card>
       </ScrollView>
     </Screen>

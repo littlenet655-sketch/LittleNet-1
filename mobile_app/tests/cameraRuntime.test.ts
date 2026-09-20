@@ -41,7 +41,7 @@ function loadSource(path: string, imports: Record<string, unknown>): unknown {
 const jsx = { jsx: (type: unknown, props: unknown) => ({ type, props }), jsxs: (type: unknown, props: unknown) => ({ type, props }) };
 const platform = { OS: 'android', select: (options: Record<string, string>) => options.default };
 const photo = { uri: 'file:///checked.jpg', base64: 'photo', width: 1000, height: 1000 };
-const face = { frame: { width: 360, height: 460, left: 320, top: 270 } };
+const face = { frame: { width: 360, height: 460, left: 320, top: 270 }, rotationX: 0, rotationY: 0, rotationZ: 0 };
 
 function harness(detector?: () => Promise<unknown>) {
   const calls: string[] = [];
@@ -69,14 +69,23 @@ function harness(detector?: () => Promise<unknown>) {
   let index = 0;
   let online = true;
   const component = loadSource('src/camera/CameraCapture.tsx', {
-    'react': { useRef: () => ({ current: camera }), useState: () => {
-      const slot = index++;
-      return [states[slot], (value: unknown) => { states[slot] = value; }];
-    } },
+    'react': {
+      useRef: () => ({ current: camera }),
+      useState: (initial?: unknown) => {
+        const slot = index++;
+        if (states[slot] === undefined) states[slot] = initial;
+        return [states[slot], (value: unknown) => { states[slot] = value; }];
+      },
+      useEffect: () => {},
+    },
     'react/jsx-runtime': jsx,
-    'expo-camera': { useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })] }, 'react-native': native,
+    'expo-camera': { useCameraPermissions: () => [{ granted: true }, async () => ({ granted: true })] },
+    'react-native': native,
     '@react-native-community/netinfo': { fetch: async () => ({ isConnected: online }) },
-    '../api/client': { ApiError }, './capture': {}, './facePrecheck': precheck,
+    '@expo/vector-icons': { Feather: () => null },
+    '../api/client': { ApiError },
+    './capture': {},
+    './facePrecheck': precheck,
     '../ui/components': { Button: 'Button', Notice: 'Notice', errorText: String },
     '../ui/nativeViews': { NativeCameraView: CameraView },
     '../ui/tokens': { colors: {}, radius: {}, spacing: {} },
@@ -137,4 +146,90 @@ test('offline retry retains only the locally checked photo and submits on reconn
   await run.press('Retry verification');
   assert.deepEqual(run.calls, ['camera', 'detector', 'submit']);
   assert.equal(run.states[3], null);
+});
+
+test('Google ML Kit automated liveness scanner tracks eye-blink cycle to verification', () => {
+  const native = { Platform: platform, NativeModules: {}, StyleSheet: { create: (styles: unknown) => styles } };
+  const mlkit = loadSource('node_modules/@react-native-ml-kit/face-detection/index.ts', {
+    'react-native': native,
+  });
+  const precheck = loadSource('src/camera/facePrecheck.ts', {
+    'react-native': native,
+    '@react-native-ml-kit/face-detection': mlkit,
+    './faceQuality': { evaluateFaceQuality },
+  }) as {
+    evaluateLivenessFrame: typeof import('../src/camera/facePrecheck').evaluateLivenessFrame;
+  };
+
+  const image = { width: 1000, height: 1000 };
+
+  // 1. No face
+  const noFace = precheck.evaluateLivenessFrame(image, [], 'BLINK', 'WAITING_FOR_OPEN');
+  assert.equal(noFace.step, 1);
+  assert.equal(noFace.isAligned, false);
+  assert.equal(noFace.statusText, 'Looking for face…');
+
+  // 2. Aligned face with eyes open -> prompts to blink
+  const eyesOpenFace = {
+    ...face,
+    leftEyeOpenProbability: 0.95,
+    rightEyeOpenProbability: 0.92,
+  };
+  const step1 = precheck.evaluateLivenessFrame(image, [eyesOpenFace], 'BLINK', 'WAITING_FOR_OPEN');
+  assert.equal(step1.step, 2);
+  assert.equal(step1.isAligned, true);
+  assert.equal(step1.isComplete, false);
+  assert.equal(step1.stage, 'WAITING_FOR_BLINK');
+  assert.equal(step1.statusText, 'Blink Both Eyes');
+
+  // 3. User blinks (eyes close) -> advances to WAITING_FOR_REOPEN
+  const eyesClosedFace = {
+    ...face,
+    leftEyeOpenProbability: 0.12,
+    rightEyeOpenProbability: 0.15,
+  };
+  const step2 = precheck.evaluateLivenessFrame(image, [eyesClosedFace], 'BLINK', 'WAITING_FOR_BLINK');
+  assert.equal(step2.step, 2);
+  assert.equal(step2.isAligned, true);
+  assert.equal(step2.isComplete, false);
+  assert.equal(step2.stage, 'WAITING_FOR_REOPEN');
+  assert.equal(step2.statusText, 'Reopen Eyes');
+
+  // 4. User opens eyes back up -> VERIFIED!
+  const step3 = precheck.evaluateLivenessFrame(image, [eyesOpenFace], 'BLINK', 'WAITING_FOR_REOPEN');
+  assert.equal(step3.step, 3);
+  assert.equal(step3.isAligned, true);
+  assert.equal(step3.isComplete, true);
+  assert.equal(step3.stage, 'VERIFIED');
+  assert.equal(step3.statusText, 'Blink Verified!');
+  assert.equal(step3.ovalColor, '#10B981');
+});
+
+test('Google ML Kit automated liveness scanner tracks head-turn challenges', () => {
+  const native = { Platform: platform, NativeModules: {}, StyleSheet: { create: (styles: unknown) => styles } };
+  const mlkit = loadSource('node_modules/@react-native-ml-kit/face-detection/index.ts', {
+    'react-native': native,
+  });
+  const precheck = loadSource('src/camera/facePrecheck.ts', {
+    'react-native': native,
+    '@react-native-ml-kit/face-detection': mlkit,
+    './faceQuality': { evaluateFaceQuality },
+  }) as {
+    evaluateLivenessFrame: typeof import('../src/camera/facePrecheck').evaluateLivenessFrame;
+  };
+
+  const image = { width: 1000, height: 1000 };
+
+  // TURN_LEFT before turn
+  const straight = { ...face, rotationY: 2 };
+  const turnLeftPending = precheck.evaluateLivenessFrame(image, [straight], 'TURN_LEFT', 'WAITING_FOR_OPEN');
+  assert.equal(turnLeftPending.isComplete, false);
+  assert.equal(turnLeftPending.statusText, 'Turn Head Left');
+
+  // TURN_LEFT after turn (rotationY >= 18)
+  const turnedLeft = { ...face, rotationY: 22 };
+  const turnLeftDone = precheck.evaluateLivenessFrame(image, [turnedLeft], 'TURN_LEFT', 'WAITING_FOR_OPEN');
+  assert.equal(turnLeftDone.isComplete, true);
+  assert.equal(turnLeftDone.statusText, 'Position Verified!');
+  assert.equal(turnLeftDone.ovalColor, '#10B981');
 });

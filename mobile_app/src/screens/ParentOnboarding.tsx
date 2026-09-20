@@ -447,7 +447,14 @@ export function GuardianLivenessScreen({ route }: AuthScreenProps<'GuardianLiven
             <Notice tone="info" message="The verification service is busy. Wait a moment and retry — your email step is saved." />
           ) : null}
 
-          <CameraCapture label="Take Live Selfie" busyLabel="Checking…" busy={busy} onCapture={onCapture} />
+          <CameraCapture
+            label="Take Live Selfie"
+            busyLabel="Verifying Adult Face…"
+            busy={busy}
+            livenessAction="BLINK"
+            instruction="Google ML Kit will automatically scan your face and prompt you to blink both eyes. Photo captures automatically upon verification."
+            onCapture={onCapture}
+          />
         </Card>
       </ScrollView>
     </Screen>
