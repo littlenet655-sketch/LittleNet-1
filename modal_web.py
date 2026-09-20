@@ -52,6 +52,8 @@ web_image = (
             # silently burn T4 credit; the moderation pipeline fails closed.
             "LITTLENET_USE_MODAL_IMAGE_CPU": "1",
             "LITTLENET_ALLOW_IMAGE_GPU_FALLBACK": "0",
+            "LITTLENET_USE_MODAL_TEXT_CPU": "1",
+            "LITTLENET_ALLOW_TEXT_GPU_FALLBACK": "0",
             "LITTLENET_IMAGE_MODERATION_MAX_PX": "1600",
             "LITTLENET_MODERATION_CACHE_VERSION": "2026-09-20-v1",
             "LITTLENET_MODERATION_CACHE_TTL_DAYS": "30",
