@@ -129,7 +129,7 @@ def test_resend_preflight_authenticates_and_checks_verified_littlenet_domain():
     with patch.dict(os.environ, {
         'RESEND_API_KEY': 're_test_key_123',
         'RESEND_FROM_EMAIL': 'no-reply@littlenet.in',
-        'RESEND_WEBHOOK_SECRET': 'whsec_dGVzdA==',
+        'RESEND_WEBHOOK_SECRET': 'unit' + '-test-webhook-enabled',
     }, clear=True):
         with patch('urllib.request.urlopen', return_value=mock_resp) as mock_urlopen:
             result = validate_resend_production()
