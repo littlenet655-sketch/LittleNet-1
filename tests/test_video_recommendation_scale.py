@@ -196,3 +196,77 @@ def test_batch_impressions_contract(monkeypatch):
         assert res.get_json()['ok'] is True
         assert res.get_json()['recorded'] == 2
         assert len(executed_impressions) == 2
+
+# ---------------------------------------------------------------------------
+# 5. Reel list uses JIT playback for social video credentials
+# ---------------------------------------------------------------------------
+
+def test_reels_page_defers_social_playback_credentials(monkeypatch):
+    from flask import Blueprint, Flask
+    from mobile.api import register_mobile_api, _issue_token
+
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    bp = Blueprint("mobile_reels_jit", __name__)
+    register_mobile_api(bp)
+    app.register_blueprint(bp)
+
+    user = {
+        "user_id": 202,
+        "role": "CHILD",
+        "account_status": "ACTIVE",
+        "full_name": "Test Child",
+        "session_version": 1,
+    }
+    token = _issue_token(user)
+
+    monkeypatch.setattr("mobile.api._mobile_token_revoked", lambda _token: False)
+    monkeypatch.setattr(
+        "mobile.api.fetch_one",
+        lambda query, params=(): user if "FROM users" in query else None,
+    )
+    monkeypatch.setattr("mobile.api._child_gate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "mobile.api.get_feed_page",
+        lambda *args, **kwargs: {
+            "items": [
+                {
+                    "source_type": "SOCIAL",
+                    "source_id": 77,
+                    "post_id": 77,
+                    "media_type": "VIDEO",
+                    "media_reference": "uploads/r2/published/77/clean.mp4",
+                    "poster_reference": "uploads/r2/published/77/poster.jpg",
+                }
+            ],
+            "session_id": "sess-jit",
+            "next_cursor": 1,
+            "has_more": False,
+        },
+    )
+    resolved = []
+    monkeypatch.setattr(
+        "services.media_delivery.resolve_media_delivery",
+        lambda ref, **kwargs: (
+            resolved.append(ref)
+            or {
+                "url": "https://signed.invalid/poster.jpg",
+                "expires_at": 1700000600,
+            }
+        ),
+    )
+
+    with app.test_client() as client:
+        response = client.get(
+            "/api/mobile/v2/kids/reels?limit=8",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    item = response.get_json()["items"][0]
+    assert item["media_url"] is None
+    assert item["delivery_type"] == "JIT"
+    assert item["playback_ready"] is True
+    assert item["poster_url"] == "https://signed.invalid/poster.jpg"
+    assert resolved == ["uploads/r2/published/77/poster.jpg"]
+
