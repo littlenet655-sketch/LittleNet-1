@@ -75,6 +75,30 @@ def moderate():
             except OSError: pass
 
 
+@app.post("/ai/moderate-upload")
+def moderate_upload_endpoint():
+    """Moderate caption text and uploaded media in a single GPU-container request."""
+    if not authorized(): return deny()
+    t = (request.form.get("content_type") or "").upper()
+    if t not in {"IMAGE", "VIDEO"}:
+        return jsonify({"ok": False, "error": "unsupported_content_type"}), 400
+    text = str(request.form.get("text") or "")[:4000]
+    path = None
+    try:
+        path = save_upload()
+        text_signals = check_text(text) if text else {}
+        media_signals = check_video(path) if t == "VIDEO" else check_image(path)
+        return jsonify({
+            "ok": True,
+            "text_signals": _sanitize(text_signals),
+            "media_signals": _sanitize(media_signals),
+        })
+    finally:
+        if path:
+            try: os.unlink(path)
+            except OSError: pass
+
+
 @app.post("/ai/rank")
 def rank_endpoint():
     if not authorized(): return deny()
