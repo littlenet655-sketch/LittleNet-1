@@ -18,20 +18,20 @@ A source implementation is not treated as live or device verification.
 
 | Gate | Current state | Evidence / blocker |
 |---|---|---|
-| Clean PostgreSQL bootstrap | **PENDING CI** | CI now uses `pgvector/pgvector:pg16`; must pass on PR/main before release. |
-| Backend regression suite | **PENDING CI** | Must pass after the pgvector and webhook changes. |
-| Python security scan | **PENDING CI** | Expo push delivery no longer uses `urllib.request.urlopen`; Bandit must confirm. |
-| Secret scan | **AUTOMATED_TESTED** | Existing Gitleaks job passed on the previous main commit; rerun required for this branch. |
-| Mobile TypeScript | **PENDING CI** | Previously passed; rerun required after OTP delivery-status UI changes. |
-| Mobile tests | **PENDING CI** | Previously 83/83; rerun required after current changes. |
-| Expo dependency alignment | **IMPLEMENTED** | `expo ~57.0.24`, `expo-image-picker ~57.0.19`; `expo install --check` must pass. |
-| Android export | **PENDING CI** | Previous export passed; current branch must be rebuilt. |
+| Clean PostgreSQL bootstrap | **AUTOMATED_TESTED** | PR CI uses `pgvector/pgvector:pg16`, applies dbmate migrations, and completed successfully. |
+| Backend regression suite | **AUTOMATED_TESTED** | PR CI completed with **407 passed, 2 skipped**; migration-critical and Agent-A suites also passed. |
+| Python security scan | **AUTOMATED_TESTED** | PR `python-security` job passed after replacing the Expo push `urlopen` path. |
+| Secret scan | **AUTOMATED_TESTED** | PR Gitleaks job passed on the current fix branch. |
+| Mobile TypeScript | **AUTOMATED_TESTED** | Current PR React Native workflow passed `npm run typecheck`. |
+| Mobile tests | **AUTOMATED_TESTED** | Current PR React Native workflow passed **83/83** tests across 19 suites. |
+| Expo dependency alignment | **AUTOMATED_TESTED** | `expo 57.0.24`, `expo-image-picker ~57.0.19`; current PR reports **Dependencies are up to date**. |
+| Android export | **AUTOMATED_TESTED** | Current PR Android export passed and produced the Hermes Android bundle. This is not physical-device verification. |
 | Production OTP secrecy | **IMPLEMENTED** | Production cannot expose/print `dev_code`; development OTP now requires explicit non-production opt-in. |
 | Resend acceptance vs delivery | **IMPLEMENTED** | Provider acceptance is recorded separately; verified webhook records delivered/bounced/suppressed/failed states. |
 | Resend webhook | **IMPLEMENTED / LIVE UNVERIFIED** | Requires `RESEND_WEBHOOK_SECRET` and a live Resend webhook configuration pointing to `/webhooks/resend`. |
 | Direct R2 media pipeline | **IMPLEMENTED** | Private sanitized MP4 remains the authoritative production fallback. |
 | Cloudflare Stream | **DISABLED / UNVERIFIED** | Adapter is intentionally fail-closed because real Stream ingestion, readiness confirmation, and private token minting are not yet implemented. |
-| Recommendation ranker wiring | **IMPLEMENTED** | Current feed-session creation calls `rank_candidates()`; current CI/load evidence still required. |
+| Recommendation ranker wiring | **AUTOMATED_TESTED** | Current feed-session creation calls `rank_candidates()` and the recommendation/feed regression suite passed; large-scale load claims remain unverified. |
 | Physical guardian camera | **UNVERIFIED** | Must be tested with current APK on Android hardware. |
 | Physical child face enrollment/login | **UNVERIFIED** | Must be tested with current APK and live AI service. |
 | Physical Reel playback | **UNVERIFIED** | Must be tested on current APK with real network transitions. |
