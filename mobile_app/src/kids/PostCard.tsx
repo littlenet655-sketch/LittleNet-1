@@ -10,7 +10,7 @@ import { isPubliclyVisible, runSocialPostAction, socialPostTarget } from './soci
 import { Avatar, CategoryBadge, TimeAgo } from '../ui/social';
 import { colors, radius, spacing, type } from '../ui/tokens';
 
-export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?: () => void; onProfile?: () => void }) {
+export function PostCard({ item, onOpen, onProfile, onNotInterested }: { item: FeedItem; onOpen?: () => void; onProfile?: () => void; onNotInterested?: () => void }) {
   const { session } = useAuth();
   if (!isPubliclyVisible(item)) return null;
   const socialTarget = socialPostTarget(item);
@@ -59,14 +59,27 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?:
 
   return (
     <View style={styles.card}>
-      <Pressable onPress={onProfile} disabled={!onProfile} style={styles.row}>
-        <Avatar uri={item.avatar_url} name={item.full_name} />
-        <View style={styles.meta}>
-          <Text style={styles.name}>{item.full_name ?? 'Friend'}</Text>
-          <TimeAgo value={item.created_at} />
-        </View>
-        <CategoryBadge label={item.content_category} />
-      </Pressable>
+      <View style={styles.row}>
+        <Pressable onPress={onProfile} disabled={!onProfile} style={styles.profileRow}>
+          <Avatar uri={item.avatar_url} name={item.full_name} />
+          <View style={styles.meta}>
+            <Text style={styles.name}>{item.full_name ?? 'Friend'}</Text>
+            <TimeAgo value={item.created_at} />
+          </View>
+          <CategoryBadge label={item.content_category} />
+        </Pressable>
+        {onNotInterested ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Not interested"
+            onPress={onNotInterested}
+            hitSlop={8}
+            style={styles.dismiss}
+          >
+            <Feather name="eye-off" size={18} color={colors.muted} />
+          </Pressable>
+        ) : null}
+      </View>
       {item.title ? <Text style={styles.title}>{item.title}</Text> : null}
       {item.caption ? <Text style={styles.caption}>{item.caption}</Text> : null}
       {previewUrl ? <Pressable onPress={onOpen} disabled={!onOpen}><Image source={{ uri: previewUrl }} style={styles.media} /></Pressable> : isVideo ? <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}><Text style={styles.videoLabel}>Video</Text></Pressable> : null}
@@ -125,7 +138,8 @@ export function PostCard({ item, onOpen, onProfile }: { item: FeedItem; onOpen?:
 
 const styles = StyleSheet.create({
   card: { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.line, paddingBottom: spacing.md, marginBottom: spacing.sm },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  profileRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   meta: { flex: 1 },
   name: { fontWeight: '800', color: colors.ink },
   title: { marginTop: 8, color: colors.ink, fontSize: type.body, fontWeight: '800' },
@@ -137,6 +151,7 @@ const styles = StyleSheet.create({
   actionText: { color: colors.brandDark, fontWeight: '700' },
   likeCount: { color: colors.ink, fontSize: type.caption, fontWeight: '700' },
   flex: { flex: 1 },
+  dismiss: { padding: 6 },
   icon: { color: colors.ink, fontSize: 24, lineHeight: 24 },
   liked: { color: colors.danger },
 });
