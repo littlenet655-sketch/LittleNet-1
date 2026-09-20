@@ -78,6 +78,64 @@ def _normalized_text(text):
     return value
 
 
+def check_text_deterministic(text: str):
+    """Cheap, model-free high-risk text gate.
+
+    This is not a replacement for ML moderation. It is used only to stop
+    obvious hard-block content before a media worker/GPU is started.
+    """
+    text = (text or "").strip()
+    low = _normalized_text(text)
+    compact = low.replace(" ", "")
+
+    adult = 1.0 if (
+        any(t in low for t in ADULT_TERMS)
+        or any(t.replace(" ", "") in compact for t in ADULT_TERMS if " " in t)
+        or any(re.search(p, low) for p in ADULT_PATTERNS)
+    ) else 0.0
+    profanity = 1.0 if any(re.search(r"\b" + re.escape(t) + r"\b", low) for t in PROFANE) else 0.0
+    bullying = .90 if any(t in low for t in BULLYING_TERMS) else 0.0
+    severe = 1.0 if any(t in low for t in SEVERE_ABUSE_TERMS) else 0.0
+    self_harm = 1.0 if any(t in low for t in SELF_HARM_TERMS) else 0.0
+    dangerous_challenge = 1.0 if any(t in low for t in DANGEROUS_CHALLENGE_TERMS) else 0.0
+    grooming = 1.0 if any(re.search(p, low) for p in GROOMING_PATTERNS) else 0.0
+
+    if grooming:
+        category = "GROOMING"
+    elif self_harm:
+        category = "SELF_HARM"
+    elif dangerous_challenge:
+        category = "DANGEROUS_CHALLENGE"
+    elif severe:
+        category = "SEVERE_ABUSE"
+    elif adult:
+        category = "SEXUAL_LANGUAGE"
+    elif bullying:
+        category = "CYBERBULLYING"
+    else:
+        category = "TEXT"
+
+    toxicity = max(profanity, bullying, severe, self_harm, dangerous_challenge, grooming)
+    return normalize_signals({
+        "adult_score": adult,
+        "sexual_score": adult,
+        "violence_score": severe,
+        "weapon_score": 0.0,
+        "toxicity_score": toxicity,
+        "general_score": max(adult, toxicity, severe),
+        "category": category,
+        "deterministic_grooming": bool(grooming),
+        "deterministic_severe_abuse": bool(severe),
+        "deterministic_self_harm": bool(self_harm),
+        "deterministic_dangerous_challenge": bool(dangerous_challenge),
+        "deterministic_sexual": bool(adult),
+        "deterministic_only": True,
+        "total_safety_failure": False,
+        "partial_safety_failure": False,
+        "errors": [],
+    }, category="TEXT")
+
+
 def _detox_scores(text):
     global _DETOX, _DETOX_NAME
     from detoxify import Detoxify
@@ -155,6 +213,63 @@ def check_text(text:str):
     dangerous_challenge=1.0 if any(t in low for t in DANGEROUS_CHALLENGE_TERMS) else 0.0
     grooming=1.0 if any(re.search(p,low) for p in GROOMING_PATTERNS) else 0.0
     remote_failed=False
+
+    # Production web requests prefer the scale-to-zero Modal CPU text tier.
+    # The AI server sets LITTLENET_AI_SERVER=1, so calls inside that worker run
+    # Detoxify locally and never recurse back into Modal.
+    if text and os.getenv("LITTLENET_AI_SERVER") != "1":
+        try:
+            from services.modal_text_moderation import (
+                allow_gpu_fallback as text_gpu_fallback_allowed,
+                enabled as modal_text_cpu_enabled,
+                moderate_text as moderate_text_cpu,
+            )
+            if modal_text_cpu_enabled():
+                try:
+                    cpu=normalize_signals(moderate_text_cpu(text),category='TEXT')
+                    cpu['adult_score']=max(float(cpu.get('adult_score',0)),adult)
+                    cpu['sexual_score']=max(float(cpu.get('sexual_score',0)),adult)
+                    cpu['toxicity_score']=max(float(cpu.get('toxicity_score',0)),profanity,bullying,severe,self_harm,dangerous_challenge,grooming)
+                    cpu['general_score']=max(float(cpu.get('general_score',0)),cpu['adult_score'],cpu['toxicity_score'])
+                    if grooming:cpu['category']='GROOMING'
+                    elif self_harm:cpu['category']='SELF_HARM'
+                    elif dangerous_challenge:cpu['category']='DANGEROUS_CHALLENGE'
+                    elif severe:cpu['category']='SEVERE_ABUSE'
+                    elif adult:cpu['category']='SEXUAL_LANGUAGE'
+                    elif bullying:cpu['category']='CYBERBULLYING'
+                    cpu['deterministic_grooming']=bool(grooming)
+                    cpu['deterministic_severe_abuse']=bool(severe)
+                    cpu['deterministic_self_harm']=bool(self_harm)
+                    cpu['deterministic_dangerous_challenge']=bool(dangerous_challenge)
+                    cpu['deterministic_sexual']=bool(adult)
+                    cpu['compute_tier']='modal_cpu'
+                    return normalize_signals(cpu,category='TEXT')
+                except Exception:
+                    if not text_gpu_fallback_allowed():
+                        deterministic=adult>0 or bullying>0 or profanity>0 or severe>0 or self_harm>0 or dangerous_challenge>0 or grooming>0
+                        if grooming:category='GROOMING'
+                        elif self_harm:category='SELF_HARM'
+                        elif dangerous_challenge:category='DANGEROUS_CHALLENGE'
+                        elif severe:category='SEVERE_ABUSE'
+                        elif adult:category='SEXUAL_LANGUAGE'
+                        elif bullying:category='CYBERBULLYING'
+                        else:category='TEXT'
+                        toxicity=max(profanity,bullying,severe,self_harm,dangerous_challenge,grooming)
+                        return normalize_signals({
+                            'adult_score':adult,'sexual_score':adult,'violence_score':severe,'weapon_score':0,
+                            'toxicity_score':toxicity,'general_score':max(adult,toxicity,severe),'category':category,
+                            'deterministic_grooming':bool(grooming),'deterministic_severe_abuse':bool(severe),
+                            'deterministic_self_harm':bool(self_harm),
+                            'deterministic_dangerous_challenge':bool(dangerous_challenge),
+                            'deterministic_sexual':bool(adult),
+                            'total_safety_failure':not deterministic,
+                            'partial_safety_failure':bool(deterministic),
+                            'errors':['modal_cpu_text_unavailable'],
+                            'compute_tier':'modal_cpu_failed_closed',
+                        },category='TEXT')
+        except Exception:
+            # Missing Modal client/config should not change local/test behavior.
+            pass
 
     if enabled():
         try:

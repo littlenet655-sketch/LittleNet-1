@@ -611,8 +611,10 @@ def test_concurrency_two_workers_one_post_results_in_exactly_one_processing_owne
         assert loser.get("already_claimed") is True
         assert loser.get("idempotent") is True
 
-        # Single winner executed evaluate once for caption (TEXT) and once for image (IMAGE); loser executed 0 times (not 4)
-        assert mock_eval.call_count == 2
+        # Exactly one worker owns moderation. The versioned moderation cache may
+        # satisfy either/both signals, so model evaluation can be 0-2 calls but
+        # must never duplicate work across the losing worker.
+        assert mock_eval.call_count <= 2
         assert len(notify_calls) == 1
 
         # In DB, post is ALLOWED with cleared lease

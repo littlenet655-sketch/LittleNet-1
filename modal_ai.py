@@ -10,6 +10,7 @@ from pathlib import Path
 import hashlib
 import json
 import os
+import tempfile
 
 import modal
 
@@ -58,8 +59,11 @@ image = (
             "LITTLENET_DETOXIFY_MODEL": "multilingual",
             # Scene-aware sampling protects short scene changes. The bounded
             # uniform fallback prevents long reels from multiplying GPU work.
-            "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "3",
-            "LITTLENET_VIDEO_MAX_FRAMES": "60",
+            # Cost-bounded video scan: short clips retain <=4s temporal spacing.
+            # Long clips stop at 24 frames and fail to REVIEW rather than burning
+            # unbounded GPU time to auto-allow them.
+            "LITTLENET_VIDEO_SAMPLE_INTERVAL_SECONDS": "4",
+            "LITTLENET_VIDEO_MAX_FRAMES": "24",
             # Longer videos remain private for review if this temporal coverage
             # cannot be met within the full-model frame budget.
             "LITTLENET_VIDEO_MAX_AUTO_ALLOW_GAP_SECONDS": "4",
@@ -115,7 +119,7 @@ def _secret_fingerprint(value: str | None) -> dict[str, object]:
     startup_timeout=900,
     # Scale fully to zero. Keep only a short warm tail so a small demo burst is
     # responsive without paying for minutes of idle GPU after every request.
-    scaledown_window=60,
+    scaledown_window=int(os.getenv("MODAL_AI_GPU_SCALEDOWN_WINDOW", "30")),
     min_containers=0,
     max_containers=1,
 )
@@ -126,6 +130,104 @@ def ai_web():
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
     from ai_server import app as flask_ai_app
     return flask_ai_app
+
+
+@app.function(
+    image=image,
+    cpu=4.0,
+    memory=8192,
+    volumes={"/cache": model_cache},
+    timeout=600,
+    startup_timeout=900,
+    # Images are processed asynchronously. Keep a short CPU warm tail for a
+    # burst of posts, then return fully to zero.
+    scaledown_window=int(os.getenv("MODAL_AI_IMAGE_CPU_SCALEDOWN_WINDOW", "30")),
+    min_containers=0,
+    max_containers=1,
+)
+@modal.concurrent(max_inputs=1, target_inputs=1)
+def moderate_image_upload_cpu(
+    file_bytes: bytes,
+    filename: str = "upload.jpg",
+    text: str = "",
+    run_text: bool = True,
+    run_media: bool = True,
+):
+    """Run upload image moderation on CPU so ordinary photos never require T4 credit."""
+    os.chdir("/root/littlenet")
+    Path("/cache/models").mkdir(parents=True, exist_ok=True)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ["LITTLENET_AI_SERVER"] = "1"
+    os.environ["LITTLENET_DEVICE"] = "cpu"
+
+    path = None
+    if run_media:
+        suffix = Path(filename or "upload.jpg").suffix.lower()
+        if suffix not in {".jpg", ".jpeg", ".png", ".webp"}:
+            suffix = ".jpg"
+        fd, path = tempfile.mkstemp(prefix="littlenet_cpu_image_", suffix=suffix)
+        os.close(fd)
+
+    def jsonable(value):
+        if isinstance(value, dict):
+            return {str(k): jsonable(v) for k, v in value.items()}
+        if isinstance(value, (list, tuple)):
+            return [jsonable(v) for v in value]
+        if hasattr(value, "item"):
+            try:
+                return value.item()
+            except Exception:
+                return str(value)
+        return value
+
+    try:
+        if run_media:
+            with open(path, "wb") as fh:
+                fh.write(file_bytes or b"")
+            if os.path.getsize(path) <= 0:
+                raise ValueError("image_payload_empty")
+
+        text_signals = {}
+        media_signals = {}
+        if run_text and text:
+            from safety.text_service import check_text
+            text_signals = check_text(text[:4000])
+        if run_media:
+            from safety.visual_service import check_image
+            media_signals = check_image(path)
+
+        # Persist model downloads only when this workload's cache was first
+        # populated. Avoid a Volume commit on every moderation request.
+        cache_markers = []
+        if run_text:
+            cache_markers.append(Path("/cache/.cpu_text_models_ready"))
+        if run_media:
+            cache_markers.append(Path("/cache/.cpu_image_models_ready"))
+        missing_markers = [marker for marker in cache_markers if not marker.exists()]
+        if missing_markers:
+            try:
+                for marker in missing_markers:
+                    marker.write_text("ready", encoding="utf-8")
+                model_cache.commit()
+            except Exception:
+                for marker in missing_markers:
+                    try:
+                        marker.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
+        return {
+            "ok": True,
+            "text_signals": jsonable(text_signals),
+            "media_signals": jsonable(media_signals),
+            "compute_tier": "cpu",
+        }
+    finally:
+        if path:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
 
 @app.function(

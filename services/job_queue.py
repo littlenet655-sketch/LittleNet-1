@@ -76,11 +76,18 @@ class ModalJobQueue(JobQueue):
         try:
             import modal
 
-            fn = modal.Function.from_name(self.app_name, self.function_name)
+            object_key = str(payload["object_key"])
+            suffix = os.path.splitext(object_key.lower())[1]
+            function_name = (
+                "process_image_job_background"
+                if suffix in {".jpg", ".jpeg", ".png", ".webp"}
+                else self.function_name
+            )
+            fn = modal.Function.from_name(self.app_name, function_name)
             args = [
                 int(payload["post_id"]),
                 int(payload["child_id"]),
-                str(payload["object_key"]),
+                object_key,
                 str(payload.get("kind", "post")),
             ]
             if payload.get("lease_token"):

@@ -2079,6 +2079,36 @@ def register_mobile_api(bp):
                 conn.rollback()
                 return jsonify(error=tag_err), 400
 
+            # Cheap deterministic hard-block gate before we create/spawn a media
+            # processing job. This catches obvious sexual solicitation, grooming,
+            # self-harm, severe abuse and dangerous-challenge text without waking
+            # a Modal worker or the T4. Non-obvious text still goes through the
+            # full trained/ML moderation path in the background worker.
+            precheck_text = " ".join([caption] + [f"#{t}" for t in validated_tags]).strip()
+            if precheck_text:
+                from safety.text_service import check_text_deterministic
+                from safety.policy import decide as decide_safety
+                from safety.moderation_service import safety_level as child_safety_level, record as record_moderation
+
+                precheck_signals = check_text_deterministic(precheck_text)
+                precheck_decision = decide_safety(
+                    precheck_signals,
+                    child_safety_level(uid),
+                    Config.ADULT_HARD_BLOCK_THRESHOLD,
+                )
+                if precheck_decision.action == "BLOCK":
+                    conn.rollback()
+                    try:
+                        record_moderation(uid, "TEXT", None, precheck_signals, precheck_decision)
+                    except Exception:
+                        pass
+                    parent_notify(uid, "CONTENT_BLOCKED", precheck_decision.reason, "/parent/safety/")
+                    return jsonify(
+                        error="caption_safety_blocked",
+                        reason=precheck_decision.reason,
+                        pre_gpu=True,
+                    ), 400
+
             kind = session_row["kind"].upper()
             media_type = session_row["media_type"].upper()
 
