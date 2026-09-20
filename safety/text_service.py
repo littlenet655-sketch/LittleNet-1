@@ -78,6 +78,64 @@ def _normalized_text(text):
     return value
 
 
+def check_text_deterministic(text: str):
+    """Cheap, model-free high-risk text gate.
+
+    This is not a replacement for ML moderation. It is used only to stop
+    obvious hard-block content before a media worker/GPU is started.
+    """
+    text = (text or "").strip()
+    low = _normalized_text(text)
+    compact = low.replace(" ", "")
+
+    adult = 1.0 if (
+        any(t in low for t in ADULT_TERMS)
+        or any(t.replace(" ", "") in compact for t in ADULT_TERMS if " " in t)
+        or any(re.search(p, low) for p in ADULT_PATTERNS)
+    ) else 0.0
+    profanity = 1.0 if any(re.search(r"\b" + re.escape(t) + r"\b", low) for t in PROFANE) else 0.0
+    bullying = .90 if any(t in low for t in BULLYING_TERMS) else 0.0
+    severe = 1.0 if any(t in low for t in SEVERE_ABUSE_TERMS) else 0.0
+    self_harm = 1.0 if any(t in low for t in SELF_HARM_TERMS) else 0.0
+    dangerous_challenge = 1.0 if any(t in low for t in DANGEROUS_CHALLENGE_TERMS) else 0.0
+    grooming = 1.0 if any(re.search(p, low) for p in GROOMING_PATTERNS) else 0.0
+
+    if grooming:
+        category = "GROOMING"
+    elif self_harm:
+        category = "SELF_HARM"
+    elif dangerous_challenge:
+        category = "DANGEROUS_CHALLENGE"
+    elif severe:
+        category = "SEVERE_ABUSE"
+    elif adult:
+        category = "SEXUAL_LANGUAGE"
+    elif bullying:
+        category = "CYBERBULLYING"
+    else:
+        category = "TEXT"
+
+    toxicity = max(profanity, bullying, severe, self_harm, dangerous_challenge, grooming)
+    return normalize_signals({
+        "adult_score": adult,
+        "sexual_score": adult,
+        "violence_score": severe,
+        "weapon_score": 0.0,
+        "toxicity_score": toxicity,
+        "general_score": max(adult, toxicity, severe),
+        "category": category,
+        "deterministic_grooming": bool(grooming),
+        "deterministic_severe_abuse": bool(severe),
+        "deterministic_self_harm": bool(self_harm),
+        "deterministic_dangerous_challenge": bool(dangerous_challenge),
+        "deterministic_sexual": bool(adult),
+        "deterministic_only": True,
+        "total_safety_failure": False,
+        "partial_safety_failure": False,
+        "errors": [],
+    }, category="TEXT")
+
+
 def _detox_scores(text):
     global _DETOX, _DETOX_NAME
     from detoxify import Detoxify
