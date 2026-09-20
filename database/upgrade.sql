@@ -374,9 +374,7 @@ CREATE INDEX IF NOT EXISTS idx_item_embeddings_source ON item_embeddings(source_
 -- Performance Composite Indexes
 CREATE INDEX IF NOT EXISTS idx_posts_feed_eligible ON posts(moderation_status, is_safe, is_story, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_posts_reels_eligible ON posts(moderation_status, is_safe, is_story, is_reel, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_content_impressions_child_shown ON content_impressions(child_id, shown_at DESC);
 CREATE INDEX IF NOT EXISTS idx_recommendation_signals_child_src ON recommendation_signals(child_id, source_type, source_id);
-CREATE INDEX IF NOT EXISTS idx_feed_sessions_child_exp ON feed_sessions(child_id, surface, expires_at);
 
 -- Multi-device Session Revocation Support
 ALTER TABLE users ADD COLUMN IF NOT EXISTS session_version INT NOT NULL DEFAULT 1;
