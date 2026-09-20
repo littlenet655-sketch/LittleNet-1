@@ -48,7 +48,7 @@ def _load_one(path: Path):
     import torch.nn as nn
     from torchvision.models import efficientnet_b0
 
-    checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+    checkpoint = torch.load(path, map_location="cpu", weights_only=True)
     if not isinstance(checkpoint, dict) or not isinstance(checkpoint.get("state_dict"), dict):
         raise RuntimeError(f"invalid LittleNet image checkpoint: {path.name}")
     labels = list(checkpoint.get("labels") or [])
