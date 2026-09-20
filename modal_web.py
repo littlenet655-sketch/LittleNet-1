@@ -146,6 +146,35 @@ def web_secret_preflight():
 
 @app.function(
     image=web_image,
+    cpu=1.0,
+    memory=2048,
+    secrets=[web_secret, email_secret, r2_secret],
+    timeout=600,
+    scaledown_window=int(os.getenv("MODAL_IMAGE_WORKER_SCALEDOWN_WINDOW", "20")),
+    min_containers=0,
+    max_containers=1,
+)
+def process_image_job_background(
+    post_id: int,
+    child_id: int,
+    object_key: str,
+    kind: str = "post",
+    lease_token: str | None = None,
+):
+    """Lower-cost orchestration worker dedicated to image uploads."""
+    os.chdir("/root/littlenet")
+    from services.media_processor import process_media_job
+    return process_media_job(
+        int(post_id),
+        int(child_id),
+        str(object_key),
+        str(kind),
+        lease_token=lease_token,
+    )
+
+
+@app.function(
+    image=web_image,
     cpu=2.0,
     memory=4096,
     secrets=[web_secret, email_secret, r2_secret],
