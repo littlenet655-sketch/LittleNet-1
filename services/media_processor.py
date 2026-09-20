@@ -412,6 +412,51 @@ def _process_media_job_impl(
         text_needed = bool(combined_text) and not text_signals
         media_needed = not media_signals
 
+        # Production IMAGE uploads are handled by a direct Modal CPU function.
+        # This is the main first-upload cost guard: an ordinary photo does not
+        # wake the T4 at all. The same visual models run with LITTLENET_DEVICE=cpu.
+        if media_type == "IMAGE" and (text_needed or media_needed):
+            from services.modal_image_moderation import (
+                allow_gpu_fallback as image_gpu_fallback_allowed,
+                enabled as modal_image_cpu_enabled,
+                moderate_image_upload as moderate_image_upload_cpu,
+            )
+
+            if modal_image_cpu_enabled():
+                try:
+                    cpu_result = moderate_image_upload_cpu(
+                        str(moderation_media_local),
+                        combined_text if text_needed else "",
+                        run_text=text_needed,
+                        run_media=media_needed,
+                    )
+                    if text_needed:
+                        text_signals = cpu_result.get("text_signals") or {}
+                    if media_needed:
+                        media_signals = cpu_result.get("media_signals") or {}
+                except Exception:
+                    logger.warning("CPU image moderation failed for post %s", post_id, exc_info=True)
+                    if not image_gpu_fallback_allowed():
+                        # Budget guarantee: never silently turn a CPU problem into
+                        # GPU spend. Fail closed; a later redrive can retry CPU.
+                        if text_needed:
+                            text_signals = {
+                                "category": "TEXT",
+                                "total_safety_failure": True,
+                                "errors": ["modal_cpu_image_moderation_unavailable"],
+                            }
+                        if media_needed:
+                            media_signals = {
+                                "category": "IMAGE",
+                                "total_safety_failure": True,
+                                "errors": ["modal_cpu_image_moderation_unavailable"],
+                            }
+
+            text_needed = bool(combined_text) and not text_signals
+            media_needed = not media_signals
+
+        # VIDEO (and explicit image GPU fallback, if an operator enables it)
+        # uses one bundled request when both text and media need model evidence.
         if text_needed and media_needed:
             from safety.remote_client import enabled as remote_ai_enabled, moderate_upload
 
@@ -422,7 +467,6 @@ def _process_media_job_impl(
                     media_signals = bundled.get("media_signals") or {}
                 except Exception:
                     # Do not fan one failed upload into two more GPU retries.
-                    # Fail closed and let the existing redrive flow retry later.
                     logger.warning("Bundled AI moderation failed for post %s", post_id, exc_info=True)
                     text_signals = {
                         "category": "TEXT",
