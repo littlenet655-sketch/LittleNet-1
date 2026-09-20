@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { answerQuiz, fetchQuiz } from '../api/auth';
 import type { QuizItem } from '../api/auth';
 import { ApiError } from '../api/client';
@@ -8,8 +9,8 @@ import { clearPendingDestination, loadPendingDestination, savePendingDestination
 import { secureStoreBackend } from '../auth/storage';
 import type { ChildScreenProps } from '../navigation/types';
 import { quizLoadStatus, shouldProceedAfterRefresh } from '../quiz/decision';
-import { BrandHeader, Button, Card, GateNotice, LoadingState, Notice, Screen } from '../ui/components';
-import { colors, type } from '../ui/tokens';
+import { Button, Card, GateNotice, LoadingState, Notice, Screen } from '../ui/components';
+import { colors, radius, spacing, type } from '../ui/tokens';
 
 interface QuizScreenParams {
   /** Where to return after a required quiz completes. */
@@ -18,8 +19,10 @@ interface QuizScreenParams {
 
 type Phase = 'loading' | 'hub' | 'ready' | 'unavailable' | 'complete';
 
+const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
 /**
- * Mandatory onboarding quiz + recurring feed quiz gate.
+ * Mandatory onboarding quiz + recurring feed quiz gate with gamified child UI.
  * Forward navigation happens only after an authoritative /me refresh
  * confirms the gates are clear. Refresh failure keeps the child gated
  * with retry; an empty required bank shows unavailable, never "All done".
@@ -31,6 +34,8 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   const [reason, setReason] = useState('');
   const [required, setRequired] = useState(true);
   const [index, setIndex] = useState(0);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [lastCorrect, setLastCorrect] = useState<boolean | null>(null);
   const [feedback, setFeedback] = useState('');
   const [busy, setBusy] = useState(false);
   const [phase, setPhase] = useState<Phase>('loading');
@@ -54,11 +59,13 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
       setReason(response.reason);
       setRequired(response.required);
       setIndex(0);
+      setSelectedOption(null);
+      setLastCorrect(null);
       setFeedback('');
       if (params.returnTo) await savePendingDestination(secureStoreBackend, params.returnTo);
-       setCorrectCount(0);
-       setEarnedXp(0);
-       setPhase(response.required ? 'ready' : 'hub');
+      setCorrectCount(0);
+      setEarnedXp(0);
+      setPhase(response.required ? 'ready' : 'hub');
     } catch (err) {
       setError(err);
       setPhase('ready');
@@ -96,27 +103,33 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
     const current = items[index];
     if (!current) return;
     setBusy(true);
+    setSelectedOption(option);
     setFeedback('');
     try {
       const result = await answerQuiz(session.token, current.quiz_id, option);
+      setLastCorrect(result.correct);
       if (result.correct) setCorrectCount((value) => value + 1);
       setEarnedXp((value) => value + result.xp);
-      setFeedback(result.correct ? `Correct! +${result.xp} XP. ${result.explanation ?? ''}`.trim() : `Not quite. ${result.explanation ?? ''}`.trim());
+      setFeedback(result.correct ? `🌟 Correct! +${result.xp} XP. ${result.explanation ?? ''}`.trim() : `💡 ${result.explanation ?? 'Keep trying!'}`.trim());
       const lastItem = index + 1 >= items.length;
       if (result.onboarding_complete || !result.required || lastItem) {
         setTimeout(() => {
           if (required) void completeQuiz();
           else setPhase('complete');
-        }, 900);
+        }, 1100);
         return;
       }
       setTimeout(() => {
         setIndex((value) => value + 1);
+        setSelectedOption(null);
+        setLastCorrect(null);
         setFeedback('');
-      }, 900);
+      }, 1100);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
       setFeedback(err instanceof ApiError ? err.message : 'Could not check that answer. Try again.');
+      setSelectedOption(null);
+      setLastCorrect(null);
     } finally {
       setBusy(false);
     }
@@ -125,7 +138,7 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   if (phase === 'loading') {
     return (
       <Screen>
-        <LoadingState message="Loading your quiz…" />
+        <LoadingState message="Loading your safety adventure…" />
       </Screen>
     );
   }
@@ -133,9 +146,19 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   if (phase === 'unavailable') {
     return (
       <Screen>
-        <BrandHeader title="Safety quiz" subtitle="Quizzes are temporarily unavailable." />
-        <Notice message="We could not load your safety quiz right now. You are still safely gated — retry in a moment." />
-        <Button label="Retry" onPress={() => void load()} />
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.heroBanner}>
+            <View style={styles.heroIconBadge}>
+              <Feather name="shield" size={32} color="#0095F6" />
+            </View>
+            <Text style={styles.heroTitle}>Safety Quiz</Text>
+            <Text style={styles.heroSubtitle}>Quizzes are temporarily updating.</Text>
+          </View>
+          <Card>
+            <Notice tone="info" message="We could not load your safety quiz right now. You are still safely protected — pull or tap retry in a moment." />
+            <Button label="Retry" onPress={() => void load()} />
+          </Card>
+        </ScrollView>
       </Screen>
     );
   }
@@ -143,9 +166,18 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   if (error && items.length === 0) {
     return (
       <Screen>
-        <BrandHeader title="Safety quiz" />
-        <GateNotice error={error} />
-        <Button label="Retry" onPress={() => void load()} />
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.heroBanner}>
+            <View style={styles.heroIconBadge}>
+              <Feather name="alert-circle" size={32} color="#EF4444" />
+            </View>
+            <Text style={styles.heroTitle}>Safety Quiz</Text>
+          </View>
+          <Card>
+            <GateNotice error={error} />
+            <Button label="Retry" onPress={() => void load()} />
+          </Card>
+        </ScrollView>
       </Screen>
     );
   }
@@ -153,28 +185,55 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   if (phase === 'hub') {
     return (
       <Screen>
-        <ScrollView>
-          <BrandHeader title="Learning Hub" subtitle="Small lessons, clear answers, and a safer way to take a break." />
-          <View style={styles.hero}>
-            <Text style={styles.eyebrow}>PRACTICE BANK</Text>
-            <Text style={styles.heroTitle}>Choose a quick win.</Text>
-            <Text style={styles.heroBody}>These questions come from LittleNet's live learning bank. Your answers and XP are saved by the server.</Text>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.heroBanner}>
+            <View style={styles.heroIconBadge}>
+              <Image source={require('../../assets/app_logo.png')} style={styles.heroLogoImg} />
+            </View>
+            <Text style={styles.heroTitle}>Learning Hub 🚀</Text>
+            <Text style={styles.heroSubtitle}>Learn internet safety, earn XP, and level up your badges!</Text>
           </View>
-          <View style={styles.statRow}>
-            <Stat value={String(items.length)} label="Questions" />
-            <Stat value="5–10 min" label="Typical session" />
-          </View>
-          <Text style={styles.sectionTitle}>Topics in this set</Text>
-          <View style={styles.topicWrap}>
-            {Array.from(new Set(items.map((item) => item.category))).map((category) => (
-              <View key={category} style={styles.topic}><Text style={styles.topicText}>{category}</Text></View>
-            ))}
-          </View>
-          <View style={styles.learningNote}>
-            <Text style={styles.learningNoteTitle}>Educational feed</Text>
-            <Text style={styles.learningNoteBody}>A separate educational playlist is not returned by the current API, so this hub only shows verified quiz content.</Text>
-          </View>
-          <Button label="Start practice" onPress={() => { setIndex(0); setFeedback(''); setPhase('ready'); }} />
+
+          <Card style={styles.statsCard}>
+            <View style={styles.statBox}>
+              <Text style={styles.statVal}>{items.length}</Text>
+              <Text style={styles.statLbl}>Questions</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statBox}>
+              <Text style={[styles.statVal, { color: '#10B981' }]}>+{earnedXp}</Text>
+              <Text style={styles.statLbl}>XP Earned</Text>
+            </View>
+            <View style={styles.statDivider} />
+            <View style={styles.statBox}>
+              <Text style={[styles.statVal, { color: '#F59E0B' }]}>⭐</Text>
+              <Text style={styles.statLbl}>Safe Explorer</Text>
+            </View>
+          </Card>
+
+          <Card>
+            <Text style={styles.sectionHeader}>Topics in this Quest</Text>
+            <View style={styles.topicWrap}>
+              {Array.from(new Set(items.map((item) => item.category))).map((category) => (
+                <View key={category} style={styles.topicPill}>
+                  <Feather name="check" size={13} color="#6366F1" style={{ marginRight: 4 }} />
+                  <Text style={styles.topicPillText}>{category}</Text>
+                </View>
+              ))}
+            </View>
+            <View style={styles.hubActionBox}>
+              <Button
+                label="Start Safety Quest 🎮"
+                onPress={() => {
+                  setIndex(0);
+                  setSelectedOption(null);
+                  setLastCorrect(null);
+                  setFeedback('');
+                  setPhase('ready');
+                }}
+              />
+            </View>
+          </Card>
         </ScrollView>
       </Screen>
     );
@@ -183,15 +242,45 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   if (phase === 'complete') {
     return (
       <Screen>
-        <ScrollView>
-          <BrandHeader title="Practice complete" subtitle="Your result is based on answers confirmed by LittleNet." />
-          <View style={styles.resultHero}>
-            <Text style={styles.resultXp}>+{earnedXp} XP</Text>
-            <Text style={styles.resultScore}>{correctCount} of {items.length} correct</Text>
-            <Text style={styles.heroBody}>Keep going when you are ready. Practice quizzes never change your safety access.</Text>
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.celebrationHero}>
+            <View style={styles.celebrationIconBadge}>
+              <Feather name="award" size={48} color="#F59E0B" />
+            </View>
+            <Text style={styles.celebrationTitle}>Quest Complete! 🎉</Text>
+            <Text style={styles.celebrationSubtitle}>You answered safety questions and leveled up!</Text>
+            <View style={styles.xpBadge}>
+              <Text style={styles.xpBadgeText}>+{earnedXp} XP EARNED</Text>
+            </View>
           </View>
-          <Button label="Practice again" onPress={() => { setIndex(0); setCorrectCount(0); setEarnedXp(0); setFeedback(''); setPhase('ready'); }} />
-          <Button label="Back to learning hub" variant="secondary" onPress={() => setPhase('hub')} />
+
+          <Card>
+            <View style={styles.scoreRow}>
+              <Feather name="check-circle" size={24} color="#10B981" />
+              <Text style={styles.scoreText}>
+                {correctCount} of {items.length} Correct
+              </Text>
+            </View>
+            <Text style={styles.scoreSubtext}>
+              Keep exploring! Practice quizzes sharpen your online safety knowledge.
+            </Text>
+            <View style={styles.completeActions}>
+              <Button
+                label="Practice Again"
+                onPress={() => {
+                  setIndex(0);
+                  setSelectedOption(null);
+                  setLastCorrect(null);
+                  setCorrectCount(0);
+                  setEarnedXp(0);
+                  setFeedback('');
+                  setPhase('ready');
+                }}
+              />
+              <View style={{ height: 10 }} />
+              <Button label="Back to Learning Hub" variant="secondary" onPress={() => setPhase('hub')} />
+            </View>
+          </Card>
         </ScrollView>
       </Screen>
     );
@@ -201,31 +290,136 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   if (!current) {
     return (
       <Screen>
-        <BrandHeader title="Safety quiz" />
-        <Notice tone="info" message="Checking your progress…" />
-        <Button label={busy ? 'Checking…' : 'Continue'} onPress={() => void completeQuiz()} loading={busy} disabled={busy} />
-        {gateMessage ? <Notice tone="info" message={gateMessage} /> : null}
+        <ScrollView contentContainerStyle={styles.scrollContent}>
+          <View style={styles.heroBanner}>
+            <View style={styles.heroIconBadge}>
+              <Feather name="check-circle" size={32} color="#10B981" />
+            </View>
+            <Text style={styles.heroTitle}>Safety Quiz</Text>
+            <Text style={styles.heroSubtitle}>Checking your progress…</Text>
+          </View>
+          <Card>
+            <Notice tone="info" message="Verifying your quiz completion with the LittleNet server…" />
+            <Button
+              label={busy ? 'Checking…' : 'Continue to LittleNet 🌟'}
+              onPress={() => void completeQuiz()}
+              loading={busy}
+              disabled={busy}
+            />
+            {gateMessage ? <Notice tone="info" message={gateMessage} /> : null}
+          </Card>
+        </ScrollView>
       </Screen>
     );
   }
 
   return (
     <Screen>
-      <ScrollView>
-        <BrandHeader
-          title={reason === 'onboarding' ? 'Welcome quiz' : reason === 'feed_break' ? 'Quick brain break' : 'Practice quiz'}
-          subtitle={required ? `Question ${index + 1} of ${items.length} — finish to continue.` : `Question ${index + 1} of ${items.length} — practice, no pressure.`}
-        />
-        <View style={styles.progressTrack} accessibilityLabel={`Question ${index + 1} of ${items.length}`}>
-          <View style={[styles.progressFill, { width: `${((index + 1) / items.length) * 100}%` }]} />
+      <ScrollView contentContainerStyle={styles.scrollContent}>
+        {/* Header Hero */}
+        <View style={styles.quizHeader}>
+          <View style={styles.quizTopMeta}>
+            <View style={styles.categoryBadge}>
+              <Feather name="shield" size={13} color="#0095F6" style={{ marginRight: 5 }} />
+              <Text style={styles.categoryBadgeText}>{current.category || 'Safety'}</Text>
+            </View>
+            <View style={styles.xpPill}>
+              <Text style={styles.xpPillText}>+20 XP</Text>
+            </View>
+          </View>
+
+          <Text style={styles.quizMainTitle}>
+            {reason === 'onboarding' ? 'Welcome Safety Quiz' : reason === 'feed_break' ? 'Brain Break Challenge' : 'Safety Quest'}
+          </Text>
+          <Text style={styles.quizStepCounter}>
+            Question {index + 1} of {items.length}
+          </Text>
+
+          {/* Dynamic Animated Progress Bar */}
+          <View style={styles.progressContainer}>
+            <View style={[styles.progressBarFill, { width: `${((index + 1) / items.length) * 100}%` }]} />
+          </View>
         </View>
-        <Card>
-          <Notice tone="info" message={`Category: ${current.category}`} />
-          <Text style={styles.question}>{current.question}</Text>
-          {current.options.map((option) => (
-            <Button key={option} label={option} variant="secondary" onPress={() => void submitAnswer(option)} disabled={busy} />
-          ))}
-          {feedback ? <Notice tone={feedback.startsWith('Correct') ? 'ok' : 'info'} message={feedback} /> : null}
+
+        {/* Question Card */}
+        <Card style={styles.questionCard}>
+          <Text style={styles.questionPrompt}>{current.question}</Text>
+
+          {/* Interactive Option Cards */}
+          <View style={styles.optionsList}>
+            {current.options.map((option, optIdx) => {
+              const isSelected = selectedOption === option;
+              const isCorrectChoice = isSelected && lastCorrect === true;
+              const isWrongChoice = isSelected && lastCorrect === false;
+
+              return (
+                <Pressable
+                  key={option}
+                  disabled={busy}
+                  onPress={() => void submitAnswer(option)}
+                  style={({ pressed }) => [
+                    styles.optionCard,
+                    pressed && styles.optionCardPressed,
+                    isSelected && styles.optionCardSelected,
+                    isCorrectChoice && styles.optionCardCorrect,
+                    isWrongChoice && styles.optionCardWrong,
+                  ]}
+                >
+                  <View
+                    style={[
+                      styles.optionLetterBadge,
+                      isSelected && styles.optionLetterBadgeSelected,
+                      isCorrectChoice && styles.optionLetterBadgeCorrect,
+                      isWrongChoice && styles.optionLetterBadgeWrong,
+                    ]}
+                  >
+                    <Text
+                      style={[
+                        styles.optionLetterText,
+                        isSelected && styles.optionLetterTextActive,
+                      ]}
+                    >
+                      {OPTION_LABELS[optIdx] || String(optIdx + 1)}
+                    </Text>
+                  </View>
+                  <Text
+                    style={[
+                      styles.optionLabel,
+                      isSelected && styles.optionLabelSelected,
+                      isCorrectChoice && styles.optionLabelCorrect,
+                      isWrongChoice && styles.optionLabelWrong,
+                    ]}
+                  >
+                    {option}
+                  </Text>
+                  {isCorrectChoice ? (
+                    <Feather name="check" size={20} color="#10B981" style={styles.optionEndIcon} />
+                  ) : isWrongChoice ? (
+                    <Feather name="x" size={20} color="#EF4444" style={styles.optionEndIcon} />
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+
+          {feedback ? (
+            <View
+              style={[
+                styles.feedbackContainer,
+                feedback.includes('Correct') ? styles.feedbackOk : styles.feedbackInfo,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.feedbackText,
+                  feedback.includes('Correct') ? styles.feedbackTextOk : styles.feedbackTextInfo,
+                ]}
+              >
+                {feedback}
+              </Text>
+            </View>
+          ) : null}
+
           {gateMessage ? <Notice tone="info" message={gateMessage} /> : null}
         </Card>
       </ScrollView>
@@ -234,29 +428,314 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
 }
 
 const styles = StyleSheet.create({
-  question: { color: colors.ink, fontSize: type.title, fontWeight: '700', lineHeight: 26, marginTop: 16, marginBottom: 8 },
-  hero: { marginHorizontal: 12, padding: 20, borderRadius: 8, backgroundColor: '#EAF4FF', borderWidth: 1, borderColor: '#B9DFFF' },
-  eyebrow: { color: colors.violet, fontSize: 11, fontWeight: '900', letterSpacing: 1.4 },
-  heroTitle: { color: colors.ink, fontSize: 28, fontWeight: '900', marginTop: 8, letterSpacing: -0.7 },
-  heroBody: { color: colors.muted, fontSize: type.body, lineHeight: 21, marginTop: 8 },
-  statRow: { flexDirection: 'row', gap: 8, marginHorizontal: 12, marginTop: 12 },
-  stat: { flex: 1, padding: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, borderRadius: 8 },
-  statValue: { color: colors.brand, fontSize: 20, fontWeight: '900' },
-  statLabel: { color: colors.muted, fontSize: 12, marginTop: 2 },
-  sectionTitle: { color: colors.ink, fontSize: 16, fontWeight: '900', marginHorizontal: 12, marginTop: 20, marginBottom: 8 },
-  topicWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginHorizontal: 12 },
-  topic: { borderRadius: 999, backgroundColor: '#F1EAFE', paddingHorizontal: 12, paddingVertical: 8 },
-  topicText: { color: colors.violet, fontWeight: '800', fontSize: 12 },
-  learningNote: { margin: 12, padding: 12, borderLeftWidth: 3, borderLeftColor: colors.sunny, backgroundColor: '#FFF8E8' },
-  learningNoteTitle: { color: colors.ink, fontWeight: '900', fontSize: 14 },
-  learningNoteBody: { color: colors.muted, fontSize: 12, lineHeight: 18, marginTop: 4 },
-  resultHero: { margin: 12, padding: 24, alignItems: 'center', borderRadius: 8, backgroundColor: '#E7F6EC', borderWidth: 1, borderColor: '#A9E5C0' },
-  resultXp: { color: colors.teal, fontSize: 34, fontWeight: '900' },
-  resultScore: { color: colors.ink, fontSize: 18, fontWeight: '800', marginTop: 4 },
-  progressTrack: { height: 6, backgroundColor: colors.line, marginHorizontal: 12, borderRadius: 6, overflow: 'hidden' },
-  progressFill: { height: 6, backgroundColor: colors.brand, borderRadius: 6 },
+  scrollContent: { paddingBottom: spacing.xl },
+  heroBanner: {
+    alignItems: 'center',
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  heroIconBadge: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: '#EBF5FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.xs,
+    elevation: 4,
+    shadowColor: '#0095F6',
+    shadowOpacity: 0.18,
+    shadowRadius: 10,
+    shadowOffset: { width: 0, height: 4 },
+  },
+  heroLogoImg: { width: 44, height: 44, borderRadius: 12 },
+  heroTitle: {
+    color: colors.ink,
+    fontSize: 26,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+    marginTop: 6,
+  },
+  heroSubtitle: {
+    color: colors.muted,
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 4,
+    lineHeight: 20,
+    maxWidth: 320,
+  },
+  statsCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-around',
+    paddingVertical: 16,
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.sm,
+  },
+  statBox: { alignItems: 'center' },
+  statVal: { color: colors.brand, fontSize: 24, fontWeight: '900' },
+  statLbl: { color: colors.muted, fontSize: 12, fontWeight: '600', marginTop: 2 },
+  statDivider: { width: 1, height: 32, backgroundColor: colors.line },
+  sectionHeader: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+    marginBottom: 12,
+  },
+  topicWrap: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 16 },
+  topicPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 12,
+    paddingVertical: 7,
+    borderRadius: radius.pill,
+  },
+  topicPillText: { color: '#4F46E5', fontWeight: '700', fontSize: 12 },
+  hubActionBox: { marginTop: 8 },
+  celebrationHero: {
+    alignItems: 'center',
+    paddingTop: spacing.xl,
+    paddingBottom: spacing.lg,
+    paddingHorizontal: spacing.lg,
+  },
+  celebrationIconBadge: {
+    width: 80,
+    height: 80,
+    borderRadius: 26,
+    backgroundColor: '#FEF3C7',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.sm,
+    elevation: 6,
+    shadowColor: '#F59E0B',
+    shadowOpacity: 0.25,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 6 },
+  },
+  celebrationTitle: {
+    color: colors.ink,
+    fontSize: 28,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  celebrationSubtitle: {
+    color: colors.muted,
+    fontSize: 14,
+    textAlign: 'center',
+    marginTop: 6,
+    lineHeight: 20,
+  },
+  xpBadge: {
+    marginTop: 14,
+    backgroundColor: '#ECFDF5',
+    borderWidth: 1.5,
+    borderColor: '#A7F3D0',
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+    borderRadius: radius.pill,
+  },
+  xpBadgeText: {
+    color: '#059669',
+    fontWeight: '900',
+    fontSize: 14,
+    letterSpacing: 0.5,
+  },
+  scoreRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 8,
+  },
+  scoreText: {
+    fontSize: 20,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  scoreSubtext: {
+    fontSize: 13,
+    color: colors.muted,
+    textAlign: 'center',
+    lineHeight: 18,
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  completeActions: { width: '100%' },
+  quizHeader: {
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
+  },
+  quizTopMeta: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 6,
+  },
+  categoryBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#E0F2FE',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  categoryBadgeText: {
+    color: '#0284C7',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  xpPill: {
+    backgroundColor: '#FEF3C7',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: radius.pill,
+  },
+  xpPillText: {
+    color: '#D97706',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  quizMainTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: colors.ink,
+    letterSpacing: -0.4,
+    marginTop: 4,
+  },
+  quizStepCounter: {
+    fontSize: 13,
+    fontWeight: '600',
+    color: colors.muted,
+    marginTop: 2,
+    marginBottom: 10,
+  },
+  progressContainer: {
+    height: 8,
+    backgroundColor: '#E2E8F0',
+    borderRadius: radius.pill,
+    overflow: 'hidden',
+    width: '100%',
+  },
+  progressBarFill: {
+    height: '100%',
+    backgroundColor: '#0095F6',
+    borderRadius: radius.pill,
+  },
+  questionCard: {
+    marginTop: spacing.sm,
+    padding: spacing.lg,
+  },
+  questionPrompt: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+    lineHeight: 25,
+    marginBottom: spacing.lg,
+  },
+  optionsList: {
+    gap: 12,
+    marginBottom: spacing.md,
+  },
+  optionCard: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 14,
+    paddingHorizontal: 14,
+    paddingVertical: 14,
+  },
+  optionCardPressed: {
+    backgroundColor: '#F1F5F9',
+    transform: [{ scale: 0.99 }],
+  },
+  optionCardSelected: {
+    borderColor: '#0095F6',
+    backgroundColor: '#EFF6FF',
+  },
+  optionCardCorrect: {
+    borderColor: '#10B981',
+    backgroundColor: '#ECFDF5',
+  },
+  optionCardWrong: {
+    borderColor: '#EF4444',
+    backgroundColor: '#FEF2F2',
+  },
+  optionLetterBadge: {
+    width: 32,
+    height: 32,
+    borderRadius: 10,
+    backgroundColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
+  optionLetterBadgeSelected: {
+    backgroundColor: '#0095F6',
+  },
+  optionLetterBadgeCorrect: {
+    backgroundColor: '#10B981',
+  },
+  optionLetterBadgeWrong: {
+    backgroundColor: '#EF4444',
+  },
+  optionLetterText: {
+    color: '#475569',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  optionLetterTextActive: {
+    color: '#FFFFFF',
+  },
+  optionLabel: {
+    flex: 1,
+    color: colors.ink,
+    fontSize: 15,
+    fontWeight: '600',
+    lineHeight: 21,
+  },
+  optionLabelSelected: {
+    color: '#0095F6',
+    fontWeight: '700',
+  },
+  optionLabelCorrect: {
+    color: '#065F46',
+    fontWeight: '700',
+  },
+  optionLabelWrong: {
+    color: '#991B1B',
+    fontWeight: '700',
+  },
+  optionEndIcon: {
+    marginLeft: 8,
+  },
+  feedbackContainer: {
+    marginTop: spacing.sm,
+    padding: 14,
+    borderRadius: 12,
+    borderWidth: 1,
+  },
+  feedbackOk: {
+    backgroundColor: '#ECFDF5',
+    borderColor: '#A7F3D0',
+  },
+  feedbackInfo: {
+    backgroundColor: '#EFF6FF',
+    borderColor: '#BFDBFE',
+  },
+  feedbackText: {
+    fontSize: 14,
+    fontWeight: '600',
+    lineHeight: 20,
+  },
+  feedbackTextOk: {
+    color: '#065F46',
+  },
+  feedbackTextInfo: {
+    color: '#1E40AF',
+  },
 });
-
-function Stat({ value, label }: { value: string; label: string }) {
-  return <View style={styles.stat}><Text style={styles.statValue}>{value}</Text><Text style={styles.statLabel}>{label}</Text></View>;
-}

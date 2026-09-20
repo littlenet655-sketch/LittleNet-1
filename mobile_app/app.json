@@ -11,11 +11,13 @@
       "package": "com.littlenet.app",
       "versionCode": 1,
       "softwareKeyboardLayoutMode": "resize",
-      "usesCleartextTraffic": false,
       "adaptiveIcon": {
         "foregroundImage": "../static/icons/app_logo.png",
         "backgroundColor": "#FFF9F2"
-      }
+      },
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "ios": {
       "bundleIdentifier": "com.littlenet.app",
@@ -49,11 +51,11 @@
         }
       ]
     ],
+    "owner": "anilkumar09",
     "extra": {
       "eas": {
-        "projectId": "c4ce834d-fd50-4504-a311-820c3372b6dc"
+        "projectId": "e415f1da-b67c-4fd2-8f9a-61ac16d211be"
       }
-    },
-    "owner": "akshu1245s-team"
+    }
   }
 }

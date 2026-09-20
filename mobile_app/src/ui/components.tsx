@@ -252,16 +252,27 @@ export function GateNotice({ error }: { error: unknown }) {
 
 export function LoadingState({ message = 'Loading…' }: { message?: string }) {
   return (
-    <View style={styles.center}>
+    <View style={styles.loadingCenter}>
       <ActivityIndicator size="large" color={colors.brand} />
-      <Text style={styles.centerText}>{message}</Text>
+      {message ? <Text style={styles.centerText}>{message}</Text> : null}
     </View>
   );
 }
 
-export function EmptyState({ title, body }: { title: string; body?: string }) {
+export function EmptyState({
+  title,
+  body,
+  icon = 'compass',
+}: {
+  title: string;
+  body?: string;
+  icon?: keyof typeof Feather.glyphMap;
+}) {
   return (
     <View style={styles.center}>
+      <View style={styles.emptyIconBox}>
+        <Feather name={icon} size={30} color={colors.brand} />
+      </View>
       <Text style={styles.emptyTitle}>{title}</Text>
       {body ? <Text style={styles.centerText}>{body}</Text> : null}
     </View>
@@ -434,7 +445,24 @@ const styles = StyleSheet.create({
   noticeOk: { backgroundColor: '#ECFDF5', borderWidth: 1, borderColor: '#D1FAE5' },
   noticeText: { color: colors.ink, fontSize: type.body, lineHeight: 21 },
   gateLabel: { fontWeight: '800', fontSize: type.caption, color: colors.danger, marginBottom: 2, textTransform: 'uppercase', letterSpacing: 1 },
-  center: { alignItems: 'center', justifyContent: 'center', padding: spacing.lg, gap: 8, minHeight: 120 },
+  center: { alignItems: 'center', justifyContent: 'center', padding: spacing.lg, gap: 8, minHeight: 140 },
+  loadingCenter: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: spacing.lg,
+    gap: 12,
+    minHeight: 200,
+  },
+  emptyIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#EFF6FF',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
   centerText: { color: colors.muted, fontSize: type.body, textAlign: 'center', lineHeight: 22 },
   emptyTitle: { fontSize: type.title, fontWeight: '800', color: colors.ink, textAlign: 'center' },
   offline: { backgroundColor: colors.ink, borderRadius: 12, padding: spacing.sm, marginBottom: spacing.sm },

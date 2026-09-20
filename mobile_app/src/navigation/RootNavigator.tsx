@@ -13,6 +13,7 @@ import { DiscoverScreen } from '../screens/kids/DiscoverScreen';
 import { OwnProfileScreen } from '../screens/kids/OwnProfileScreen';
 import { OtherProfileScreen } from '../screens/kids/OtherProfileScreen';
 import { PostDetailScreen } from '../screens/kids/PostDetailScreen';
+import { ScreenTimeLockedScreen } from '../screens/kids/ScreenTimeLockedScreen';
 import { NotificationsScreen } from '../screens/kids/NotificationsScreen';
 import { ConversationsScreen } from '../screens/kids/ConversationsScreen';
 import { ChatScreen } from '../screens/kids/ChatScreen';
@@ -124,13 +125,12 @@ function ChildNavigator() {
   );
 
   if (activeLock) {
-    const quiet = activeLock === 'quiet_hours';
     return (
-      <Screen>
-        <BrandHeader title={quiet ? 'Quiet hours' : 'Screen-time limit reached'} subtitle="Parent Mode is keeping this account safe." />
-        <Notice tone="info" message={quiet ? 'LittleNet will unlock automatically when quiet hours end.' : 'Ask your parent before using LittleNet again today.'} />
-        <Button label="Log out" variant="secondary" onPress={() => void signOut()} />
-      </Screen>
+      <ScreenTimeLockedScreen
+        lockType={activeLock === 'quiet_hours' ? 'quiet_hours' : 'screen_time'}
+        onUnlock={() => setActiveLock(null)}
+        onSignOut={() => void signOut()}
+      />
     );
   }
 

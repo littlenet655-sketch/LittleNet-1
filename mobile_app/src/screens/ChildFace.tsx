@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { enrollChildFace, faceLogin, requestFaceChallenge, type FaceChallengeResponse } from '../api/auth';
+import { enrollChildFace, faceLogin, requestFaceChallenge, skipChildFaceEnroll, type FaceChallengeResponse } from '../api/auth';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { CameraCapture } from '../camera/CameraCapture';
@@ -170,6 +170,34 @@ export function FaceEnrollScreen(_props: ChildScreenProps<'FaceEnroll'>) {
     }
   }
 
+  async function onSkip() {
+    if (!session || busy || checking) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await skipChildFaceEnroll(session.token);
+      setChecking(true);
+      try {
+        const next = await refreshMe();
+        if (next.onboarding?.face_required) {
+          setChecking(false);
+          setError(new Error('Could not update face setup. Please try again.'));
+          return;
+        }
+      } catch (refreshError) {
+        setChecking(false);
+        if (refreshError instanceof ApiError && refreshError.status === 401) return;
+        setError(refreshError);
+        throw refreshError;
+      }
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 401) return;
+      setError(err);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <Screen>
       <ScrollView contentContainerStyle={styles.scrollContent}>
@@ -196,7 +224,7 @@ export function FaceEnrollScreen(_props: ChildScreenProps<'FaceEnroll'>) {
 
           <Notice tone="info" message="Good light, look straight at the camera, one face only. Spoof photos and groups are rejected." />
           {error ? <GateNotice error={error} /> : null}
-          {checking ? <Notice tone="ok" message="Face enrolled. Checking what is next…" /> : null}
+          {checking ? <Notice tone="ok" message="Face setup updated. Checking what is next…" /> : null}
 
           <CameraCapture
             label="Save My Face Key"
@@ -206,6 +234,15 @@ export function FaceEnrollScreen(_props: ChildScreenProps<'FaceEnroll'>) {
             instruction="Google ML Kit will scan your face and ask you to blink naturally to confirm liveness."
             onCapture={onCapture}
           />
+
+          <View style={styles.skipBox}>
+            <Button
+              label="Skip for Now"
+              variant="secondary"
+              disabled={busy || checking}
+              onPress={() => void onSkip()}
+            />
+          </View>
         </Card>
       </ScrollView>
     </Screen>
@@ -249,5 +286,10 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
     color: colors.brand,
+  },
+  skipBox: {
+    marginTop: spacing.md,
+    alignItems: 'center',
+    width: '100%',
   },
 });

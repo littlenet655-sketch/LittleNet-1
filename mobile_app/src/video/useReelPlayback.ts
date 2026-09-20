@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useVideoPlayer } from 'expo-video';
 import type { FeedItem } from '../api/kidsFeed';
-import { refreshReelPlayback } from '../api/kidsFeed';
+import { refreshCuratedReelPlayback, refreshReelPlayback } from '../api/kidsFeed';
 import { getBufferOptions } from './playbackPolicy';
 import { ReelMetricsTracker } from './reelPlaybackMetrics';
 import type { ImpressionEventPayload, PlaybackPolicy, PlaybackState } from './types';
@@ -66,11 +66,13 @@ export function useReelPlayback({
   const requestFreshPlayback = useCallback(async () => {
     if (!token || sourceFetchInFlightRef.current) return null;
     const postId = item.post_id || item.source_id;
-    if (item.source_type !== 'SOCIAL' || typeof postId !== 'number') return null;
+    if (typeof postId !== 'number') return null;
 
     sourceFetchInFlightRef.current = true;
     try {
-      const res = await refreshReelPlayback(token, postId);
+      const res = item.source_type === 'CURATED'
+        ? await refreshCuratedReelPlayback(token, postId)
+        : await refreshReelPlayback(token, postId);
       if (res.ok && res.playback_url && isMountedRef.current) {
         setCurrentSource(res.playback_url);
         setCurrentExpiryAt(res.playback_expires_at ?? null);
@@ -78,18 +80,26 @@ export function useReelPlayback({
         return res.playback_url;
       }
       return null;
+    } catch (error) {
+      if (isMountedRef.current && active) {
+        const message = error instanceof Error ? error.message : 'Could not prepare this reel.';
+        setErrorMessage(message);
+        setPlaybackState('ERROR');
+        setIsDebouncedBuffering(false);
+      }
+      return null;
     } finally {
       sourceFetchInFlightRef.current = false;
     }
-  }, [item.post_id, item.source_id, item.source_type, token]);
+  }, [active, item.post_id, item.source_id, item.source_type, token]);
 
-  // Social Reels use just-in-time playback credentials. Curated media can keep
-  // the already-authorized media URL supplied by the feed.
+  // Both social and curated Reels use just-in-time playback credentials so the
+  // list request stays fast and only the active window touches R2.
   useEffect(() => {
-    if (nearby && !currentSource && item.source_type === 'SOCIAL') {
+    if (nearby && !currentSource) {
       void requestFreshPlayback();
     }
-  }, [nearby, currentSource, item.source_type, requestFreshPlayback]);
+  }, [nearby, currentSource, requestFreshPlayback]);
 
   // Preemptive Credential Expiry Check
   const checkCredentialExpiry = useCallback(async () => {
@@ -141,20 +151,9 @@ export function useReelPlayback({
         metricsRef.current.onError(msg);
         setIsDebouncedBuffering(false);
 
-        // Auto-refresh credential on error
-        const postId = item.post_id || item.source_id;
-        if (token && item.source_type === 'SOCIAL' && typeof postId === 'number') {
-          void refreshReelPlayback(token, postId).then((res) => {
-            if (res.ok && res.playback_url && isMountedRef.current) {
-              setCurrentSource(res.playback_url);
-              setCurrentExpiryAt(res.playback_expires_at ?? null);
-              metricsRef.current.onCredentialRefreshed();
-              void player.replaceAsync(res.playback_url).then(() => {
-                if (active && !paused) player.play();
-              });
-            }
-          }).catch(() => {});
-        }
+        // Refresh an expired/invalid credential for both social and curated
+        // Reels. Updating currentSource drives the single replaceAsync path.
+        void requestFreshPlayback();
         return;
       }
 
@@ -183,6 +182,7 @@ export function useReelPlayback({
         // readyToPlay means the decoder can begin; keep the poster visible until
         // the native VideoView confirms an actual first frame was rendered.
         setErrorMessage(null);
+        if (active && !paused) player.play();
       }
     });
 
@@ -217,7 +217,7 @@ export function useReelPlayback({
         bufferingTimerRef.current = null;
       }
     };
-  }, [player, token, item.post_id, item.source_id, active, paused]);
+  }, [player, active, paused, requestFreshPlayback]);
 
   // Window loading logic: only load source if active or immediate neighbor (nearby)
   useEffect(() => {
@@ -262,9 +262,11 @@ export function useReelPlayback({
     setFirstFrameRendered(false);
     setPlaybackState('PREPARING');
     const postId = item.post_id || item.source_id;
-    if (token && item.source_type === 'SOCIAL' && typeof postId === 'number') {
+    if (token && typeof postId === 'number') {
       try {
-        const res = await refreshReelPlayback(token, postId);
+        const res = item.source_type === 'CURATED'
+          ? await refreshCuratedReelPlayback(token, postId)
+          : await refreshReelPlayback(token, postId);
         if (res.ok && res.playback_url && isMountedRef.current) {
           setCurrentSource(res.playback_url);
           setCurrentExpiryAt(res.playback_expires_at ?? null);
@@ -281,7 +283,7 @@ export function useReelPlayback({
       await player.replaceAsync(currentSource);
       if (active && !paused) player.play();
     }
-  }, [item.post_id, item.source_id, token, currentSource, player, active, paused]);
+  }, [item.post_id, item.source_id, item.source_type, token, currentSource, player, active, paused]);
 
   // Flush once on unmount. The callback is kept in a ref so a parent render
   // cannot accidentally trigger effect cleanup and duplicate an impression.

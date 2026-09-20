@@ -1,8 +1,16 @@
 /** Kids v2 upload pipeline API (Agent C). Direct R2 PUT, never JSON media. */
 import { apiRequest, routes } from './client';
 
+const UPLOAD_CONTROL_TIMEOUT_MS = 60_000;
+
 async function postJson<T>(path: string, body: Record<string, unknown>, token: string): Promise<T> {
-  return apiRequest<T>(path, { method: 'POST', body: JSON.stringify(body) }, token);
+  return apiRequest<T>(path, {
+    method: 'POST',
+    body: JSON.stringify(body),
+    // Modal cold starts plus auth/parent-control/R2 checks can legitimately
+    // exceed the general 15-second UI request budget.
+    timeoutMs: UPLOAD_CONTROL_TIMEOUT_MS,
+  }, token);
 }
 
 export interface UploadSession {

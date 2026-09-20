@@ -152,6 +152,7 @@ ALTER TABLE quizzes ADD COLUMN IF NOT EXISTS pronunciation_hint VARCHAR(100);
 ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS grade_level VARCHAR(30) DEFAULT 'Grade 4';
 ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS preferred_language VARCHAR(20) DEFAULT 'en';
 ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS learning_languages TEXT[] DEFAULT ARRAY['kn', 'hi'];
+ALTER TABLE child_profiles ADD COLUMN IF NOT EXISTS face_enrollment_skipped BOOLEAN NOT NULL DEFAULT FALSE;
 
 CREATE TABLE IF NOT EXISTS child_personalized_quiz_pool (
   pool_id SERIAL PRIMARY KEY,

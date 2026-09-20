@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useQuery } from '@tanstack/react-query';
 import { fetchOwnProfile, updateOwnProfile } from '../../api/kidsProfiles';
 import { fetchSaved } from '../../api/kidsSocial';
@@ -44,73 +44,323 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
     setName(String(profile.full_name ?? ''));
   }, [profile]);
 
-  if (profileQuery.isPending || savedQuery.isPending) return <Screen><LoadingState message="Loading your profile…" /></Screen>;
+  if (profileQuery.isPending && !profile) {
+    return (
+      <View style={styles.centerLoading}>
+        <ActivityIndicator size="large" color={colors.brand} />
+      </View>
+    );
+  }
   if (profileQuery.error && !profile) return <Screen><GateNotice error={profileQuery.error} /><ErrorState message="Could not load your profile." onRetry={() => void profileQuery.refetch()} /></Screen>;
 
   const list = tab === 'saved' ? saved : posts;
+
   return (
-    <Screen>
-      <ScrollView refreshControl={undefined}>
-        <BrandHeader title={String(profile?.full_name ?? 'Your profile')} subtitle="Your kind posts live here." />
+    <View style={styles.container}>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {error ? <GateNotice error={error} /> : null}
-        <Card>
-          <View style={styles.head}>
-            <Avatar uri={typeof profile?.avatar_url === 'string' ? profile.avatar_url : null} name={String(profile?.full_name ?? 'Y')} size={64} />
-            <Text style={styles.counts}>{`Posts ${posts.length} • Followers ${Number(counts.followers ?? 0)}`}</Text>
+
+        {/* Instagram-style Profile Header */}
+        <View style={styles.profileCard}>
+          <View style={styles.headRow}>
+            <Avatar
+              uri={typeof profile?.avatar_url === 'string' ? profile.avatar_url : null}
+              name={String(profile?.full_name ?? 'Kid')}
+              size={72}
+            />
+            <View style={styles.statsRow}>
+              <View style={styles.statItem}>
+                <Text style={styles.statNum}>{posts.length}</Text>
+                <Text style={styles.statLabel}>Posts</Text>
+              </View>
+              <Pressable
+                style={styles.statItem}
+                onPress={() => nav.navigate('Connections', { mode: 'followers' })}
+              >
+                <Text style={styles.statNum}>{Number(counts.followers ?? 0)}</Text>
+                <Text style={styles.statLabel}>Friends</Text>
+              </Pressable>
+              <View style={styles.statItem}>
+                <Text style={styles.statNum}>{saved.length}</Text>
+                <Text style={styles.statLabel}>Saved</Text>
+              </View>
+            </View>
           </View>
-          {typeof profile?.bio === 'string' && profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
-        </Card>
-          <View style={styles.tabs}>
-          {(['posts', 'saved', 'edit'] as Tab[]).map((t) => (
-            <Pressable key={t} onPress={() => setTab(t)}><Text style={[styles.tab, tab === t && styles.tabActive]}>{t.toUpperCase()}</Text></Pressable>
-          ))}
+
+          {/* User Name & Bio */}
+          <View style={styles.bioSection}>
+            <Text style={styles.profileName}>{String(profile?.full_name || 'LittleNet Explorer')}</Text>
+            {typeof profile?.bio === 'string' && profile.bio ? (
+              <Text style={styles.bioText}>{profile.bio}</Text>
+            ) : (
+              <Text style={styles.bioPlaceholder}>Learning, sharing kindness, and exploring safely ✨</Text>
+            )}
+          </View>
+
+          {/* Action Pills Row */}
+          <View style={styles.actionsRow}>
+            <Pressable
+              style={styles.actionPill}
+              onPress={() => setTab(tab === 'edit' ? 'posts' : 'edit')}
+            >
+              <Text style={styles.actionPillText}>{tab === 'edit' ? 'Close Edit' : 'Edit Profile'}</Text>
+            </Pressable>
+            <Pressable
+              style={styles.actionPill}
+              onPress={() => nav.navigate('SavedContent', {})}
+            >
+              <Text style={styles.actionPillText}>Saved</Text>
+            </Pressable>
+            <Pressable
+              style={[styles.actionPill, styles.actionPillDanger]}
+              onPress={() => void signOut()}
+            >
+              <Text style={[styles.actionPillText, styles.actionPillTextDanger]}>Log Out</Text>
+            </Pressable>
+          </View>
         </View>
-          <View style={styles.actions}>
-            <Button label="Edit profile" variant="secondary" onPress={() => nav.navigate('EditProfile', {})} />
-            <Button label="Saved content" variant="secondary" onPress={() => nav.navigate('SavedContent', {})} />
-            <Button label="Followers" variant="secondary" onPress={() => nav.navigate('Connections', { mode: 'followers' })} />
-            <Button label="Log out" variant="secondary" onPress={() => void signOut()} />
-          </View>
+
+        {/* Tab Switcher */}
+        <View style={styles.tabBar}>
+          {(['posts', 'saved', 'edit'] as Tab[]).map((t) => {
+            const active = tab === t;
+            const label = t === 'posts' ? 'POSTS' : t === 'saved' ? 'SAVED' : 'EDIT BIO';
+            return (
+              <Pressable
+                key={t}
+                onPress={() => setTab(t)}
+                style={[styles.tabItem, active && styles.tabItemActive]}
+              >
+                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+
+        {/* Edit Form */}
         {tab === 'edit' ? (
-          <Card>
+          <Card style={styles.editCard}>
             <Field label="Full name" value={name} onChangeText={setName} />
-            <Field label="Bio" value={bio} onChangeText={setBio} multiline />
+            <Field label="Bio" value={bio} onChangeText={setBio} multiline placeholder="Tell your friends what you like…" />
             {savedMsg ? <Notice tone="ok" message={savedMsg} /> : null}
-            <Button label={saving ? 'Saving…' : 'Save changes'} disabled={saving} onPress={() => {
-              if (!session) return;
-              setSaving(true);
-              setSaveError(null);
-              updateOwnProfile(session.token, { full_name: name, bio }).then((updated) => {
-                queryClient.setQueryData([...kidsKeys.ownProfile, session.token], updated);
-                setSavedMsg('Profile updated.');
-                void invalidateSocialCaches();
-              }).catch((reason: unknown) => setSaveError(reason)).finally(() => setSaving(false));
-            }} />
+            <Button
+              label={saving ? 'Saving…' : 'Save changes'}
+              disabled={saving}
+              onPress={() => {
+                if (!session) return;
+                setSaving(true);
+                setSaveError(null);
+                updateOwnProfile(session.token, { full_name: name, bio })
+                  .then((updated) => {
+                    queryClient.setQueryData([...kidsKeys.ownProfile, session.token], updated);
+                    setSavedMsg('Profile updated!');
+                    void invalidateSocialCaches();
+                  })
+                  .catch((reason: unknown) => setSaveError(reason))
+                  .finally(() => setSaving(false));
+              }}
+            />
           </Card>
         ) : null}
-        {tab !== 'edit' && !list.length ? <EmptyState title="Nothing here" body="Posts you create will appear here." /> : null}
-        {list.map((post) => (
-          <Pressable key={post.post_id} onPress={() => nav.navigate('PostDetail', { postId: post.post_id })}>
-            <Card>
-              {post.media_type?.toUpperCase() === 'VIDEO' && post.poster_url ? <Image source={{ uri: post.poster_url }} style={styles.thumb} /> : null}
-              {post.media_url && post.media_type?.toUpperCase() !== 'VIDEO' ? <Image source={{ uri: post.media_url }} style={styles.thumb} /> : null}
-              <Text style={styles.caption}>{post.caption || `Post ${post.post_id}`}</Text>
-            </Card>
-          </Pressable>
-        ))}
+
+        {/* Empty State */}
+        {tab !== 'edit' && !list.length ? (
+          <EmptyState
+            icon={tab === 'saved' ? 'bookmark' : 'image'}
+            title={tab === 'saved' ? 'No saved posts yet' : 'No posts yet'}
+            body={tab === 'saved' ? 'Posts and reels you bookmark will appear here.' : 'Share safe moments with friends using the + button!'}
+          />
+        ) : null}
+
+        {/* 2-Column Media Grid */}
+        {tab !== 'edit' && list.length > 0 ? (
+          <View style={styles.grid}>
+            {list.map((post) => {
+              const isVid = post.media_type?.toUpperCase() === 'VIDEO';
+              const imgUrl = isVid ? post.poster_url || post.media_url : post.media_url;
+              return (
+                <Pressable
+                  key={post.post_id}
+                  style={styles.gridCard}
+                  onPress={() => nav.navigate('PostDetail', { postId: post.post_id })}
+                >
+                  {imgUrl ? (
+                    <Image source={{ uri: imgUrl }} style={styles.gridThumb} resizeMode="cover" />
+                  ) : (
+                    <View style={styles.gridPlaceholder}>
+                      <Text style={styles.placeholderIcon}>{isVid ? '🎬' : '🖼️'}</Text>
+                    </View>
+                  )}
+                  {post.caption ? (
+                    <View style={styles.captionWrap}>
+                      <Text style={styles.gridCaption} numberOfLines={2}>
+                        {post.caption}
+                      </Text>
+                    </View>
+                  ) : null}
+                </Pressable>
+              );
+            })}
+          </View>
+        ) : null}
       </ScrollView>
-    </Screen>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  head: { flexDirection: 'row', alignItems: 'center', gap: 18, paddingVertical: 8 },
-  counts: { color: colors.ink, flex: 1, fontWeight: '600', lineHeight: 22 },
-  bio: { marginTop: 8, color: colors.ink, fontSize: type.body },
-  tabs: { flexDirection: 'row', justifyContent: 'space-around', marginVertical: 12, paddingVertical: 12, borderTopWidth: 1, borderBottomWidth: 1, borderColor: colors.line },
-  actions: { gap: 8, marginBottom: 8 },
-  tab: { color: colors.muted, fontWeight: '700', fontSize: 12 },
-  tabActive: { color: colors.ink },
-  thumb: { width: '100%', height: 180, borderRadius: 0, backgroundColor: colors.line },
-  caption: { marginTop: 6, color: colors.ink },
+  container: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  centerLoading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.background,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  profileCard: {
+    backgroundColor: colors.surface,
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 20,
+  },
+  statsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  statItem: {
+    alignItems: 'center',
+  },
+  statNum: {
+    fontSize: 18,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  bioSection: {
+    marginTop: 12,
+  },
+  profileName: {
+    fontSize: 16,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  bioText: {
+    fontSize: 13,
+    color: colors.ink,
+    marginTop: 4,
+    lineHeight: 18,
+  },
+  bioPlaceholder: {
+    fontSize: 12,
+    color: colors.muted,
+    fontStyle: 'italic',
+    marginTop: 3,
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+  },
+  actionPill: {
+    flex: 1,
+    backgroundColor: '#F1F5F9',
+    borderRadius: 10,
+    paddingVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  actionPillDanger: {
+    backgroundColor: '#FEF2F2',
+  },
+  actionPillText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  actionPillTextDanger: {
+    color: '#DC2626',
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  tabItem: {
+    flex: 1,
+    paddingVertical: 12,
+    alignItems: 'center',
+    borderBottomWidth: 2,
+    borderBottomColor: 'transparent',
+  },
+  tabItemActive: {
+    borderBottomColor: colors.brand,
+  },
+  tabLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+    letterSpacing: 0.5,
+  },
+  tabLabelActive: {
+    color: colors.brand,
+  },
+  editCard: {
+    margin: 16,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 10,
+    gap: 10,
+  },
+  gridCard: {
+    width: '48%',
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+  },
+  gridThumb: {
+    width: '100%',
+    height: 140,
+    backgroundColor: '#F1F5F9',
+  },
+  gridPlaceholder: {
+    width: '100%',
+    height: 140,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  placeholderIcon: {
+    fontSize: 32,
+  },
+  captionWrap: {
+    padding: 8,
+  },
+  gridCaption: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: colors.ink,
+    lineHeight: 15,
+  },
 });

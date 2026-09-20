@@ -11,6 +11,12 @@ import hmac
 from pathlib import Path
 
 os.environ["LITTLENET_AI_SERVER"] = "1"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+try:
+    import tensorflow as tf
+    tf.config.set_visible_devices([], 'GPU')
+except Exception:
+    pass
 
 from flask import Flask, jsonify, request
 

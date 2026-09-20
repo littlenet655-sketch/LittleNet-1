@@ -1,34 +1,70 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Animated,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  StyleSheet,
+  Text,
+  View,
+  useWindowDimensions,
+} from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
-import { recordImpressionBatch } from '../../api/kidsFeed';
+import type { InfiniteData } from '@tanstack/react-query';
+import { recordImpressionBatch, type FeedItem, type FeedPage } from '../../api/kidsFeed';
 import { ApiError } from '../../api/client';
 import { submitRecommendationAction } from '../../api/recommendation';
-import { submitReport, toggleSave } from '../../api/kidsSocial';
+import { submitReport, toggleLike, toggleSave } from '../../api/kidsSocial';
 import { useAuth } from '../../auth/AuthProvider';
-import { PostCard } from '../../kids/PostCard';
-import { shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget } from '../../kids/social';
+import { feedKey, runSocialPostAction, shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget } from '../../kids/social';
 import { useFeed } from '../../kids/useFeed';
 import type { ChildScreenProps } from '../../navigation/types';
-import { useIsForeground } from '../../query/client';
-import { BrandHeader, DisabledFeature, EmptyState, ErrorState, GateNotice, Screen, Skeleton } from '../../ui/components';
+import { useIsForeground, queryClient } from '../../query/client';
+import { invalidateSocialCaches, kidsKeys } from '../../query/keys';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { DisabledFeature, ErrorState, GateNotice } from '../../ui/components';
+import { Avatar } from '../../ui/social';
 import { colors, radius, spacing } from '../../ui/tokens';
 import { ReelPlayer } from '../../video/ReelPlayer';
 import type { ImpressionEventPayload } from '../../video/types';
 
 export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
+  const insets = useSafeAreaInsets();
   const { session } = useAuth();
-  const { height } = useWindowDimensions();
+  const { width: windowWidth, height: windowHeight } = useWindowDimensions();
+  // Full-screen height — true Instagram Reels feel
+  const REEL_HEIGHT = windowHeight;
   const focused = useIsFocused();
   const feed = useFeed('reels', 8);
   const foreground = useIsForeground();
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  const flatListRef = useRef<FlatList<FeedItem>>(null);
   const impressionBatchRef = useRef<ImpressionEventPayload[]>([]);
-  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60 }).current;
+  const badgeAnim = useRef(new Animated.Value(1)).current;
+
+  // Pulse the AI GUARDED badge
+  useEffect(() => {
+    const pulse = Animated.loop(
+      Animated.sequence([
+        Animated.timing(badgeAnim, { toValue: 0.6, duration: 900, useNativeDriver: true }),
+        Animated.timing(badgeAnim, { toValue: 1, duration: 900, useNativeDriver: true }),
+      ]),
+    );
+    pulse.start();
+    return () => pulse.stop();
+  }, [badgeAnim]);
+
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 55, minimumViewTime: 80 }).current;
   const onViewableItemsChanged = useRef(({ viewableItems }: { viewableItems: Array<{ index: number | null }> }) => {
     const first = viewableItems.find((row) => typeof row.index === 'number')?.index;
-    if (typeof first === 'number') { setActiveIndex(first); setPaused(false); }
+    if (typeof first === 'number') {
+      setActiveIndex((current) => current === first ? current : first);
+      setPaused(false);
+    }
   }).current;
 
   // Flush batched impressions to server
@@ -68,67 +104,550 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
     };
   }, [flushBatch]);
 
-  if (feed.loading) return <Screen><Skeleton lines={4} /></Screen>;
-  if (feed.error instanceof ApiError && feed.error.code === 'disabled_by_parent') return <Screen><DisabledFeature feature="Reels" /></Screen>;
-  if (feed.error && !feed.items.length) return <Screen><GateNotice error={feed.error} /><ErrorState message="Could not load reels." onRetry={feed.retry} /></Screen>;
+  async function handleLike(item: FeedItem) {
+    if (!session) return;
+    const socialTarget = socialPostTarget(item);
+    if (!socialTarget) return;
+    const postId = socialTarget.postId;
+    const optimisticLiked = !item.viewer_liked;
+    const optimisticLikes = (item.likes ?? 0) + (item.viewer_liked ? -1 : 1);
+
+    const update = (old: InfiniteData<FeedPage> | undefined) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              items: page.items.map((post) =>
+                post.source_type === 'SOCIAL' && post.post_id === postId
+                  ? { ...post, viewer_liked: optimisticLiked, likes: optimisticLikes }
+                  : post,
+              ),
+            })),
+          }
+        : old;
+
+    queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, update);
+    try {
+      const result = await runSocialPostAction(item, (id) => toggleLike(session.token, id));
+      if (!result) return;
+      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) =>
+        old
+          ? {
+              ...old,
+              pages: old.pages.map((page) => ({
+                ...page,
+                items: page.items.map((post) =>
+                  post.source_type === 'SOCIAL' && post.post_id === postId
+                    ? { ...post, viewer_liked: result.liked, likes: result.likes }
+                    : post,
+                ),
+              })),
+            }
+          : old,
+      );
+      await invalidateSocialCaches([postId]);
+    } catch {
+      await queryClient.invalidateQueries({ queryKey: kidsKeys.reels });
+    }
+  }
+
+  async function handleSave(item: FeedItem) {
+    if (!session) return;
+    const socialTarget = socialPostTarget(item);
+    if (!socialTarget) return;
+    const postId = socialTarget.postId;
+    const optimisticSaved = !item.viewer_saved;
+
+    const update = (old: InfiniteData<FeedPage> | undefined) =>
+      old
+        ? {
+            ...old,
+            pages: old.pages.map((page) => ({
+              ...page,
+              items: page.items.map((post) =>
+                post.source_type === 'SOCIAL' && post.post_id === postId
+                  ? { ...post, viewer_saved: optimisticSaved }
+                  : post,
+              ),
+            })),
+          }
+        : old;
+
+    queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, update);
+    try {
+      const result = await runSocialPostAction(item, (id) => toggleSave(session.token, id));
+      if (!result) return;
+      await invalidateSocialCaches([postId]);
+    } catch {
+      await queryClient.invalidateQueries({ queryKey: kidsKeys.reels });
+    }
+  }
+
+  function handleMoreOptions(item: FeedItem) {
+    if (!session) return;
+    const post = socialPostTarget(item);
+    if (!post) return;
+
+    Alert.alert('Reel Options', 'Choose an action for this video:', [
+      {
+        text: 'Report to Safety Review',
+        style: 'destructive',
+        onPress: () => {
+          void submitReport(session.token, 'post', post.postId, 'inappropriate');
+          Alert.alert('Reported', 'Thank you. Our safety team will review this video promptly.');
+        },
+      },
+      {
+        text: 'Not Interested',
+        onPress: () => {
+          void submitRecommendationAction(session.token, {
+            source_type: 'SOCIAL',
+            source_id: post.postId,
+            action: 'NOT_INTERESTED',
+          });
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
+
+  // Guard: initial loading
+  if (feed.loading && feed.items.length === 0) {
+    return (
+      <View style={styles.guardContainer}>
+        <View style={[styles.topHeader, { top: insets.top > 0 ? insets.top + 8 : 14 }]}>
+          <Text style={styles.topTitle}>Reels</Text>
+          <Animated.View style={[styles.topSafeBadge, { opacity: badgeAnim }]}>
+            <Feather name="shield" size={12} color="#10B981" />
+            <Text style={styles.topSafeBadgeText}>AI GUARDED</Text>
+          </Animated.View>
+        </View>
+        <ActivityIndicator size="large" color="#3B82F6" />
+        <Text style={styles.loadingText}>Loading reels…</Text>
+      </View>
+    );
+  }
+  if (feed.error instanceof ApiError && feed.error.code === 'disabled_by_parent') {
+    return (
+      <View style={styles.guardContainer}>
+        <DisabledFeature feature="Reels" />
+      </View>
+    );
+  }
+  if (feed.error && feed.items.length === 0) {
+    return (
+      <View style={styles.guardContainer}>
+        <GateNotice error={feed.error} />
+        <ErrorState message="Could not load reels." onRetry={feed.retry} />
+      </View>
+    );
+  }
+  // Guard: authenticated, no error, but truly empty
+  if (!feed.loading && feed.items.length === 0) {
+    return (
+      <View style={styles.guardContainer}>
+        <View style={[styles.topHeader, { top: insets.top > 0 ? insets.top + 8 : 14 }]}>
+          <Text style={styles.topTitle}>Reels</Text>
+          <Animated.View style={[styles.topSafeBadge, { opacity: badgeAnim }]}>
+            <Feather name="shield" size={12} color="#10B981" />
+            <Text style={styles.topSafeBadgeText}>AI GUARDED</Text>
+          </Animated.View>
+        </View>
+        <View style={styles.emptyWrapper}>
+          <View style={styles.emptyIconCircle}>
+            <Feather name="film" size={40} color="#60A5FA" />
+          </View>
+          <Text style={styles.emptyTitle}>No reels yet</Text>
+          <Text style={styles.emptyBody}>
+            Educational and fun short videos from friends &amp; LittleNet will appear here.
+          </Text>
+          <Pressable
+            style={styles.refreshButton}
+            onPress={() => void feed.refresh()}
+            accessibilityRole="button"
+            accessibilityLabel="Refresh reels"
+          >
+            <Feather name="refresh-cw" size={14} color="#FFFFFF" />
+            <Text style={styles.refreshButtonText}>Refresh</Text>
+          </Pressable>
+        </View>
+      </View>
+    );
+  }
 
   return (
-    <Screen>
-       <View style={styles.headerOverlay}><BrandHeader title="Reels" subtitle={foreground && focused ? 'Tap a video to pause.' : 'Paused while the app is inactive.'} /></View>
+    <View style={styles.container}>
+      {/* Floating Top Header — Instagram Reels style */}
+      <View style={[styles.topHeader, { top: insets.top > 0 ? insets.top + 8 : 14 }]}>
+        <Text style={styles.topTitle}>Reels</Text>
+        <Animated.View style={[styles.topSafeBadge, { opacity: badgeAnim }]}>
+          <Feather name="shield" size={12} color="#10B981" />
+          <Text style={styles.topSafeBadgeText}>AI GUARDED</Text>
+        </Animated.View>
+      </View>
+
+      {/* Non-blocking error banner when items already loaded */}
       {feed.error ? <GateNotice error={feed.error} /> : null}
-      <FlatList
+
+      <FlatList<FeedItem>
+        ref={flatListRef}
         data={feed.items}
-        keyExtractor={(it) => `reel:${it.source_id}`}
-        pagingEnabled
-        refreshControl={<RefreshControl refreshing={feed.refreshing} onRefresh={feed.refresh} />}
-        ListEmptyComponent={<EmptyState title="No reels yet" body="Short videos from friends will appear here." />}
+        style={styles.list}
+        keyExtractor={(it) => `reel:${feedKey(it)}`}
+        showsVerticalScrollIndicator={false}
+        refreshControl={<RefreshControl refreshing={feed.refreshing} onRefresh={feed.refresh} tintColor="#FFFFFF" />}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         onEndReached={feed.loadMore}
-        onEndReachedThreshold={0.6}
+        onEndReachedThreshold={0.5}
         windowSize={3}
-        maxToRenderPerBatch={3}
+        maxToRenderPerBatch={2}
         initialNumToRender={2}
-        removeClippedSubviews
+        updateCellsBatchingPeriod={50}
+        removeClippedSubviews={false}
+        pagingEnabled
+        decelerationRate="fast"
+        getItemLayout={(_, index) => ({ length: REEL_HEIGHT, offset: REEL_HEIGHT * index, index })}
         renderItem={({ item, index }) => {
           const post = socialPostTarget(item);
           const profile = socialProfileTarget(item);
           const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
-           return <View style={[styles.page, { height }]}>
-             <View style={styles.videoShell}>
-               <ReelPlayer
-                 item={item}
-                 active={shouldPlayReel(index, activeIndex, foreground && focused)}
-                 nearby={shouldLoadReel(index, activeIndex)}
-                 paused={paused}
-                 onTogglePlay={() => index === activeIndex && setPaused((value) => !value)}
-                 token={session?.token}
-                 onMetricsFlush={handleMetricsFlush}
-               />
-             </View>
-            <PostCard
-              item={item}
-              onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}
-              onProfile={profile ? () => nav.navigate('OtherProfile', profile) : undefined}
-            />
-             {post && session ? <View style={styles.quickActions}>
-               <Pressable onPress={() => void toggleSave(session.token, post.postId)}><Text style={styles.quickText}>Save</Text></Pressable>
-               <Pressable onPress={() => nav.navigate('PostDetail', post)}><Text style={styles.quickText}>Comments</Text></Pressable>
-               <Pressable onPress={() => profile ? nav.navigate('OtherProfile', profile) : undefined}><Text style={styles.quickText}>Profile</Text></Pressable>
-               <Pressable onPress={() => void submitRecommendationAction(session.token, { source_type: 'SOCIAL', source_id: post.postId, action: 'NOT_INTERESTED' })}><Text style={styles.quickText}>Not interested</Text></Pressable>
-               <Pressable onPress={() => Alert.alert('Report reel?', 'Send this reel to LittleNet safety review?', [{ text: 'Cancel', style: 'cancel' }, { text: 'Report', style: 'destructive', onPress: () => void submitReport(session.token, 'post', post.postId, 'inappropriate') }])}><Text style={styles.quickText}>Report</Text></Pressable>
-             </View> : null}
-          </View>;
+          const isItemActive = shouldPlayReel(index, activeIndex, foreground && focused);
+          const isNearby = shouldLoadReel(index, activeIndex);
+
+          return (
+            <View style={[styles.reelPage, { height: REEL_HEIGHT, width: windowWidth }]}>
+              {/* Full-bleed Video Background */}
+              <View style={StyleSheet.absoluteFill}>
+                <ReelPlayer
+                  item={item}
+                  active={isItemActive}
+                  nearby={isNearby}
+                  paused={paused}
+                  onTogglePlay={() => {
+                    if (index === activeIndex) setPaused((v) => !v);
+                  }}
+                  token={session?.token}
+                  onMetricsFlush={handleMetricsFlush}
+                />
+              </View>
+
+              {/* Pause Indicator overlay in center */}
+              {paused && index === activeIndex ? (
+                <View style={styles.pauseOverlay} pointerEvents="none">
+                  <View style={styles.pauseIconCircle}>
+                    <Feather name="pause" size={32} color="#FFFFFF" />
+                  </View>
+                </View>
+              ) : null}
+
+              {/* Floating Right Action Column (Instagram Reels style) */}
+              <View style={[styles.rightActionsColumn, { bottom: insets.bottom + 80 }]}>
+                {/* Like Button */}
+                <Pressable
+                  style={styles.actionBtn}
+                  onPress={() => void handleLike(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.viewer_liked ? 'Unlike' : 'Like'}
+                  hitSlop={8}
+                >
+                  <View style={[styles.actionIconCircle, item.viewer_liked && styles.actionIconLiked]}>
+                    <Feather
+                      name="heart"
+                      size={24}
+                      color={item.viewer_liked ? '#EF4444' : '#FFFFFF'}
+                    />
+                  </View>
+                  <Text style={styles.actionLabel}>{item.likes ?? 0}</Text>
+                </Pressable>
+
+                {/* Comment Button */}
+                {post ? (
+                  <Pressable
+                    style={styles.actionBtn}
+                    onPress={() => nav.navigate('PostDetail', post)}
+                    accessibilityRole="button"
+                    accessibilityLabel="Comments"
+                    hitSlop={8}
+                  >
+                    <View style={styles.actionIconCircle}>
+                      <Feather name="message-circle" size={24} color="#FFFFFF" />
+                    </View>
+                    <Text style={styles.actionLabel}>{item.comments_count ?? 0}</Text>
+                  </Pressable>
+                ) : null}
+
+                {/* Bookmark / Save Button */}
+                <Pressable
+                  style={styles.actionBtn}
+                  onPress={() => void handleSave(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel={item.viewer_saved ? 'Saved' : 'Save'}
+                  hitSlop={8}
+                >
+                  <View style={styles.actionIconCircle}>
+                    <Feather
+                      name="bookmark"
+                      size={23}
+                      color={item.viewer_saved ? colors.brand : '#FFFFFF'}
+                    />
+                  </View>
+                  <Text style={styles.actionLabel}>Save</Text>
+                </Pressable>
+
+                {/* More / Safety Options */}
+                <Pressable
+                  style={styles.actionBtn}
+                  onPress={() => handleMoreOptions(item)}
+                  accessibilityRole="button"
+                  accessibilityLabel="Options"
+                  hitSlop={8}
+                >
+                  <View style={styles.actionIconCircle}>
+                    <Feather name="more-horizontal" size={22} color="#FFFFFF" />
+                  </View>
+                </Pressable>
+              </View>
+
+              {/* Floating Bottom Metadata (Author, Caption, Audio tag) */}
+              <View style={[styles.bottomMetaContainer, { bottom: insets.bottom + 18 }]} pointerEvents="box-none">
+                {/* Creator Row */}
+                <Pressable
+                  style={styles.creatorRow}
+                  onPress={() => profile && nav.navigate('OtherProfile', profile)}
+                  disabled={!profile}
+                >
+                  <Avatar uri={item.avatar_url} name={item.full_name ?? 'F'} size={38} />
+                  <View style={styles.creatorInfo}>
+                    <Text style={styles.creatorName} numberOfLines={1}>
+                      {item.full_name ?? 'Friend'}
+                    </Text>
+                  </View>
+                </Pressable>
+
+                {/* Caption */}
+                {item.caption ? (
+                  <Text style={styles.reelCaption} numberOfLines={2}>
+                    {item.caption}
+                  </Text>
+                ) : null}
+
+                {/* Safe Audio Tag */}
+                <View style={styles.audioTagRow}>
+                  <Feather name="music" size={13} color="#CBD5E1" />
+                  <Text style={styles.audioTagText}>Safe Sound • Kid Approved</Text>
+                </View>
+              </View>
+            </View>
+          );
         }}
       />
-    </Screen>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  headerOverlay: { position: 'absolute', zIndex: 2, top: 0, left: 0, right: 0 },
-  page: { marginBottom: 0, padding: spacing.sm, justifyContent: 'center' },
-  videoShell: { width: '100%', flex: 1, borderRadius: radius.md, overflow: 'hidden', backgroundColor: colors.ink },
-  quickActions: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, paddingVertical: spacing.sm },
-  quickText: { color: colors.brandDark, fontWeight: '800', paddingVertical: 6 },
+  container: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  // Full-screen guard container for loading/empty/error states
+  guardContainer: {
+    flex: 1,
+    backgroundColor: '#000000',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: 14,
+  },
+  // FlatList fills the full container
+  list: {
+    flex: 1,
+    backgroundColor: '#000000',
+  },
+  loadingText: {
+    color: '#94A3B8',
+    fontSize: 14,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  // Empty state wrapper (centered by guardContainer)
+  emptyWrapper: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 32,
+    gap: 14,
+    maxWidth: 340,
+  },
+  emptyIconCircle: {
+    width: 76,
+    height: 76,
+    borderRadius: 38,
+    backgroundColor: 'rgba(59, 130, 246, 0.12)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: 'rgba(59, 130, 246, 0.35)',
+    marginBottom: 4,
+  },
+  emptyTitle: {
+    color: '#FFFFFF',
+    fontSize: 20,
+    fontWeight: '800',
+    textAlign: 'center',
+  },
+  emptyBody: {
+    color: '#94A3B8',
+    fontSize: 14,
+    lineHeight: 20,
+    textAlign: 'center',
+  },
+  refreshButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#2563EB',
+    paddingHorizontal: 22,
+    paddingVertical: 10,
+    borderRadius: 22,
+    marginTop: 6,
+  },
+  refreshButtonText: {
+    color: '#FFFFFF',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+  topHeader: {
+    position: 'absolute',
+    top: 14,
+    left: 16,
+    zIndex: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  topTitle: {
+    fontSize: 22,
+    fontWeight: '900',
+    color: '#FFFFFF',
+    letterSpacing: -0.5,
+    textShadowColor: 'rgba(0,0,0,0.6)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  topSafeBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    backgroundColor: 'rgba(16, 185, 129, 0.22)',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: 'rgba(16, 185, 129, 0.4)',
+  },
+  topSafeBadgeText: {
+    color: '#6EE7B7',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  reelPage: {
+    position: 'relative',
+    backgroundColor: '#000000',
+    overflow: 'hidden',
+  },
+  pauseOverlay: {
+    ...StyleSheet.absoluteFill,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pauseIconCircle: {
+    width: 68,
+    height: 68,
+    borderRadius: 34,
+    backgroundColor: 'rgba(0, 0, 0, 0.55)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  rightActionsColumn: {
+    position: 'absolute',
+    right: 12,
+    alignItems: 'center',
+    gap: 18,
+    zIndex: 10,
+  },
+  actionBtn: {
+    alignItems: 'center',
+    gap: 4,
+  },
+  actionIconCircle: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: 'rgba(0, 0, 0, 0.50)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: 'rgba(255,255,255,0.12)',
+  },
+  actionIconLiked: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  actionLabel: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+    textShadowColor: 'rgba(0,0,0,0.7)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  bottomMetaContainer: {
+    position: 'absolute',
+    left: 14,
+    right: 76,
+    zIndex: 10,
+    gap: 6,
+  },
+  creatorRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginBottom: 8,
+  },
+  creatorInfo: {
+    justifyContent: 'center',
+  },
+  creatorName: {
+    color: '#FFFFFF',
+    fontSize: 15,
+    fontWeight: '800',
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  reelCaption: {
+    color: '#FFFFFF',
+    fontSize: 13,
+    lineHeight: 18,
+    marginBottom: 8,
+    textShadowColor: 'rgba(0,0,0,0.8)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
+  },
+  audioTagRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: 'rgba(0, 0, 0, 0.45)',
+    alignSelf: 'flex-start',
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 10,
+  },
+  audioTagText: {
+    color: '#E2E8F0',
+    fontSize: 11,
+    fontWeight: '600',
+  },
 });

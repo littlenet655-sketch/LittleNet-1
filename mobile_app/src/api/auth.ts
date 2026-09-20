@@ -115,6 +115,11 @@ export function enrollChildFace(token: string, photoB64: string): Promise<{ ok: 
   return post(routes.childFaceEnroll, { photo_b64: photoB64 }, token, 60000);
 }
 
+/** Skip child face enrollment and proceed to next onboarding step. */
+export function skipChildFaceEnroll(token: string): Promise<{ ok: boolean; skipped: boolean; quiz_required: boolean }> {
+  return post(routes.childFaceSkip, {}, token, 15000);
+}
+
 export interface FaceChallengeResponse {
   ok: boolean;
   challenge_id: string;

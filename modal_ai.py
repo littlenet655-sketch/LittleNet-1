@@ -128,6 +128,12 @@ def _secret_fingerprint(value: str | None) -> dict[str, object]:
 def ai_web():
     os.chdir("/root/littlenet")
     Path("/cache/models").mkdir(parents=True, exist_ok=True)
+    os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+    try:
+        import tensorflow as tf
+        tf.config.set_visible_devices([], 'GPU')
+    except Exception:
+        pass
     from ai_server import app as flask_ai_app
     return flask_ai_app
 

@@ -243,16 +243,50 @@ def _face_enrolled(uid: int) -> bool:
     return True
 
 
+def _face_gate_satisfied(uid: int) -> bool:
+    """Accept a valid enrollment or explicit deferral without fabricating identity data."""
+    row = fetch_one(
+        """SELECT fp.embedding, fp.model_name, cp.face_enrollment_skipped
+           FROM child_profiles cp
+           LEFT JOIN face_profiles fp ON fp.child_id=cp.child_id
+           WHERE cp.child_id=%s LIMIT 1""",
+        (uid,),
+    )
+    if not row:
+        return False
+    if row.get("face_enrollment_skipped"):
+        return True
+    if not row.get("embedding") or row.get("model_name") != "Facenet512":
+        return False
+    try:
+        from safety.face_service import _validated_embedding
+        emb = row["embedding"]
+        if isinstance(emb, str):
+            emb = json.loads(emb)
+        _validated_embedding(emb)
+    except Exception:
+        return False
+    return True
+
+
 def _onboarding_state(uid: int) -> dict:
-    """Authoritative gate state for a child: face first, then quiz."""
-    face_required = not _face_enrolled(uid)
+    """Authoritative gate state: face may be enrolled or explicitly deferred."""
+    face_required = not _face_gate_satisfied(uid)
     quiz_required = bool(feed_quiz_state(uid).get("required") or needs_onboarding_quiz(uid))
     return {"face_required": face_required, "quiz_required": quiz_required}
 
 
+def _kid_self_resets_today(child_id: int) -> int:
+    row = fetch_one(
+        "SELECT COUNT(*) as cnt FROM activity_logs WHERE child_id=%s AND activity_type='KID_SCREEN_TIME_SELF_RESET' AND created_at::date=CURRENT_DATE",
+        (child_id,),
+    )
+    return int(row["cnt"]) if row else 0
+
+
 def _child_gate(feature: str | None = None):
     uid = int(g.mobile_user["user_id"])
-    if not _face_enrolled(uid):
+    if not _face_gate_satisfied(uid):
         return jsonify(error="face_enrollment_required", gate="face"), 428
     if needs_onboarding_quiz(uid):
 
@@ -264,7 +298,14 @@ def _child_gate(feature: str | None = None):
         return jsonify(error="quiet_hours", gate="quiet_hours", quiet=_clean(quiet)), 423
     locked, remaining = lock_state(uid)
     if locked:
-        return jsonify(error="screen_time_limit", gate="screen_time", remaining=remaining), 423
+        used_resets = _kid_self_resets_today(uid)
+        return jsonify(
+            error="screen_time_limit",
+            gate="screen_time",
+            remaining=remaining,
+            self_resets_used=used_resets,
+            self_resets_remaining=max(0, 2 - used_resets),
+        ), 423
     if feed_quiz_state(uid).get("required"):
         return jsonify(error="quiz_required", gate="quiz"), 428
     key = (g.mobile_claims or {}).get("usage_session_key")
@@ -435,6 +476,32 @@ def _mobile_login_response(user, method="PASSWORD"):
 
 
 def _media_allowed(uid: int, role: str, ref: str) -> bool:
+    cur = fetch_one(
+        """SELECT cc.content_id, cc.min_age, cc.max_age, cc.publish_status, cat.display_name, cat.active,
+                  cma.moderation_status, cma.is_safe
+           FROM curated_media_assets cma
+           JOIN curated_content cc ON cc.asset_id = cma.asset_id
+           JOIN content_categories cat ON cat.category_id = cc.category_id
+           WHERE cma.delivery_object_key = %s OR cma.original_object_key = %s OR cma.poster_object_key = %s OR cma.thumbnail_object_key = %s""",
+        (ref, ref, ref, ref),
+    )
+    # Only a positively identified curated row receives curated-media policy.
+    # This prevents malformed/adapted query results from widening access to
+    # quarantined user uploads.
+    if cur and cur.get("content_id") is not None:
+        if role in {"ADMIN", "PARENT"}:
+            return True
+        if role == "CHILD":
+            if cur.get("publish_status") != "PUBLISHED" or cur.get("moderation_status") != "ALLOWED" or not cur.get("is_safe"):
+                return False
+            from services.controls import effective_categories
+            from services.curated_feed import _child_real_age
+
+            if not cur.get("active") or cur.get("display_name") not in effective_categories(uid):
+                return False
+            child_age = _child_real_age(uid)
+            return bool(cur["min_age"] <= child_age <= cur["max_age"])
+
     p = fetch_one(
         """SELECT post_id, child_id, moderation_status, is_safe, source_media_path, media_path, poster_path
            FROM posts
@@ -455,7 +522,8 @@ def _media_allowed(uid: int, role: str, ref: str) -> bool:
             return True
         if role == "PARENT":
             return owns(uid, p["child_id"])
-        return bool(post_visible_to(uid, p["post_id"]))
+        if post_visible_to(uid, p["post_id"]):
+            return True
     m = fetch_one("SELECT sender_child_id,receiver_child_id,moderation_status FROM child_messages WHERE media_path=%s", (ref,))
     if m:
         if role == "ADMIN":
@@ -472,25 +540,6 @@ def _media_allowed(uid: int, role: str, ref: str) -> bool:
         if role == "PARENT":
             return owns(uid, f["child_id"])
         return can_discover_child(uid, f["child_id"])
-    cur = fetch_one(
-        """SELECT cc.content_id, cc.min_age, cc.max_age, cc.publish_status, cat.display_name, cat.active,
-                  cma.moderation_status, cma.is_safe
-           FROM curated_media_assets cma
-           JOIN curated_content cc ON cc.asset_id = cma.asset_id
-           JOIN content_categories cat ON cat.category_id = cc.category_id
-           WHERE cma.delivery_object_key = %s OR cma.original_object_key = %s OR cma.poster_object_key = %s OR cma.thumbnail_object_key = %s""",
-        (ref, ref, ref, ref),
-    )
-    if cur:
-        if role in {"ADMIN", "PARENT"}:
-            return True
-        if role == "CHILD":
-            if cur.get("publish_status") != "PUBLISHED" or cur.get("moderation_status") != "ALLOWED" or not cur.get("is_safe"):
-                return False
-            if not cur.get("active") or cur.get("display_name") not in effective_categories(uid):
-                return False
-            child_age = _child_real_age(uid)
-            return bool(cur["min_age"] <= child_age <= cur["max_age"])
     return ref == "uploads/profile_pictures/download.webp" and role in {"CHILD", "PARENT", "ADMIN"}
 
 
@@ -1165,9 +1214,13 @@ def register_mobile_api(bp):
             b_key = secrets.token_hex(32)
             execute(
                 """UPDATE face_profiles
-                   SET biometric_key=COALESCE(face_profiles.biometric_key, %s)
+                   SET biometric_key=%s, reference_path=NULL
                    WHERE child_id=%s""",
                 (b_key, uid),
+            )
+            execute(
+                "UPDATE child_profiles SET face_enrollment_skipped=FALSE, updated_at=NOW() WHERE child_id=%s",
+                (uid,),
             )
             return jsonify(
                 ok=True,
@@ -1183,6 +1236,21 @@ def register_mobile_api(bp):
                 os.remove(path)
             except OSError:
                 pass
+
+    @bp.route("/api/mobile/v1/kids/face/skip", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_child_face_skip():
+        uid = int(g.mobile_user["user_id"])
+        execute(
+            "UPDATE child_profiles SET face_enrollment_skipped=TRUE, updated_at=NOW() WHERE child_id=%s",
+            (uid,),
+        )
+        return jsonify(
+            ok=True,
+            skipped=True,
+            quiz_required=bool(needs_onboarding_quiz(uid)),
+        )
 
     @bp.route("/api/mobile/v1/kids/home")
     @_require_mobile("CHILD")
@@ -2721,6 +2789,50 @@ def register_mobile_api(bp):
         notify(child_id, "SCREEN_TIME", "Parent Mode updated your daily screen-time limit", "/child/dashboard/", pid)
         return jsonify(ok=True, limit=_clean(fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (child_id,))))
 
+    @bp.route("/api/mobile/v1/parent/time-limit/<int:child_id>/reset", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("PARENT")
+    def mobile_parent_time_limit_reset(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        # Clear today's logged usage logs and active session durations for this child
+        execute("DELETE FROM child_usage_logs WHERE child_id=%s AND usage_date=CURRENT_DATE", (child_id,))
+        execute("DELETE FROM child_usage_sessions WHERE child_id=%s AND ended_at IS NOT NULL AND started_at::date=CURRENT_DATE", (child_id,))
+        execute("UPDATE child_usage_sessions SET started_at=NOW(), last_seen_at=NOW() WHERE child_id=%s AND ended_at IS NULL", (child_id,))
+        execute("DELETE FROM activity_logs WHERE child_id=%s AND activity_type IN ('SCREEN_TIME_LIMIT_REACHED', 'SCREEN_TIME_WARNING') AND created_at::date=CURRENT_DATE", (child_id,))
+        log(child_id, "SCREEN_TIME_RESET", {"parent_id": pid})
+        notify(child_id, "SCREEN_TIME_RESET", "Your parent reset your screen time for today! Have fun.", "/child/dashboard/", pid)
+        return jsonify(ok=True, message="Screen time reset successfully.", minutes_today=0)
+
+    @bp.route("/api/mobile/v1/parent/time-limit/<int:child_id>/extend", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("PARENT")
+    def mobile_parent_time_limit_extend(child_id):
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        data = request.get_json(silent=True) or {}
+        try:
+            extra = int(data.get("additional_minutes", 30))
+        except (TypeError, ValueError):
+            return jsonify(error="invalid_minutes"), 400
+        if not 1 <= extra <= 720:
+            return jsonify(error="invalid_minutes"), 400
+        row = fetch_one("SELECT daily_limit_minutes, strict_mode FROM child_time_limits WHERE child_id=%s", (child_id,))
+        current = int(row["daily_limit_minutes"]) if row else 60
+        strict = bool(row["strict_mode"]) if row else True
+        new_limit = min(1440, current + extra)
+        execute(
+            "INSERT INTO child_time_limits(child_id, daily_limit_minutes, strict_mode) VALUES(%s, %s, %s) "
+            "ON CONFLICT(child_id) DO UPDATE SET daily_limit_minutes=EXCLUDED.daily_limit_minutes, updated_at=NOW()",
+            (child_id, new_limit, strict),
+        )
+        execute("DELETE FROM activity_logs WHERE child_id=%s AND activity_type IN ('SCREEN_TIME_LIMIT_REACHED', 'SCREEN_TIME_WARNING') AND created_at::date=CURRENT_DATE", (child_id,))
+        log(child_id, "SCREEN_TIME_EXTENDED", {"parent_id": pid, "additional_minutes": extra, "new_limit": new_limit})
+        notify(child_id, "SCREEN_TIME_EXTENDED", f"Your parent added {extra} minutes of screen time!", "/child/dashboard/", pid)
+        return jsonify(ok=True, message=f"Added {extra} minutes.", daily_limit_minutes=new_limit)
+
     @bp.route("/api/mobile/v1/parent/safety")
     @_require_mobile("PARENT")
     def mobile_parent_safety():
@@ -2860,12 +2972,79 @@ def register_mobile_api(bp):
         if gate:
             return gate
         locked, remaining = lock_state(uid)
+        used_resets = _kid_self_resets_today(uid)
         return jsonify(
             ok=True,
             minutes_today=minutes_today(uid),
             remaining_minutes=remaining,
             locked=locked,
+            self_resets_used=used_resets,
+            self_resets_remaining=max(0, 2 - used_resets),
         )
+
+    @bp.route("/api/mobile/v1/kids/time-limit/status")
+    @_require_mobile("CHILD")
+    def mobile_kids_time_limit_status():
+        uid = int(g.mobile_user["user_id"])
+        locked, remaining = lock_state(uid)
+        used = _kid_self_resets_today(uid)
+        limit_row = fetch_one("SELECT daily_limit_minutes, strict_mode FROM child_time_limits WHERE child_id=%s", (uid,))
+        return jsonify(
+            ok=True,
+            locked=locked,
+            minutes_today=minutes_today(uid),
+            daily_limit_minutes=int(limit_row["daily_limit_minutes"]) if limit_row else 60,
+            strict_mode=bool(limit_row["strict_mode"]) if limit_row else True,
+            remaining_minutes=remaining,
+            resets_used=used,
+            resets_remaining=max(0, 2 - used),
+        )
+
+    @bp.route("/api/mobile/v1/kids/time-limit/reset", methods=["POST"])
+    @csrf.exempt
+    @_require_mobile("CHILD")
+    def mobile_kids_time_limit_self_reset():
+        uid = int(g.mobile_user["user_id"])
+        quiet = quiet_hours_state(uid)
+        if quiet.get("active"):
+            return jsonify(error="quiet_hours_active", message="Cannot reset screen time during quiet hours bedtime."), 403
+
+        used = _kid_self_resets_today(uid)
+        if used >= 2:
+            return jsonify(
+                error="self_resets_exhausted",
+                message="You have used all 2 daily resets for today. Please ask your parent to add more time.",
+                resets_used=used,
+                resets_remaining=0,
+            ), 403
+
+        # Clear today's logged usage logs and active session durations
+        execute("DELETE FROM child_usage_logs WHERE child_id=%s AND usage_date=CURRENT_DATE", (uid,))
+        execute("DELETE FROM child_usage_sessions WHERE child_id=%s AND ended_at IS NOT NULL AND started_at::date=CURRENT_DATE", (uid,))
+        execute("UPDATE child_usage_sessions SET started_at=NOW(), last_seen_at=NOW() WHERE child_id=%s AND ended_at IS NULL", (uid,))
+        execute("DELETE FROM activity_logs WHERE child_id=%s AND activity_type IN ('SCREEN_TIME_LIMIT_REACHED', 'SCREEN_TIME_WARNING') AND created_at::date=CURRENT_DATE", (uid,))
+
+        new_count = used + 1
+        remaining = max(0, 2 - new_count)
+        log(uid, "KID_SCREEN_TIME_SELF_RESET", {"reset_number": new_count, "remaining_resets": remaining})
+        notify(uid, "SCREEN_TIME_RESET", f"You used daily reset #{new_count}. You have {remaining} reset(s) left today.", "/child/dashboard/")
+
+        # Notify parents of child self-reset
+        execute(
+            """INSERT INTO parent_notifications(parent_id, child_id, notification_type, notification_message, target_url)
+               SELECT parent_id, %s, 'SCREEN_TIME', 'Your child used daily screen-time reset #' || %s || ' (' || %s || ' remaining today).', '/parent/time-limit/?child_id=' || %s
+               FROM parent_child_map WHERE child_id=%s AND parent_id IS NOT NULL""",
+            (uid, str(new_count), str(remaining), str(uid), uid),
+        )
+
+        return jsonify(
+            ok=True,
+            message=f"Screen time reset! You have {remaining} reset(s) left today.",
+            resets_used=new_count,
+            resets_remaining=remaining,
+            minutes_today=0,
+        )
+
 
     @bp.route("/api/mobile/v2/kids/feed")
     @_require_mobile("CHILD")
@@ -2927,18 +3106,14 @@ def register_mobile_api(bp):
                 item["playback_expires_at"] = None
                 item["playback_ready"] = True
                 item["delivery_type"] = "JIT"
-            elif item.get("media_reference"):
-                # Curated Reel assets are not rows in posts, so they retain the
-                # already-authorized media URL until a dedicated curated
-                # playback-token route is introduced.
-                m_res = resolve_media_delivery(
-                    item["media_reference"],
-                    viewer_id=uid,
-                    viewer_role="CHILD",
-                )
-                item["media_url"] = m_res.get("url")
-                if m_res.get("expires_at"):
-                    item["playback_expires_at"] = m_res["expires_at"]
+            elif source_type == "CURATED":
+                # Do not mint a signed R2 URL for every item in the page. That
+                # made the metadata request exceed the mobile timeout during a
+                # cold start. The player requests only the active/nearby item.
+                item["media_url"] = None
+                item["playback_expires_at"] = None
+                item["playback_ready"] = True
+                item["delivery_type"] = "JIT_CURATED"
 
             if item.get("poster_reference"):
                 p_res = resolve_media_delivery(
@@ -2948,6 +3123,29 @@ def register_mobile_api(bp):
                 )
                 item["poster_url"] = p_res.get("url")
         return jsonify(ok=True, **_clean(page))
+
+    @bp.route("/api/mobile/v2/kids/reels/curated/<int:content_id>/playback")
+    @_require_mobile("CHILD")
+    def mobile_kids_curated_reel_playback_v2(content_id):
+        gate = _child_gate("reels")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        from services.curated_feed import authorize_curated_media
+        try:
+            playback = authorize_curated_media(uid, content_id)
+        except FileNotFoundError:
+            return jsonify(ok=False, error="curated_reel_not_found"), 404
+        except PermissionError as exc:
+            return jsonify(ok=False, error=str(exc) or "playback_denied"), 403
+        if not playback.get("media_url"):
+            return jsonify(ok=False, error="playback_denied"), 403
+        return jsonify(
+            ok=True,
+            playback_url=playback.get("media_url"),
+            playback_expires_at=playback.get("playback_expires_at"),
+            poster_url=playback.get("poster_url"),
+        )
 
     @bp.route("/api/mobile/v2/kids/reels/<int:post_id>/playback")
     @_require_mobile("CHILD")

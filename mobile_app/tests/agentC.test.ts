@@ -5,9 +5,9 @@ import assert from 'node:assert/strict';
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://backend.test.invalid';
 
 import { setUnauthorizedHandler } from '../src/api/client';
-import { fetchFeedV2, fetchReelsV2, refreshReelPlayback } from '../src/api/kidsFeed';
+import { fetchFeedV2, fetchReelsV2, refreshCuratedReelPlayback, refreshReelPlayback } from '../src/api/kidsFeed';
 import { addComment, toggleLike, toggleSave } from '../src/api/kidsSocial';
-import { dedupeFeed, isPubliclyVisible, isTerminalStage, processingStage, runSocialPostAction, shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget } from '../src/kids/social';
+import { dedupeFeed, feedKey, isPubliclyVisible, isTerminalStage, processingStage, runSocialPostAction, shouldLoadReel, shouldPlayReel, socialPostTarget, socialProfileTarget } from '../src/kids/social';
 
 let seen: Array<{ url: string; init: RequestInit }> = [];
 let nextPayload: unknown = { ok: true };
@@ -32,6 +32,10 @@ describe('agentC feed pagination/dedupe/refresh', () => {
     assert.ok(seen[0]?.url.includes('/api/mobile/v2/kids/feed?cursor=0'));
     const merged = dedupeFeed([...page.items, ...page.items, { source_type: 'SOCIAL' as const, source_id: 2, post_id: 2 }]);
     assert.equal(merged.length, 2);
+    assert.notEqual(
+      feedKey({ source_type: 'SOCIAL', source_id: 1 }),
+      feedKey({ source_type: 'CURATED', source_id: 1 }),
+    );
   });
 
   it('loads Reel metadata separately from just-in-time playback credentials', async () => {
@@ -57,6 +61,11 @@ describe('agentC feed pagination/dedupe/refresh', () => {
     const playback = await refreshReelPlayback('tok', 7);
     assert.equal(playback.playback_url, 'https://private.invalid/reel.m3u8');
     assert.ok(seen[1]?.url.endsWith('/api/mobile/v2/kids/reels/7/playback'));
+
+    nextPayload = { ok: true, playback_url: 'https://private.invalid/curated.mp4' };
+    const curated = await refreshCuratedReelPlayback('tok', 9);
+    assert.equal(curated.playback_url, 'https://private.invalid/curated.mp4');
+    assert.ok(seen[2]?.url.endsWith('/api/mobile/v2/kids/reels/curated/9/playback'));
   });
 
   it('like/unlike and save/unsave hit real routes', async () => {

@@ -76,12 +76,26 @@ def feature_allowed(child_id,feature):
     return bool(controls_for_child(child_id).get(col,True))
 
 
+CATEGORY_SYNONYMS = {
+    'Nature': ['Nature & Animals'],
+    'Art': ['Art & Creative Hobbies', 'Culinary Arts & Food'],
+    'Science': ['Science & Gardening'],
+    'Other': ['Family & Community'],
+}
+
+
 def effective_categories(child_id):
     c=controls_for_child(child_id)
     allowed=[x for x in c['allowed_categories'] if x in SAFE_CATEGORIES]
     if c.get('educational_only_feed'):
         allowed=[x for x in allowed if x in EDUCATIONAL_CATEGORIES]
-    return allowed or (EDUCATIONAL_CATEGORIES if c.get('educational_only_feed') else list(SAFE_CATEGORIES))
+    base = allowed or (EDUCATIONAL_CATEGORIES if c.get('educational_only_feed') else list(SAFE_CATEGORIES))
+    expanded = list(base)
+    for cat in base:
+        for syn in CATEGORY_SYNONYMS.get(cat, []):
+            if syn not in expanded:
+                expanded.append(syn)
+    return expanded
 
 
 def _parse_clock(value):

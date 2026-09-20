@@ -142,6 +142,14 @@ export function updateTimeLimit(token: string, childId: number, dailyLimitMinute
   return apiRequest(routes.parentTimeLimit(childId), { method: 'PUT', body: JSON.stringify({ daily_limit_minutes: dailyLimitMinutes, strict_mode: strictMode }) }, token);
 }
 
+export function resetChildScreenTime(token: string, childId: number): Promise<{ ok: boolean; message: string; minutes_today: number }> {
+  return apiRequest(routes.parentResetTimeLimit(childId), { method: 'POST' }, token);
+}
+
+export function extendChildScreenTime(token: string, childId: number, additionalMinutes = 30): Promise<{ ok: boolean; message: string; daily_limit_minutes: number }> {
+  return apiRequest(routes.parentExtendTimeLimit(childId), { method: 'POST', body: JSON.stringify({ additional_minutes: additionalMinutes }) }, token);
+}
+
 export function fetchParentSafety(token: string): Promise<{ ok: boolean; events: ReviewEvent[] }> {
   return apiRequest(routes.parentSafety, {}, token);
 }

@@ -60,7 +60,7 @@ function toPicked(asset: ImagePicker.ImagePickerAsset, kind: 'image' | 'video'):
 
 export async function pickGalleryMedia(kind: 'image' | 'video'): Promise<PickedMedia | null> {
   const result = await ImagePicker.launchImageLibraryAsync({
-    mediaTypes: kind === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: kind === 'video' ? ['videos'] : ['images'],
     quality: 0.9,
   });
   if (result.canceled || !result.assets?.[0]) return null;
@@ -71,7 +71,7 @@ export async function capturePostMedia(kind: 'image' | 'video'): Promise<PickedM
   const camera = await ImagePicker.requestCameraPermissionsAsync();
   if (!camera.granted) throw new Error('Camera access is needed to take a photo or video.');
   const result = await ImagePicker.launchCameraAsync({
-    mediaTypes: kind === 'video' ? ImagePicker.MediaTypeOptions.Videos : ImagePicker.MediaTypeOptions.Images,
+    mediaTypes: kind === 'video' ? ['videos'] : ['images'],
     quality: 0.9,
     videoMaxDuration: 60,
   });

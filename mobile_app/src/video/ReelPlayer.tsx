@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -36,6 +36,7 @@ export function ReelPlayer({
   onMetricsFlush,
 }: ReelPlayerProps) {
   const [showPlayStateFeedback, setShowPlayStateFeedback] = useState(false);
+  const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const {
     player,
@@ -61,10 +62,16 @@ export function ReelPlayer({
   const handlePress = () => {
     onTogglePlay();
     setShowPlayStateFeedback(true);
-    setTimeout(() => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = setTimeout(() => {
       setShowPlayStateFeedback(false);
+      feedbackTimerRef.current = null;
     }, 600);
   };
+
+  useEffect(() => () => {
+    if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);
+  }, []);
 
   return (
     <Pressable style={styles.container} onPress={handlePress} accessibilityLabel="Toggle video playback">
@@ -102,7 +109,7 @@ export function ReelPlayer({
         <View style={styles.feedbackOverlay} pointerEvents="none">
           <View style={styles.feedbackCircle}>
             <Feather
-              name={paused ? 'pause' : 'play'}
+              name={paused ? 'play' : 'pause'}
               size={32}
               color="#FFFFFF"
             />

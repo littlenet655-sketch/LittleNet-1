@@ -34,6 +34,11 @@ def _validated_embedding(values):
 def _embedding(img_path):
     from .remote_client import enabled, face_embedding
     if enabled(): return _validated_embedding(face_embedding(img_path))
+    try:
+        import tensorflow as tf
+        tf.config.set_visible_devices([], 'GPU')
+    except Exception:
+        pass
     # pyrefly: ignore [missing-import]
     from deepface import DeepFace  # type: ignore
     def run():

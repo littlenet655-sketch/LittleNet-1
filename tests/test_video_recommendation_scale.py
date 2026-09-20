@@ -383,7 +383,15 @@ def test_reels_page_defers_social_playback_credentials(monkeypatch):
                     "media_type": "VIDEO",
                     "media_reference": "uploads/r2/published/77/clean.mp4",
                     "poster_reference": "uploads/r2/published/77/poster.jpg",
-                }
+                },
+                {
+                    "source_type": "CURATED",
+                    "source_id": 9,
+                    "post_id": 9,
+                    "media_type": "VIDEO",
+                    "media_reference": "uploads/r2/littlenet/dataset/reels/safe.mp4",
+                    "poster_reference": None,
+                },
             ],
             "session_id": "sess-jit",
             "next_cursor": 1,
@@ -415,4 +423,49 @@ def test_reels_page_defers_social_playback_credentials(monkeypatch):
     assert item["playback_ready"] is True
     assert item["poster_url"] == "https://signed.invalid/poster.jpg"
     assert resolved == ["uploads/r2/published/77/poster.jpg"]
+    curated = response.get_json()["items"][1]
+    assert curated["media_url"] is None
+    assert curated["delivery_type"] == "JIT_CURATED"
+    assert curated["playback_ready"] is True
+
+
+def test_curated_reel_playback_is_authorized_just_in_time(monkeypatch):
+    from flask import Blueprint, Flask
+    from mobile.api import register_mobile_api, _issue_token
+
+    app = Flask(__name__)
+    app.secret_key = "test-secret"
+    bp = Blueprint("mobile_curated_reel_playback", __name__)
+    register_mobile_api(bp)
+    app.register_blueprint(bp)
+
+    user = {
+        "user_id": 202,
+        "role": "CHILD",
+        "account_status": "ACTIVE",
+        "full_name": "Test Child",
+        "session_version": 1,
+    }
+    token = _issue_token(user)
+    monkeypatch.setattr("mobile.api._mobile_token_revoked", lambda _token: False)
+    monkeypatch.setattr("mobile.api.fetch_one", lambda query, params=(): user if "FROM users" in query else None)
+    monkeypatch.setattr("mobile.api._child_gate", lambda *args, **kwargs: None)
+    monkeypatch.setattr(
+        "services.curated_feed.authorize_curated_media",
+        lambda child_id, content_id: {
+            "content_id": content_id,
+            "media_url": "https://signed.invalid/curated.mp4",
+            "poster_url": None,
+            "playback_expires_at": 1800000000,
+        },
+    )
+
+    with app.test_client() as client:
+        response = client.get(
+            "/api/mobile/v2/kids/reels/curated/9/playback",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert response.status_code == 200
+    assert response.get_json()["playback_url"] == "https://signed.invalid/curated.mp4"
 

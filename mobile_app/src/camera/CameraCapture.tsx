@@ -91,7 +91,7 @@ export function CameraCapture({
       const shot = await cameraRef.current.takePictureAsync({
         base64: true,
         exif: false,
-        quality: 0.75,
+        quality: 0.45,
         shutterSound: false,
       });
       if (!shot?.base64) throw new Error('Could not read the camera photo. Please try again.');
@@ -108,7 +108,13 @@ export function CameraCapture({
     } catch (err) {
       setPendingPhoto(capturedPhoto && canRetrySubmission(err) ? capturedPhoto : null);
       setError(err);
-      autoCapturedRef.current = false;
+      if (typeof setTimeout !== 'undefined') {
+        setTimeout(() => {
+          autoCapturedRef.current = false;
+        }, 3000);
+      } else {
+        autoCapturedRef.current = false;
+      }
     } finally {
       setWorking(false);
     }

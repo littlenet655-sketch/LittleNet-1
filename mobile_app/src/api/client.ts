@@ -51,12 +51,17 @@ export const routes = {
   forgotPassword: '/api/mobile/v1/auth/forgot-password',
   resetPassword: '/api/mobile/v1/auth/reset-password',
   childFaceEnroll: '/api/mobile/v1/kids/face/enroll',
+  childFaceSkip: '/api/mobile/v1/kids/face/skip',
   quiz: '/api/mobile/v1/kids/quiz',
   quizAnswer: (quizId: number) => `/api/mobile/v1/kids/quiz/${quizId}/answer`,
+  kidsTimeLimitStatus: '/api/mobile/v1/kids/time-limit/status',
+  kidsTimeLimitReset: '/api/mobile/v1/kids/time-limit/reset',
   parentCreateChild: '/api/mobile/v1/parent/children',
   parentDashboard: '/api/mobile/v1/parent/dashboard',
   parentControls: (childId: number) => `/api/mobile/v1/parent/controls/${childId}`,
   parentTimeLimit: (childId: number) => `/api/mobile/v1/parent/time-limit/${childId}`,
+  parentResetTimeLimit: (childId: number) => `/api/mobile/v1/parent/time-limit/${childId}/reset`,
+  parentExtendTimeLimit: (childId: number) => `/api/mobile/v1/parent/time-limit/${childId}/extend`,
   parentSafety: '/api/mobile/v1/parent/safety',
   parentReview: (eventId: number) => `/api/mobile/v1/parent/safety/${eventId}`,
   parentFollowRequests: '/api/mobile/v1/parent/follow-requests',
@@ -79,6 +84,7 @@ export const routes = {
   impressionsBatch: '/api/mobile/v2/kids/impressions/batch',
   recommendationActions: '/api/mobile/v2/kids/recommendation-actions',
   reelPlayback: (postId: number) => `/api/mobile/v2/kids/reels/${postId}/playback`,
+  curatedReelPlayback: (contentId: number) => `/api/mobile/v2/kids/reels/curated/${contentId}/playback`,
   storyView: (storyId: number) => `/api/mobile/v2/kids/stories/${storyId}/view`,
   storyViewers: (storyId: number) => `/api/mobile/v2/kids/stories/${storyId}/viewers`,
   registerDevice: '/api/mobile/v2/device/register',
@@ -163,7 +169,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
       throw parseErrorResponse(0, { error: 'request_cancelled' });
     }
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
     const onCallerAbort = (): void => controller.abort();
     // Caller abort and timeout share one controller: either aborts the request.
     options.signal?.addEventListener('abort', onCallerAbort, { once: true });
@@ -195,7 +205,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
         throw parseErrorResponse(0, { error: 'request_cancelled' });
       }
       const aborted = (error instanceof Error && error.name === 'AbortError') || (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError');
-      const networkError = parseErrorResponse(0, { error: aborted ? 'request_timeout' : 'network_unreachable' });
+      const networkError = parseErrorResponse(0, { error: timedOut || aborted ? 'request_timeout' : 'network_unreachable' });
       if (shouldRetryRequest(method, attempt, 0)) {
         attempt += 1;
         await sleep(retryDelayMs(attempt));

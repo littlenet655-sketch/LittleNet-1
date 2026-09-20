@@ -251,11 +251,33 @@ def _process_media_job_impl(
 
     post = claimed
 
-    # Check quarantine object size via head_object if storage enabled
-    if object_storage.enabled():
+    # R2 references must never fall back to a container-local path. That makes a
+    # missing worker secret look like missing user media and wastes every retry.
+    local_quarantine_file = Path(object_key).is_file()
+    if object_storage.is_reference(object_key) and not object_storage.enabled() and not local_quarantine_file:
+        execute(
+            """UPDATE posts
+               SET processing_status='UPLOADED', processing_error='r2_storage_unavailable',
+                   processing_lease_token=NULL, processing_lease_expires_at=NULL
+               WHERE post_id=%s AND processing_lease_token=%s""",
+            (post_id, worker_exec_token),
+        )
+        return {"ok": False, "error": "r2_storage_unavailable", "retryable": True}
+
+    # Check quarantine object size via head_object if storage enabled.
+    if object_storage.enabled() and not local_quarantine_file:
         try:
             head = object_storage.head_object(object_key)
-            if head and head.get("ContentLength", 0) > Config.MAX_CONTENT_LENGTH:
+            if head is None:
+                execute(
+                    """UPDATE posts
+                       SET processing_status='UPLOADED', processing_error='quarantine_object_unavailable',
+                           processing_lease_token=NULL, processing_lease_expires_at=NULL
+                       WHERE post_id=%s AND processing_lease_token=%s""",
+                    (post_id, worker_exec_token),
+                )
+                return {"ok": False, "error": "quarantine_object_unavailable", "retryable": True}
+            if int(head.get("content_length", 0) or 0) > Config.MAX_CONTENT_LENGTH:
                 try:
                     object_storage.delete_reference(object_key)
                 except Exception:
@@ -269,8 +291,15 @@ def _process_media_job_impl(
                     (post_id, worker_exec_token),
                 )
                 return {"ok": False, "error": "upload_size_exceeded"}
-        except Exception:
-            pass
+        except Exception as exc:
+            execute(
+                """UPDATE posts
+                   SET processing_status='UPLOADED', processing_error=%s,
+                       processing_lease_token=NULL, processing_lease_expires_at=NULL
+                   WHERE post_id=%s AND processing_lease_token=%s""",
+                (f"r2_preflight_failed: {type(exc).__name__}", post_id, worker_exec_token),
+            )
+            return {"ok": False, "error": "r2_preflight_failed", "retryable": True}
 
     tags_rows = fetch_all("SELECT tag FROM post_tags WHERE post_id=%s", (post_id,))
     tags_text = " ".join(f"#{r['tag']}" for r in tags_rows)

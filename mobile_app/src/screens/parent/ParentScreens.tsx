@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Alert, FlatList, Image, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Platform, Pressable, RefreshControl, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import {
+  extendChildScreenTime,
   fetchFollowRequests,
   fetchParentActivity,
   fetchParentControls,
@@ -10,6 +11,7 @@ import {
   fetchParentNotifications,
   fetchParentSafety,
   markParentNotificationsRead,
+  resetChildScreenTime,
   resolveFollowRequest,
   resolveParentReview,
   updateParentControls,
@@ -127,6 +129,7 @@ function ChildCard({
   const usageRatio = limit ? Math.min(child.minutes_today / limit, 1) : 0;
   const isOnline = Boolean(child.presence?.online);
   const hasReviews = (child.open_reviews || 0) > 0;
+  const isLocked = Boolean(child.limit?.strict_mode && limit && child.minutes_today >= limit);
 
   return (
     <Pressable
@@ -162,6 +165,11 @@ function ChildCard({
               <Feather name="alert-circle" size={12} color={colors.danger} />
               <Text style={styles.alertText}>{child.open_reviews} review</Text>
             </View>
+          ) : isLocked ? (
+            <View style={[styles.alertPill, { backgroundColor: '#FEF2F2', borderColor: '#FCA5A5' }]}>
+              <Feather name="lock" size={12} color="#DC2626" />
+              <Text style={[styles.alertText, { color: '#DC2626' }]}>Locked</Text>
+            </View>
           ) : (
             <View style={styles.safePill}>
               <Feather name="shield" size={12} color="#059669" />
@@ -176,13 +184,14 @@ function ChildCard({
         <View style={styles.usageRow}>
           <View style={styles.usageLabelRow}>
             <View style={styles.statIconLabel}>
-              <Feather name="clock" size={12} color="#64748B" />
-              <Text style={styles.usageStatText}>
+              <Feather name="clock" size={12} color={isLocked ? '#DC2626' : '#64748B'} />
+              <Text style={[styles.usageStatText, isLocked && { color: '#DC2626', fontWeight: '700' }]}>
                 {child.minutes_today} {limit ? `/ ${limit} min today` : 'min used today'}
+                {isLocked ? ' (Limit reached)' : ''}
               </Text>
             </View>
             {limit ? (
-              <Text style={[styles.usagePercentText, usageRatio >= 0.9 && styles.usageDangerText]}>
+              <Text style={[styles.usagePercentText, (usageRatio >= 0.9 || isLocked) && styles.usageDangerText]}>
                 {Math.round(usageRatio * 100)}%
               </Text>
             ) : null}
@@ -224,11 +233,13 @@ function ChildCard({
             <Pressable
               accessibilityRole="button"
               onPress={onScreenTime}
-              style={styles.quickActionPill}
+              style={[styles.quickActionPill, isLocked && { borderColor: '#FCA5A5', backgroundColor: '#FEF2F2' }]}
               hitSlop={6}
             >
-              <Feather name="clock" size={12} color="#2563EB" />
-              <Text style={styles.quickActionText}>Limits</Text>
+              <Feather name="clock" size={12} color={isLocked ? '#DC2626' : '#2563EB'} />
+              <Text style={[styles.quickActionText, isLocked && { color: '#DC2626', fontWeight: '800' }]}>
+                {isLocked ? 'Reset / Add Time' : 'Limits'}
+              </Text>
             </Pressable>
           ) : null}
           {onControls ? (
@@ -1005,6 +1016,35 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
     },
   });
 
+  const resetMutation = useMutation({
+    mutationFn: () => resetChildScreenTime(session?.token ?? '', childId ?? 0),
+    onSuccess: async () => {
+      await client.invalidateQueries({ queryKey: parentKeys.dashboard });
+      Alert.alert(
+        'Screen Time Reset! 🎉',
+        `Today's usage for ${child?.full_name ?? 'your child'} has been reset to 0 minutes. LittleNet is now unlocked for them.`,
+      );
+    },
+    onError: (err) => {
+      Alert.alert('Reset Failed', errorText(err));
+    },
+  });
+
+  const extendMutation = useMutation({
+    mutationFn: (extra: number) => extendChildScreenTime(session?.token ?? '', childId ?? 0, extra),
+    onSuccess: async (data, extra) => {
+      await client.invalidateQueries({ queryKey: parentKeys.dashboard });
+      setMinutes(String(data.daily_limit_minutes));
+      Alert.alert(
+        'Time Extended! ✨',
+        `Added ${extra} minutes. New daily allowance is ${data.daily_limit_minutes} minutes. Kids Mode is now unlocked.`,
+      );
+    },
+    onError: (err) => {
+      Alert.alert('Extension Failed', errorText(err));
+    },
+  });
+
   if (!childId) {
     return (
       <Screen>
@@ -1044,6 +1084,7 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
   const valid = Number.isInteger(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 1440;
   const limit = Number(minutes);
   const usage = Math.min(child.minutes_today / Math.max(limit, 1), 1);
+  const isLimitReached = Boolean(child.limit?.strict_mode && child.minutes_today >= limit);
   const presets = ['30', '45', '60', '90', '120'];
 
   return (
@@ -1067,34 +1108,99 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
             iconBg="#ECFDF5"
           />
 
+          {/* Limit Reached Warning Card */}
+          {isLimitReached ? (
+            <View style={styles.limitAlertBox}>
+              <View style={styles.limitAlertHeader}>
+                <Feather name="alert-triangle" size={18} color="#DC2626" />
+                <Text style={styles.limitAlertTitle}>Screen-Time Limit Reached Today</Text>
+              </View>
+              <Text style={styles.limitAlertBody}>
+                {child.full_name} has consumed all {limit} minutes today and Kids Mode is currently locked. Use the quick controls below to reset or grant extra time.
+              </Text>
+            </View>
+          ) : null}
+
           {/* Usage Gauge Card */}
           <Card>
             <View style={styles.usageSummary}>
               <View style={styles.usageTopRow}>
                 <View>
-                  <Text style={styles.usageNumber}>{child.minutes_today}</Text>
+                  <Text style={[styles.usageNumber, isLimitReached && styles.usageDangerText]}>
+                    {child.minutes_today}
+                  </Text>
                   <Text style={styles.muted}>minutes used today</Text>
                 </View>
-                <View style={styles.allowancePill}>
-                  <Text style={styles.allowancePillText}>{limit || '—'} min daily allowance</Text>
+                <View style={[styles.allowancePill, isLimitReached && { backgroundColor: '#FEF2F2' }]}>
+                  <Text style={[styles.allowancePillText, isLimitReached && { color: '#DC2626' }]}>
+                    {limit || '—'} min daily allowance
+                  </Text>
                 </View>
               </View>
               <View style={styles.largeUsageTrack}>
                 <View
                   style={[
                     styles.usageFill,
-                    usage >= 1 ? styles.usageDanger : usage >= 0.8 ? styles.usageWarning : null,
+                    usage >= 1 || isLimitReached ? styles.usageDanger : usage >= 0.8 ? styles.usageWarning : null,
                     { width: `${Math.max(usage * 100, 3)}%` },
                   ]}
                 />
               </View>
-              <Text style={styles.usagePercentText}>
-                {Math.round(usage * 100)}% of daily allowance consumed
+              <Text style={[styles.usagePercentText, isLimitReached && styles.usageDangerText]}>
+                {isLimitReached
+                  ? '100% of daily allowance consumed (Account Locked)'
+                  : `${Math.round(usage * 100)}% of daily allowance consumed`}
               </Text>
             </View>
 
+            {/* Quick Extension & Reset Section */}
+            <View style={styles.resetSectionWrap}>
+              <Text style={styles.presetHeading}>QUICK EXTENSION & RESET</Text>
+              <View style={styles.extensionRow}>
+                {[15, 30, 60].map((extra) => (
+                  <Pressable
+                    key={extra}
+                    disabled={extendMutation.isPending || resetMutation.isPending}
+                    onPress={() => extendMutation.mutate(extra)}
+                    style={styles.extensionBtn}
+                  >
+                    <Feather name="plus-circle" size={13} color="#2563EB" />
+                    <Text style={styles.extensionBtnText}>+{extra}m</Text>
+                  </Pressable>
+                ))}
+              </View>
+
+              <Pressable
+                disabled={resetMutation.isPending || extendMutation.isPending}
+                onPress={() => {
+                  Alert.alert(
+                    'Reset Today’s Screen Time?',
+                    `Reset screen time for ${child.full_name}? Today's usage will be set back to 0 minutes and Kids Mode will unlock immediately.`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      {
+                        text: 'Reset Now',
+                        style: 'destructive',
+                        onPress: () => resetMutation.mutate(),
+                      },
+                    ],
+                  );
+                }}
+                style={styles.resetTimeBtn}
+              >
+                {resetMutation.isPending ? (
+                  <ActivityIndicator size="small" color="#DC2626" />
+                ) : (
+                  <>
+                    <Feather name="rotate-ccw" size={15} color="#DC2626" />
+                    <Text style={styles.resetTimeBtnText}>Reset Today's Time to 0m</Text>
+                  </>
+                )}
+              </Pressable>
+            </View>
+
             {/* Quick Presets */}
-            <Text style={styles.presetHeading}>QUICK PRESETS</Text>
+            <Text style={styles.presetHeading}>SET DAILY BASE LIMIT</Text>
             <View style={styles.presetsRow}>
               {presets.map((preset) => {
                 const isSelected = minutes === preset;
@@ -2615,4 +2721,74 @@ const styles = StyleSheet.create({
   },
   settingsSecTitle: { color: colors.ink, fontSize: 13, fontWeight: '800' },
   settingsSecSub: { color: colors.muted, fontSize: 11, marginTop: 1 },
+
+  /* Screen Time Alerts and Reset Controls */
+  limitAlertBox: {
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 16,
+  },
+  limitAlertHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 4,
+  },
+  limitAlertTitle: {
+    color: '#DC2626',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+  limitAlertBody: {
+    color: '#991B1B',
+    fontSize: 12,
+    lineHeight: 17,
+  },
+  resetSectionWrap: {
+    marginVertical: 14,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  extensionRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 12,
+  },
+  extensionBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 10,
+    borderRadius: 10,
+    backgroundColor: '#EFF6FF',
+    borderWidth: 1,
+    borderColor: '#BFDBFE',
+  },
+  extensionBtnText: {
+    color: '#2563EB',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  resetTimeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 8,
+    paddingVertical: 11,
+    borderRadius: 10,
+    backgroundColor: '#FEF2F2',
+    borderWidth: 1,
+    borderColor: '#FECACA',
+  },
+  resetTimeBtnText: {
+    color: '#DC2626',
+    fontSize: 13,
+    fontWeight: '800',
+  },
 });

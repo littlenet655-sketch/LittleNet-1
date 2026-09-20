@@ -74,7 +74,10 @@ export function fetchFeedV2(
 export function fetchReelsV2(token: string, cursor: number, limit = 10, sessionId?: string, signal?: AbortSignal): Promise<FeedPage> {
   const p = new URLSearchParams({ cursor: String(cursor), limit: String(limit) });
   if (sessionId) p.set('session_id', sessionId);
-  return get<FeedPage>(`${routes.reelsV2}?${p.toString()}`, token, signal);
+  return apiRequest<FeedPage>(`${routes.reelsV2}?${p.toString()}`, {
+    signal,
+    timeoutMs: 30_000,
+  }, token);
 }
 
 export function refreshReelPlayback(
@@ -82,6 +85,13 @@ export function refreshReelPlayback(
   postId: number,
 ): Promise<{ ok: boolean; playback_url?: string; playback_expires_at?: number; poster_url?: string }> {
   return get(routes.reelPlayback(postId), token);
+}
+
+export function refreshCuratedReelPlayback(
+  token: string,
+  contentId: number,
+): Promise<{ ok: boolean; playback_url?: string; playback_expires_at?: number; poster_url?: string }> {
+  return get(routes.curatedReelPlayback(contentId), token);
 }
 
 export function recordStoryView(
@@ -124,6 +134,19 @@ export interface HeartbeatResult {
   minutes_today: number;
   remaining_minutes: number | null;
   locked?: boolean;
+  self_resets_used?: number;
+  self_resets_remaining?: number;
+}
+
+export interface KidTimeLimitStatus {
+  ok: boolean;
+  locked: boolean;
+  minutes_today: number;
+  daily_limit_minutes: number;
+  strict_mode: boolean;
+  remaining_minutes: number | null;
+  resets_used: number;
+  resets_remaining: number;
 }
 
 export function sendHeartbeat(token: string, signal?: AbortSignal): Promise<HeartbeatResult> {
@@ -132,6 +155,20 @@ export function sendHeartbeat(token: string, signal?: AbortSignal): Promise<Hear
     { method: 'POST', signal },
     token,
   );
+}
+
+export function fetchKidsTimeLimitStatus(token: string): Promise<KidTimeLimitStatus> {
+  return get<KidTimeLimitStatus>(routes.kidsTimeLimitStatus, token);
+}
+
+export function resetKidsTimeLimitSelf(token: string): Promise<{
+  ok: boolean;
+  message: string;
+  resets_used: number;
+  resets_remaining: number;
+  minutes_today: number;
+}> {
+  return apiRequest(routes.kidsTimeLimitReset, { method: 'POST' }, token);
 }
 
 export function recordImpressionBatch(

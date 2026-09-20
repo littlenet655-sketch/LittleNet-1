@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 from safety.chat_context import contextual_chat_risk
 from safety.face_service import _face_match_threshold
 from safety.policy import decide, policy_metadata
@@ -52,3 +54,31 @@ def test_policy_provenance_is_versioned():
         "policy_name": "littlenet-college-child-safety",
         "policy_version": 1,
     }
+
+
+def test_r2_worker_misconfiguration_is_retryable_not_missing_media():
+    from services.media_processor import process_media_job
+
+    post = {
+        "post_id": 99,
+        "child_id": 7,
+        "media_type": "VIDEO",
+        "caption": "",
+        "content_category": "Science",
+        "audience_age_group": "ALL",
+        "is_story": False,
+        "is_reel": True,
+        "processing_status": "UPLOADED",
+        "moderation_status": "PENDING",
+        "processing_lease_token": None,
+        "processing_lease_expires_at": None,
+    }
+    claimed = {**post, "processing_status": "PROCESSING", "processing_lease_token": "worker"}
+    with patch("services.media_processor.fetch_one", return_value=post), \
+         patch("services.media_processor.execute", side_effect=[claimed, None]) as execute, \
+         patch("services.media_processor.object_storage.enabled", return_value=False), \
+         patch("services.media_processor.Path.is_file", return_value=False):
+        result = process_media_job(99, 7, "uploads/r2/quarantine/7/u/source.mp4", "reel")
+
+    assert result == {"ok": False, "error": "r2_storage_unavailable", "retryable": True}
+    assert "processing_status='UPLOADED'" in execute.call_args_list[1].args[0]

@@ -1,7 +1,7 @@
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { ChildScreenProps } from '../../navigation/types';
-import { Screen } from '../../ui/components';
 import { colors } from '../../ui/tokens';
 
 const TABS: {
@@ -11,41 +11,85 @@ const TABS: {
 }[] = [
   { key: 'FeedTab', label: 'Home', icon: 'home' },
   { key: 'DiscoverTab', label: 'Search', icon: 'search' },
-  { key: 'CreateTab', label: 'Create', icon: 'plus-circle' },
+  { key: 'CreateTab', label: 'Create', icon: 'plus-square' },
   { key: 'ReelsTab', label: 'Reels', icon: 'film' },
   { key: 'ProfileTab', label: 'Profile', icon: 'user' },
 ];
 
 export function KidsTabsShell({ navigation, route, render }: ChildScreenProps<'KidsTabs'> & { render: (tab: string) => React.ReactNode }) {
+  const insets = useSafeAreaInsets();
   const active = String((route.params as { tab?: string } | undefined)?.tab ?? 'FeedTab');
   const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
+  const isReels = active === 'ReelsTab';
+
   return (
-    <Screen>
-      <View style={styles.top}>
-        <View style={styles.brandRow}>
-          <Image
-            source={require('../../../assets/app_logo.png')}
-            style={styles.topLogo}
-            resizeMode="cover"
-          />
-          <Text style={styles.wordmark}>LittleNet</Text>
+    <View style={[styles.root, isReels && styles.rootDark]}>
+      <StatusBar barStyle={isReels ? 'light-content' : 'dark-content'} backgroundColor={isReels ? '#000000' : colors.surface} />
+      {!isReels ? (
+        <View style={[styles.top, { paddingTop: insets.top, height: 52 + insets.top }]}>
+          <View style={styles.topInner}>
+            <View style={styles.brandRow}>
+              <Image
+                source={require('../../../assets/app_logo.png')}
+                style={styles.topLogo}
+                resizeMode="cover"
+              />
+              <Text style={styles.wordmark}>LittleNet</Text>
+            </View>
+            <View style={styles.utilities}>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Stories"
+                onPress={() => nav.navigate('Stories', {})}
+                hitSlop={10}
+                style={styles.utilityBtn}
+              >
+                <Feather name="heart" size={22} color={colors.ink} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Notifications"
+                onPress={() => nav.navigate('NotificationsTab', {})}
+                hitSlop={10}
+                style={styles.utilityBtn}
+              >
+                <Feather name="bell" size={22} color={colors.ink} />
+              </Pressable>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Messages"
+                onPress={() => nav.navigate('Conversations', {})}
+                hitSlop={10}
+                style={styles.utilityBtn}
+              >
+                <Feather name="send" size={21} color={colors.ink} />
+              </Pressable>
+            </View>
+          </View>
         </View>
-        <View style={styles.utilities}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Stories" onPress={() => nav.navigate('Stories', {})} hitSlop={8}>
-            <Feather name="heart" size={21} color={colors.ink} />
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Notifications" onPress={() => nav.navigate('NotificationsTab', {})} hitSlop={8}>
-            <Feather name="bell" size={21} color={colors.ink} />
-          </Pressable>
-          <Pressable accessibilityRole="button" accessibilityLabel="Messages" onPress={() => nav.navigate('Conversations', {})} hitSlop={8}>
-            <Feather name="send" size={20} color={colors.ink} />
-          </Pressable>
-        </View>
-      </View>
+      ) : null}
       <View style={styles.body}>{render(active)}</View>
-      <View style={styles.tabs}>
+      <View
+        style={[
+          styles.tabs,
+          isReels && styles.tabsDark,
+          {
+            paddingBottom: Math.max(insets.bottom, 8),
+            height: 54 + Math.max(insets.bottom, 8),
+          },
+        ]}
+      >
         {TABS.map((t) => {
           const isOn = active === t.key;
+          const isCreate = t.key === 'CreateTab';
+          const iconColor = isReels
+            ? isOn
+              ? '#FFFFFF'
+              : '#94A3B8'
+            : isOn
+              ? colors.brand
+              : '#64748B';
+
           return (
             <Pressable
               key={t.key}
@@ -53,29 +97,120 @@ export function KidsTabsShell({ navigation, route, render }: ChildScreenProps<'K
               accessibilityState={{ selected: isOn }}
               accessibilityLabel={t.label}
               onPress={() => nav.navigate('KidsTabs', { tab: t.key })}
-              style={[styles.tab, isOn && styles.on]}
+              style={styles.tab}
+              hitSlop={6}
             >
-              <Feather
-                name={t.icon}
-                size={t.key === 'CreateTab' ? 24 : 22}
-                color={isOn ? colors.brand : colors.muted}
-              />
+              {isCreate ? (
+                <View style={[styles.createIconBox, isReels && styles.createIconBoxDark]}>
+                  <Feather name="plus" size={18} color={isReels ? '#000000' : '#FFFFFF'} />
+                </View>
+              ) : (
+                <View style={styles.tabIconWrap}>
+                  <Feather
+                    name={t.icon}
+                    size={22}
+                    color={iconColor}
+                  />
+                  {isOn && !isReels && <View style={styles.activeDot} />}
+                </View>
+              )}
             </Pressable>
           );
         })}
       </View>
-    </Screen>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  top: { height: 50, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: '#F0F0F0' },
-  brandRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  topLogo: { width: 28, height: 28, borderRadius: 7 },
-  wordmark: { color: colors.ink, fontSize: 22, fontWeight: '900', letterSpacing: -0.5 },
-  utilities: { flexDirection: 'row', alignItems: 'center', gap: 18 },
-  body: { flex: 1 },
-  tabs: { flexDirection: 'row', height: 54, backgroundColor: colors.surface, borderTopWidth: 1, borderTopColor: '#F0F0F0', paddingTop: 5 },
-  tab: { flex: 1, alignItems: 'center', justifyContent: 'center' },
-  on: { backgroundColor: colors.surface },
+  root: {
+    flex: 1,
+    backgroundColor: colors.background,
+  },
+  rootDark: {
+    backgroundColor: '#000000',
+  },
+  top: {
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F0F0F0',
+  },
+  topInner: {
+    height: 52,
+    paddingHorizontal: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  brandRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  topLogo: {
+    width: 28,
+    height: 28,
+    borderRadius: 7,
+  },
+  wordmark: {
+    color: colors.ink,
+    fontSize: 22,
+    fontWeight: '900',
+    letterSpacing: -0.5,
+  },
+  utilities: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 18,
+  },
+  utilityBtn: {
+    padding: 2,
+  },
+  body: {
+    flex: 1,
+  },
+  tabs: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    borderTopWidth: 1,
+    borderTopColor: '#F0F0F0',
+    paddingTop: 4,
+  },
+  tabsDark: {
+    backgroundColor: '#000000',
+    borderTopColor: '#1E293B',
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: '100%',
+  },
+  tabIconWrap: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    height: 32,
+  },
+  activeDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.brand,
+    marginTop: 3,
+  },
+  createIconBox: {
+    width: 32,
+    height: 26,
+    borderRadius: 8,
+    backgroundColor: colors.brand,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1.5,
+    borderColor: colors.brand,
+  },
+  createIconBoxDark: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFFFFF',
+  },
 });
