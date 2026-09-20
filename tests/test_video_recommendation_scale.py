@@ -181,6 +181,92 @@ def test_cpu_fallback_prefers_fresh_relevant_content(monkeypatch):
     assert ranked[0]['source_id'] == 1
 
 
+
+def test_recent_category_feedback_personalizes_unseen_items():
+    from services.recommendation import _category_affinities
+
+    with patch('services.recommendation.fetch_all') as mock_fetch:
+        mock_fetch.return_value = [
+            {'category': 'Science', 'score': 8.0},
+            {'category': 'Art', 'score': -8.0},
+        ]
+        affinities = _category_affinities(42)
+
+    assert affinities['science'] > 2.0
+    assert affinities['art'] < -2.0
+    assert max(abs(value) for value in affinities.values()) <= 3.0
+
+
+def test_rank_candidates_uses_behavior_category_affinity(monkeypatch):
+    rows = [
+        {
+            'source_type': 'CURATED',
+            'source_id': 11,
+            'content_id': 11,
+            'title': 'New lesson',
+            'caption': '',
+            'category': 'science',
+            'created_at': '2026-09-20T00:00:00Z',
+        },
+        {
+            'source_type': 'CURATED',
+            'source_id': 12,
+            'content_id': 12,
+            'title': 'New lesson',
+            'caption': '',
+            'category': 'art',
+            'created_at': '2026-09-20T00:00:00Z',
+        },
+    ]
+
+    with patch('services.recommendation._safe_rank_candidates', side_effect=lambda cid, r: r), \
+         patch('services.recommendation.signal_scores', return_value={}), \
+         patch('services.recommendation._profile_terms', return_value=([], 'safe content')), \
+         patch('services.recommendation._category_affinities', return_value={'science': 2.5, 'art': -1.0}), \
+         patch('safety.remote_client.enabled', return_value=True), \
+         patch('safety.remote_client.rank_texts', return_value=[]):
+        ranked = rank_candidates(cid=42, rows=rows)
+
+    assert ranked[0]['source_id'] == 11
+
+
+def test_item_feedback_is_bounded_not_lexicographically_absolute(monkeypatch):
+    rows = [
+        {
+            'source_type': 'SOCIAL',
+            'source_id': 21,
+            'post_id': 21,
+            'title': 'Generic post',
+            'caption': '',
+            'category': 'general',
+            'created_at': '2026-09-20T00:00:00Z',
+            'ranking_metadata': {'child_id': 5},
+        },
+        {
+            'source_type': 'SOCIAL',
+            'source_id': 22,
+            'post_id': 22,
+            'title': 'Robotics science project',
+            'caption': 'Robotics science coding',
+            'category': 'science',
+            'created_at': '2026-09-20T00:00:00Z',
+            'ranking_metadata': {'child_id': 6},
+        },
+    ]
+
+    with patch('services.recommendation._safe_rank_candidates', side_effect=lambda cid, r: r), \
+         patch('services.recommendation.signal_scores', return_value={('SOCIAL', 21): 1.5}), \
+         patch('services.recommendation._profile_terms', return_value=(['robotics', 'science', 'coding'], 'robotics science coding')), \
+         patch('services.recommendation._category_affinities', return_value={}), \
+         patch('safety.remote_client.enabled', return_value=True), \
+         patch('safety.remote_client.rank_texts', return_value=[]):
+        ranked = rank_candidates(cid=42, rows=rows)
+
+    # A small past engagement signal must not permanently outrank a much more
+    # relevant unseen item, unlike the old lexicographic feedback tuple.
+    assert ranked[0]['source_id'] == 22
+
+
 # ---------------------------------------------------------------------------
 # 3. P8 Diversity and Balance Reranking
 # ---------------------------------------------------------------------------
