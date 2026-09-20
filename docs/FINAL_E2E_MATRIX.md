@@ -1,97 +1,79 @@
 # LittleNet Final E2E Matrix
 
+_Last re-audited: 20 September 2026_
+
 Status values:
-- **PASS** — journey was executed end-to-end with evidence.
-- **FAIL** — journey was executed and failed.
-- **UNVERIFIED** — code may exist, but the journey has not been executed end-to-end.
 
-> This matrix is intentionally conservative. Source-presence checks, typechecking, and route existence are not enough to mark a user journey PASS.
+- **PASS** — the named journey was executed end-to-end with current evidence.
+- **FAIL** — it was executed and failed.
+- **UNVERIFIED** — implementation/tests may exist, but the complete current-release journey has not been executed.
 
-Verified on 2026-09-14 against the current repository, disposable Neon branch, and
-the recorded external validation runs. The current local release candidate also
-has a clean mobile typecheck, while its physical Android and new native APK
-evidence remain unverified.
+Automated unit/integration tests are recorded separately from live/device journey status.
 
-- [LittleNet CI](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761242142): source audit, 347 backend tests, dependency/security checks, and Gitleaks passed.
-- [Disposable PostgreSQL role E2E](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761243565): fresh schema/migrations and authenticated Child/Parent/Admin smoke passed.
-- [React Native validation](https://github.com/littlenet655-sketch/LittleNet-1/actions/runs/34761244826): the recorded external run passed 77 tests, typecheck, Android export, and Expo dependency check. The current local candidate passes 80 mobile tests, typecheck, Android export, and `expo install --check`.
-- Modal authentication succeeded for the `netlittle2` workspace; `littlenet-web` and `littlenet-ai` were deployed, both expected volumes were present, and the protected AI probe was rerun with the matched live web/AI secret configuration. The existing AI and web apps were redeployed without changing their names or scale-to-zero settings, and the container list was empty after the configured idle window.
+## Repository validation
 
-| Journey | Status | Required evidence |
-|---|---|---|
-| Parent registration | PASS | Live Modal request using a unique plus-address of the approved E2E inbox returned HTTP 200, `ok=true`, `email_sent=true`, and a pending token. |
-| Parent email OTP send/verify/resend | PASS | The same live registration returned `email_sent=true`; mobile resend returned HTTP 200 with `ok=true`; Resend reported `littlenet.in` verified and the newest OTP message `last_event=delivered`; the delivered code verified through the mobile API with HTTP 200 and `ok=true`. |
-| Guardian liveness/adult verification | UNVERIFIED | valid + spoof/failure tests |
-| Child creation by verified parent | UNVERIFIED | ownership + duplicate validation |
-| Child face enrollment | UNVERIFIED | real valid embedding persisted; invalid/liveness failure rejected |
-| Child face-first login | UNVERIFIED | fresh camera/liveness + enrolled embedding match |
-| Password/fallback login policy | UNVERIFIED | explicit allowed fallback + denial cases |
-| Mandatory onboarding quiz | UNVERIFIED | gate before feed + persistence after completion |
-| Recurring feed quiz | UNVERIFIED | interval trigger + destination restoration |
-| Kids home/feed | UNVERIFIED | visible approved/allowed posts only |
-| Stories | UNVERIFIED | viewer + allowed visibility + view tracking |
-| Reels | UNVERIFIED | pagination/playback + parent control enforcement |
-| Discover/search | UNVERIFIED | privacy/age/category enforcement |
-| Own child profile | UNVERIFIED | profile + allowed posts |
-| Other child profile | UNVERIFIED | relationship/privacy enforcement |
-| Notifications | UNVERIFIED | delivery + mark-read |
-| Create image post | UNVERIFIED | direct R2 upload through v2 flow |
-| Create video/reel/story | UNVERIFIED | direct R2 upload + duration/sanitization checks |
-| Coarse post location label | UNVERIFIED | text label only; no precise GPS storage |
-| Async processing dispatch | UNVERIFIED | durable Modal-native enqueue + retry/redrive |
-| AI ALLOWED path | UNVERIFIED | post promoted/sanitized and visible |
-| AI REVIEW path | UNVERIFIED | remains private/quarantined |
-| Parent REVIEW -> APPROVED | UNVERIFIED | authorized preview + byte promotion + feed visibility |
-| Parent REVIEW -> BLOCKED | UNVERIFIED | quarantine deletion/invalidation + denial |
-| Total AI failure | UNVERIFIED | fail-closed BLOCK |
-| Partial AI failure | UNVERIFIED | REVIEW |
-| R2 size/MIME mismatch | UNVERIFIED | completion rejected |
-| Concurrent upload completion | UNVERIFIED | one post/job only |
-| Worker spawn failure retry | UNVERIFIED | no stranded consumed upload |
-| Stale processing redrive | UNVERIFIED | deterministic recovery |
-| Image sanitization failure | UNVERIFIED | original bytes never published |
-| Video sanitization failure | UNVERIFIED | original bytes never published |
-| Author sees ALLOWED post in profile | UNVERIFIED | client refresh/query invalidation |
-| Eligible follower sees ALLOWED post | UNVERIFIED | approved relationship + feed assertion |
-| REVIEW/BLOCKED excluded from child feeds | UNVERIFIED | authorization + feed assertions |
-| Like/unlike | UNVERIFIED | mutation + immediate UI state |
-| Comment moderation | UNVERIFIED | allow/review/block behavior |
-| Save/unsave | UNVERIFIED | mutation + saved list |
-| Follow/request/approve/unfollow | UNVERIFIED | relationship lifecycle |
-| Mute/block/report | UNVERIFIED | enforcement + UI |
-| Conversation list | UNVERIFIED | approved-only relationships |
-| Text chat | UNVERIFIED | send/read/pagination/moderation |
-| Shared-post chat | UNVERIFIED | visibility + moderation |
-| Media chat | UNVERIFIED | only if a fail-closed native moderated contract is implemented |
-| Parent dashboard | PASS | Disposable PostgreSQL bearer journey returned the owned child summary and asserted its identity fields. |
-| Parent safety queue | UNVERIFIED | ownership + preview authorization |
-| Screen-time limit | UNVERIFIED | child lock enforcement |
-| Quiet hours | UNVERIFIED | child lock enforcement |
-| Feature controls | PASS | Disposable PostgreSQL journey disabled messaging, observed the Child route fail with `disabled_by_parent`, then restored it. Other switches remain covered by source/unit contracts, not a device run. |
-| Category controls | UNVERIFIED | feed/post enforcement |
-| Follow approvals | UNVERIFIED | parent authorization |
-| Admin moderation | PASS | Disposable PostgreSQL journey covered queue, detail, ESCALATE, final APPROVE, two review rows, and dedicated admin audit output. |
-| Fresh PostgreSQL bootstrap | PASS | Role E2E created an empty PostgreSQL 16 service and applied the schema plus production migration chain before testing. |
-| Full backend suite | PASS | Recorded external CI: 347 passed, 2 skipped, 0 failed/errors. The local workspace cannot reproduce it because its configured `heliumdb` has no LittleNet schema; local failures are not counted as product passes. |
-| Route uniqueness | PASS | `tools/audit_all.py`: 130 routes discovered and no duplicate Android root or mobile method/path registration failure. |
-| React Native unit/component suite | PASS | Current local run: 80 passed, 0 failed/skipped/cancelled across 19 suites. |
-| React Native typecheck | PASS | Current local `npm run typecheck`: 0 errors after the typed Expo native-view adapter fix. |
-| Android Expo export | PASS | Current local export bundled 979 modules and exported `mobile_app/dist`. This is not an APK/device run. |
-| Expo dependency alignment | PASS | Current local `npx expo install --check` reports dependencies up to date. |
-| Expo Doctor | UNVERIFIED | 19/21 checks passed. The two remaining findings are the config-schema metadata warning for `newArchEnabled`/`splash` and React Native Directory metadata marking `@react-native-ml-kit/face-detection` as untested on New Architecture; neither was suppressed or used to disable New Architecture. |
-| Android critical E2E | UNVERIFIED | `docs/PHYSICAL_DEVICE_CHECKLIST.md` records the 2026-09-14 run as 0/35 executed because no Android install target was available; per-row blocker logs are under `device/` |
-| R2 isolated object round-trip | PASS | Submission-readiness prefix upload, HEAD, GET, and DELETE completed with cleanup. |
-| R2 full synthetic media lifecycle | PASS | Signed upload to quarantine, private REVIEW delivery, ALLOW sanitization/promotion/readback, BLOCK cleanup, and test-object cleanup passed with synthetic media. |
-| Modal workspace/app/volume access | PASS | Authenticated `netlittle2` inspection found `littlenet-web`, `littlenet-ai`, `littlenet-uploads`, and `littlenet-model-cache`. |
-| Modal AI readiness/authentication | PASS | A non-disclosing fingerprint comparison found `AI_SHARED_SECRET` present and equal in `littlenet-web-secrets` and `littlenet-ai-secrets` (64 characters; no values printed or rotated). After redeploying the existing apps, the protected `/healthz` returned HTTP 200 with `ok=true`, a synthetic TEXT `/ai/moderate` request returned HTTP 200 with populated safety signals, and web `/readyz` returned HTTP 200/ready. No GPU warmup was run. |
-| Modal idle cost guard | PASS | `littlenet-ai` had one container immediately after the probe, then `modal container list --app-id ap-Blh94Ec2SPFf3y4nYHxsJz --json` returned `[]` after a 75-second idle wait; the AI function is configured with `scaledown_window=60` and `min_containers=0`. |
-| Real Resend inbox OTP | PASS | After refreshing the invalid Resend credential, `littlenet.in` reported `verified`, the live API returned `email_sent=true`, resend returned HTTP 200, Resend reported the newest message `last_event=delivered`, and the code completed mobile verification. The authorized Gmail connection exposed a different/empty mailbox, so direct Gmail-body evidence is not claimed. |
-| Moderation benchmark calibration | PASS | Six-row lawful synthetic calibration sample: exact-action agreement 0.666667, macro-F1 0.666667; ALLOW precision/recall 1.0/1.0, REVIEW 0.5/0.5, BLOCK 0.5/0.5. This is not production accuracy. |
-| EAS authentication/project link | PASS | `eas-cli whoami --non-interactive` authenticated as `akshu1245`; the existing project `c4ce834d-fd50-4504-a311-820c3372b6dc` was linked without creating a project. |
-| New native APK build from current candidate | UNVERIFIED | The previous APK is obsolete. No new current-HEAD EAS APK was built in this workspace, so no build ID or artifact URL is claimed. |
-| Routine health does not wake GPU | UNVERIFIED | billing/container evidence |
-| Final APK install/launch | UNVERIFIED | `docs/PHYSICAL_DEVICE_CHECKLIST.md` records 0/35 Android journeys executed because no `adb`, emulator, or reachable device was available. |
+| Validation | State |
+|---|---|
+| PostgreSQL/pgvector bootstrap + migrations | AUTOMATED_TESTED |
+| Backend regression | AUTOMATED_TESTED on base main; current re-audit branch must pass before merge |
+| Python security | AUTOMATED_TESTED on base main |
+| Gitleaks | AUTOMATED_TESTED on base main |
+| Role PostgreSQL E2E | AUTOMATED_TESTED |
+| React Native typecheck/tests/export | AUTOMATED_TESTED on base main |
+| Expo dependency check | AUTOMATED_TESTED on base main |
+| R2 private media contracts | AUTOMATED_TESTED |
+| Recommendation/feed contracts | AUTOMATED_TESTED |
+| Reel player/JIT credential contracts | implemented in current re-audit branch; CI pending |
+| Cloudflare Stream private adapter | implemented in current re-audit branch; LIVE UNVERIFIED |
 
-## Submission rule
+## Monday critical journey
 
-LittleNet is not submission-ready while any critical journey above is `FAIL`, or while a required journey is `UNVERIFIED` without an explicitly documented limitation approved for the college demo.
+| Journey | Current release status | Repository evidence | Required final evidence |
+|---|---|---|---|
+| Fresh APK install/launch | UNVERIFIED | EAS workflow now waits for/downloads preview APK | build + Android install |
+| Parent registration | UNVERIFIED CURRENT DEPLOY | API/contracts implemented | unique clean live account |
+| Resend OTP delivered + verified | UNVERIFIED CURRENT DEPLOY | secure OTP + delivery lifecycle implemented | live webhook + real inbox |
+| Guardian live-face | UNVERIFIED | automated face/state contracts | physical camera |
+| Child creation + face enrollment | UNVERIFIED | ownership/gate contracts | physical camera |
+| Child face login | UNVERIFIED | authentication contracts | physical camera |
+| Quiz gate | UNVERIFIED DEVICE | backend/mobile contracts | current APK |
+| Feed renders | UNVERIFIED DEVICE | feed/session/recommendation tests | current APK |
+| Reels render/play | UNVERIFIED DEVICE | bounded player/JIT/buffer tests | physical decoder/network |
+| Safe image upload -> ALLOW | UNVERIFIED LIVE/DEVICE | upload concurrency/state tests | R2 + AI + APK |
+| Safe Reel upload -> ALLOW/play | UNVERIFIED LIVE/DEVICE | media processing/video tests | R2 + AI + APK |
+| Child B sees Child A ALLOW content | UNVERIFIED DEVICE | publication invalidation/feed tests | two eligible children |
+| REVIEW remains private | UNVERIFIED DEVICE | fail-closed policy tests | controlled device journey |
+| BLOCK remains private | UNVERIFIED DEVICE | fail-closed policy tests | controlled device journey |
+
+## Supporting journeys
+
+| Journey | Current release status |
+|---|---|
+| Stories view persistence | AUTOMATED_TESTED; DEVICE UNVERIFIED |
+| For You/Friends/Learn modes | AUTOMATED_TESTED; DEVICE UNVERIFIED |
+| Like/save/comments | AUTOMATED_TESTED; DEVICE UNVERIFIED |
+| Follow/privacy/block/mute | AUTOMATED_TESTED; DEVICE UNVERIFIED |
+| Text/shared-post chat | AUTOMATED_TESTED; DEVICE UNVERIFIED |
+| Parent controls | AUTOMATED_TESTED; DEVICE UNVERIFIED |
+| Parent safety review | AUTOMATED_TESTED; DEVICE UNVERIFIED |
+| Admin moderation | AUTOMATED_TESTED |
+| Push registration/payload | AUTOMATED_TESTED; PHYSICAL DELIVERY UNVERIFIED |
+| Adaptive HLS | SOURCE IMPLEMENTED; LIVE/DEVICE UNVERIFIED |
+
+## External-service gate
+
+Before the final device run require:
+
+- current main deployed to Modal;
+- strict Modal preflight PASS;
+- Neon migrations current;
+- R2 private storage health PASS;
+- AI shared-secret/protected endpoint PASS;
+- Resend domain/sender PASS;
+- enabled Resend webhook with signing secret mounted;
+- EAS current-main preview APK artifact;
+- optional Cloudflare Stream preflight PASS if adaptive delivery is enabled.
+
+## Submission decision
+
+Do not convert an **UNVERIFIED** device/live row into PASS from source presence alone. The current repository is a production candidate; the physical parent -> child -> upload -> second-child path remains the final release truth.
