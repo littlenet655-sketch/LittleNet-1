@@ -191,6 +191,84 @@ def _fallback_score(item: dict[str, Any], terms: list[str]) -> float:
     return score
 
 
+def _category_affinities(cid: int) -> dict[str, float]:
+    """Learn bounded category preferences from recent explicit/implicit feedback.
+
+    One grouped query is executed only when a new feed session is ranked. Existing
+    session pagination does not call this function, so normal scrolling stays cheap.
+    """
+    try:
+        rows = fetch_all(
+            """SELECT category, SUM(weight) AS score
+                 FROM (
+                   SELECT p.content_category AS category, rs.weight
+                     FROM recommendation_signals rs
+                     JOIN posts p ON p.post_id = rs.source_id
+                    WHERE rs.child_id = %s
+                      AND rs.source_type = 'SOCIAL'
+                      AND rs.created_at >= NOW() - INTERVAL '30 days'
+                   UNION ALL
+                   SELECT cat.display_name AS category, rs.weight
+                     FROM recommendation_signals rs
+                     JOIN curated_content cc ON cc.content_id = rs.source_id
+                     JOIN content_categories cat ON cat.category_id = cc.category_id
+                    WHERE rs.child_id = %s
+                      AND rs.source_type = 'CURATED'
+                      AND rs.created_at >= NOW() - INTERVAL '30 days'
+                 ) recent
+                WHERE category IS NOT NULL
+                GROUP BY category""",
+            (cid, cid),
+        )
+    except Exception:
+        return {}
+
+    affinities: dict[str, float] = {}
+    for row in rows or []:
+        category = str(row.get("category") or "").strip().casefold()
+        if not category:
+            continue
+        try:
+            raw = float(row.get("score") or 0.0)
+        except (TypeError, ValueError):
+            continue
+        # Saturate at +/-3 so a long interaction history cannot overpower safety,
+        # profile interests, freshness, or diversity.
+        affinities[category] = 3.0 * math.tanh(raw / 8.0)
+    return affinities
+
+
+def _feedback_bonus(item: dict[str, Any], feedback: dict[tuple[str, int], float]) -> float:
+    source_id = int(item.get("source_id", item.get("post_id", 0)) or 0)
+    source_type = str(item.get("source_type") or "SOCIAL").upper()
+    creator_id = int((item.get("ranking_metadata") or {}).get("child_id") or 0)
+    raw = (
+        feedback.get((source_type, source_id), 0.0)
+        + feedback.get(("CREATOR", creator_id), 0.0)
+    )
+    # Strong negative actions remain strong, but repeated positive interactions
+    # cannot make one creator/item permanently dominate the feed.
+    return 6.0 * math.tanh(float(raw) / 6.0)
+
+
+def _composite_rank_score(
+    item: dict[str, Any],
+    terms: list[str],
+    feedback: dict[tuple[str, int], float],
+    category_affinities: dict[str, float],
+    ai_scores: dict[int, float],
+) -> float:
+    source_id = int(item.get("source_id", item.get("post_id", 0)) or 0)
+    category = str(item.get("category") or item.get("content_category") or "").strip().casefold()
+    semantic = max(-1.0, min(1.0, float(ai_scores.get(source_id, 0.0))))
+    return (
+        _fallback_score(item, terms)
+        + _feedback_bonus(item, feedback)
+        + category_affinities.get(category, 0.0)
+        + (2.0 * semantic)
+    )
+
+
 def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if not rows:
         return []
@@ -199,6 +277,7 @@ def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]
         return []
     terms, profile_text = _profile_terms(cid)
     feedback = signal_scores(cid, rows)
+    category_affinities = _category_affinities(cid)
     ai_scores: dict[int, float] = {}
     try:
         from safety import remote_client
@@ -225,14 +304,7 @@ def rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str, Any]
     return sorted(
         rows,
         key=lambda p: (
-            feedback.get(("SOCIAL", int(p.get("source_id", p.get("post_id")))), 0.0)
-            + feedback.get(("CURATED", int(p.get("source_id", p.get("content_id", 0)) or 0)), 0.0)
-            + feedback.get(
-                ("CREATOR", int((p.get("ranking_metadata") or {}).get("child_id") or 0)),
-                0.0,
-            ),
-            ai_scores.get(int(p.get("source_id", p.get("post_id"))), -2.0),
-            _fallback_score(p, terms),
+            _composite_rank_score(p, terms, feedback, category_affinities, ai_scores),
             p.get("ranking_metadata", {}).get("created_at") or p.get("created_at") or "",
         ),
         reverse=True,
