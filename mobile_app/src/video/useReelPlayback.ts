@@ -39,6 +39,11 @@ export function useReelPlayback({
   const isMountedRef = useRef(true);
   const playbackStartedRef = useRef(false);
   const sourceFetchInFlightRef = useRef(false);
+  const onMetricsFlushRef = useRef(onMetricsFlush);
+
+  useEffect(() => {
+    onMetricsFlushRef.current = onMetricsFlush;
+  }, [onMetricsFlush]);
 
   const player = useVideoPlayer(null, (instance) => {
     instance.loop = true;
@@ -138,7 +143,7 @@ export function useReelPlayback({
 
         // Auto-refresh credential on error
         const postId = item.post_id || item.source_id;
-        if (token && typeof postId === 'number') {
+        if (token && item.source_type === 'SOCIAL' && typeof postId === 'number') {
           void refreshReelPlayback(token, postId).then((res) => {
             if (res.ok && res.playback_url && isMountedRef.current) {
               setCurrentSource(res.playback_url);
@@ -257,7 +262,7 @@ export function useReelPlayback({
     setFirstFrameRendered(false);
     setPlaybackState('PREPARING');
     const postId = item.post_id || item.source_id;
-    if (token && typeof postId === 'number') {
+    if (token && item.source_type === 'SOCIAL' && typeof postId === 'number') {
       try {
         const res = await refreshReelPlayback(token, postId);
         if (res.ok && res.playback_url && isMountedRef.current) {
@@ -278,29 +283,33 @@ export function useReelPlayback({
     }
   }, [item.post_id, item.source_id, token, currentSource, player, active, paused]);
 
-  // Flush metrics when active becomes false or on unmount
+  // Flush once on unmount. The callback is kept in a ref so a parent render
+  // cannot accidentally trigger effect cleanup and duplicate an impression.
   useEffect(() => {
     isMountedRef.current = true;
     return () => {
       isMountedRef.current = false;
       const payload = metricsRef.current.toImpressionPayload();
       if (payload.watched_ms && payload.watched_ms > 250) {
-        onMetricsFlush?.(payload);
+        onMetricsFlushRef.current?.(payload);
       }
     };
-  }, [onMetricsFlush]);
+  }, []);
 
-  // Also flush on active transition from true -> false
+  // Flush when a Reel leaves the active slot, then reset the tracker so later
+  // re-entry produces a new delta rather than resending cumulative watch time.
   const prevActiveRef = useRef(active);
   useEffect(() => {
     if (prevActiveRef.current && !active) {
       const payload = metricsRef.current.toImpressionPayload();
       if (payload.watched_ms && payload.watched_ms > 250) {
-        onMetricsFlush?.(payload);
+        onMetricsFlushRef.current?.(payload);
       }
+      metricsRef.current = new ReelMetricsTracker(item, 'REELS');
+      playbackStartedRef.current = false;
     }
     prevActiveRef.current = active;
-  }, [active, onMetricsFlush]);
+  }, [active, item]);
 
   const handleFirstFrameRender = useCallback(() => {
     setFirstFrameRendered(true);
