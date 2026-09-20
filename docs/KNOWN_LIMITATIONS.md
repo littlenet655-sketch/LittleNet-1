@@ -1,19 +1,42 @@
-# Known Limitations
+# LittleNet Known Limitations
 
-- Android device/emulator journeys require a reachable non-production backend and prepared accounts. They remain UNVERIFIED unless the final evidence matrix names the device and run.
-- No current-HEAD native APK is available from this workspace. An Expo export is not an APK; the previous preview artifact is obsolete and is intentionally not linked here.
-- The 2026-09-14 evidence run had neither `adb`, an Android emulator, `scrcpy`, nor a reachable Android target. Android critical E2E and APK install/launch remain explicitly UNVERIFIED.
-- Story viewing is implemented, but dedicated story-seen persistence is not claimed unless verified against the live route and database.
-- Media chat is not implemented because no separate native media-message contract was added to the fail-closed moderation pipeline. Text and shared-post chat remain supported.
-- Video moderation samples bounded scenes rather than every frame. Video audio is stripped; standalone voice/audio posting is outside the locked demo scope.
-- Parent/Admin collection routes are intentionally bounded to 100 recent rows. They do not provide enterprise-scale reporting or arbitrary historical export.
-- The activity screen shows event categories and timestamps without exposing private message bodies or unrelated-user content.
-- The live Modal AI path is authenticated and ready: the existing AI and web apps were redeployed without changing their names or scale-to-zero settings; the web/AI `AI_SHARED_SECRET` values matched without exposing or replacing unrelated secrets; protected `/healthz` returned HTTP 200; and a synthetic TEXT moderation request returned HTTP 200. A separate local-shell probe still returned HTTP 401 because the Replit-local `AI_SHARED_SECRET` is stale; local-only probes must use the current live configuration rather than treating that stale value as deployment evidence.
-- The full synthetic R2 lifecycle passed: signed quarantine upload, private REVIEW delivery, ALLOW sanitization/promotion/readback, BLOCK cleanup, and cleanup of all synthetic objects. This does not validate real-user media.
-- Direct Gmail-body evidence for the parent OTP is unavailable from the currently authorized Gmail connection because it exposed no matching messages for the approved inbox. The live Resend path is otherwise verified: `littlenet.in` is verified, the exact sender is `LittleNet <no-reply@littlenet.in>`, registration returned `email_sent=true`, resend returned HTTP 200, Resend reported `last_event=delivered`, and the mobile verify route returned `ok=true`. Connect the approved inbox account if a mailbox screenshot is required for the demo.
-- The existing Expo project identifiers are known, but a new current-HEAD native APK was not produced in this workspace. Do not reuse the obsolete preview build; physical installation and device journeys remain unverified.
-- Current mobile verification is stronger at the source level: 80 mobile tests pass, TypeScript has 0 errors, Android export passes, and `expo install --check` reports dependencies up to date. Expo Doctor remains 19/21 because of a config-schema metadata warning (`newArchEnabled`/`splash`) and an untested-on-New-Architecture React Native Directory entry for `@react-native-ml-kit/face-detection`.
-- The moderation benchmark result is a six-row synthetic calibration sample, not a production accuracy claim: exact-action agreement and macro-F1 were both 0.666667.
-- Production content audit on the read-only `little/production` branch found 49 active children, 27 active child profiles, 334 safe ALLOWED posts, 187 safe image posts, 122 safe reels, 0 active Stories in the last 24 hours, 0 published curated items, 0 published educational curated items, and 377 quizzes. The 61 safe image records without a media path remain un-repaired; 33 local/alternate path references and 25 text-like no-media records were classified without mutation.
-- The previously exposed disposable Neon credential/branch still requires deletion or rotation by an authenticated Neon account owner; this workstation has no authenticated Neon CLI profile, so cleanup is not claimed.
-- `npm audit` reports 16 moderate and no high/critical findings. The incompatible transitive upgrade chains are documented in [DEPENDENCY_AUDIT.md](DEPENDENCY_AUDIT.md); no breaking `--force` downgrade was applied.
+_Last re-audited: 20 September 2026_
+
+This file records only limitations that are still real on the current React Native/Flask architecture. Historical audit notes are not release evidence.
+
+## Requires live configuration or physical-device evidence
+
+- **Fresh Android APK install:** the repository can build/export Android and the EAS workflow now waits for a current-HEAD preview APK, but a successful physical install/launch still has to be recorded.
+- **Guardian and child face journeys:** source and automated contracts exist; a current APK still needs valid-face, no-face, multiple-face, retry, enrollment and login evidence on Android hardware.
+- **Cross-user publication:** publication invalidation and feed eligibility are tested in source, but Child A upload -> ALLOW -> Child B visibility still needs a two-device/two-account run.
+- **Physical Reel playback:** one-active-player logic, buffering policy, JIT playback credentials and telemetry are implemented; TTFF/rebuffer/background-resume claims still require current-device measurements.
+- **Push delivery:** Expo push integration is implemented, but physical device-token delivery remains unverified.
+- **Resend delivery webhook:** backend verification and delivery-state handling are implemented. The Resend account must have an enabled webhook pointed at `/webhooks/resend`, and the webhook signing secret must be present in the Modal email secret.
+- **Adaptive Cloudflare Stream:** the provider now supports private direct upload, processing-state polling, signed HLS and R2 fallback, but it remains opt-in and must not be enabled until real Cloudflare Stream credentials/subdomain are configured and live ingestion/playback is verified.
+
+## Moderation evidence
+
+The fail-closed moderation path is implemented. Do not claim a production accuracy percentage until the benchmark protocol is run on a labelled held-out dataset and the evidence is retained.
+
+## Load and scale evidence
+
+The repository contains an in-process regression profiler and a staging-only k6 script. Neither is evidence of Instagram/YouTube-scale capacity. Production-capacity claims require a controlled staging deployment, real network load, raw k6 output, database connection measurements and API error/latency results tied to a commit.
+
+## Features intentionally outside the locked Monday path
+
+Advanced story/reel editing, unrestricted user-generated audio, group chat, and a full media-message product remain outside the Monday demo claim unless separately verified.
+
+## Implemented items that are no longer limitations
+
+The following older limitations are now implemented in source and automated tests:
+
+- story view persistence / seen state;
+- server-side For You / Friends / Learn feed modes;
+- Reel impression batching;
+- signed playback TTL consistency and refresh;
+- production OTP dev-code lockout;
+- Resend accepted/delivered/bounced/suppressed state separation;
+- pgvector-capable CI bootstrap;
+- push payload privacy filtering;
+- stable feed sessions with recommendation ranking;
+- private R2 sanitized-MP4 Reel fallback.
