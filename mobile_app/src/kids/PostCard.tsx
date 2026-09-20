@@ -59,13 +59,15 @@ export function PostCard({ item, onOpen, onProfile, onNotInterested }: { item: F
 
   return (
     <View style={styles.card}>
-      <Pressable onPress={onProfile} disabled={!onProfile} style={styles.row}>
-        <Avatar uri={item.avatar_url} name={item.full_name} />
-        <View style={styles.meta}>
-          <Text style={styles.name}>{item.full_name ?? 'Friend'}</Text>
-          <TimeAgo value={item.created_at} />
-        </View>
-        <CategoryBadge label={item.content_category} />
+      <View style={styles.row}>
+        <Pressable onPress={onProfile} disabled={!onProfile} style={styles.profileRow}>
+          <Avatar uri={item.avatar_url} name={item.full_name} />
+          <View style={styles.meta}>
+            <Text style={styles.name}>{item.full_name ?? 'Friend'}</Text>
+            <TimeAgo value={item.created_at} />
+          </View>
+          <CategoryBadge label={item.content_category} />
+        </Pressable>
         {onNotInterested ? (
           <Pressable
             accessibilityRole="button"
@@ -77,7 +79,7 @@ export function PostCard({ item, onOpen, onProfile, onNotInterested }: { item: F
             <Feather name="eye-off" size={18} color={colors.muted} />
           </Pressable>
         ) : null}
-      </Pressable>
+      </View>
       {item.title ? <Text style={styles.title}>{item.title}</Text> : null}
       {item.caption ? <Text style={styles.caption}>{item.caption}</Text> : null}
       {previewUrl ? <Pressable onPress={onOpen} disabled={!onOpen}><Image source={{ uri: previewUrl }} style={styles.media} /></Pressable> : isVideo ? <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}><Text style={styles.videoLabel}>Video</Text></Pressable> : null}
@@ -136,7 +138,8 @@ export function PostCard({ item, onOpen, onProfile, onNotInterested }: { item: F
 
 const styles = StyleSheet.create({
   card: { backgroundColor: colors.surface, borderBottomWidth: 1, borderBottomColor: colors.line, paddingBottom: spacing.md, marginBottom: spacing.sm },
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  profileRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   meta: { flex: 1 },
   name: { fontWeight: '800', color: colors.ink },
   title: { marginTop: 8, color: colors.ink, fontSize: type.body, fontWeight: '800' },
