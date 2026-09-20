@@ -185,3 +185,116 @@ def test_remote_upload_bundle_uses_single_http_post(monkeypatch):
         assert post.call_args.args[0] == "https://ai.example/ai/moderate-upload"
     finally:
         Path(path).unlink(missing_ok=True)
+
+
+
+def test_modal_text_cpu_client_uses_shared_scale_to_zero_function(monkeypatch):
+    import sys
+    import types
+    from services import modal_text_moderation as client
+
+    seen = {}
+
+    class Fn:
+        def remote(self, *args):
+            seen["args"] = args
+            return {
+                "ok": True,
+                "text_signals": {"category": "TEXT", "toxicity_score": 0.01},
+                "media_signals": {},
+            }
+
+    class Function:
+        @staticmethod
+        def from_name(app_name, function_name):
+            seen["app_name"] = app_name
+            seen["function_name"] = function_name
+            return Fn()
+
+    monkeypatch.setitem(sys.modules, "modal", types.SimpleNamespace(Function=Function))
+    monkeypatch.setenv("LITTLENET_USE_MODAL_TEXT_CPU", "1")
+    monkeypatch.delenv("LITTLENET_AI_SERVER", raising=False)
+
+    result = client.moderate_text("hello world")
+
+    assert result["category"] == "TEXT"
+    assert seen["function_name"] == "moderate_image_upload_cpu"
+    assert seen["args"][0] == b""
+    assert seen["args"][3] is True
+    assert seen["args"][4] is False
+
+
+def test_check_text_prefers_cpu_and_never_calls_gpu_when_enabled(monkeypatch):
+    from safety import text_service
+
+    monkeypatch.setenv("LITTLENET_USE_MODAL_TEXT_CPU", "1")
+    monkeypatch.setenv("LITTLENET_ALLOW_TEXT_GPU_FALLBACK", "0")
+    monkeypatch.delenv("LITTLENET_AI_SERVER", raising=False)
+
+    with patch(
+        "services.modal_text_moderation.moderate_text",
+        return_value={
+            "category": "TEXT",
+            "adult_score": 0.01,
+            "toxicity_score": 0.02,
+            "general_score": 0.02,
+            "total_safety_failure": False,
+            "partial_safety_failure": False,
+        },
+    ) as cpu, patch("safety.remote_client.moderate_text") as gpu:
+        result = text_service.check_text("A normal science message")
+
+    assert result["compute_tier"] == "modal_cpu"
+    cpu.assert_called_once()
+    gpu.assert_not_called()
+
+
+def test_check_text_cpu_failure_does_not_silently_wake_gpu(monkeypatch):
+    from safety import text_service
+
+    monkeypatch.setenv("LITTLENET_USE_MODAL_TEXT_CPU", "1")
+    monkeypatch.setenv("LITTLENET_ALLOW_TEXT_GPU_FALLBACK", "0")
+    monkeypatch.delenv("LITTLENET_AI_SERVER", raising=False)
+
+    with patch(
+        "services.modal_text_moderation.moderate_text",
+        side_effect=RuntimeError("cpu unavailable"),
+    ), patch("safety.remote_client.moderate_text") as gpu:
+        result = text_service.check_text("A normal science message")
+
+    assert result["total_safety_failure"] is True
+    assert result["compute_tier"] == "modal_cpu_failed_closed"
+    gpu.assert_not_called()
+
+
+def test_check_image_prefers_cpu_and_never_calls_gpu(monkeypatch):
+    from safety import visual_service
+
+    monkeypatch.setenv("LITTLENET_USE_MODAL_IMAGE_CPU", "1")
+    monkeypatch.setenv("LITTLENET_ALLOW_IMAGE_GPU_FALLBACK", "0")
+    monkeypatch.delenv("LITTLENET_AI_SERVER", raising=False)
+
+    fd, path = tempfile.mkstemp(suffix=".jpg")
+    os.close(fd)
+    from PIL import Image
+    Image.new("RGB", (32, 32), color="green").save(path, format="JPEG")
+    try:
+        with patch(
+            "services.modal_image_moderation.moderate_image_upload",
+            return_value={
+                "media_signals": {
+                    "category": "IMAGE",
+                    "adult_score": 0.01,
+                    "general_score": 0.01,
+                    "total_safety_failure": False,
+                    "partial_safety_failure": False,
+                }
+            },
+        ) as cpu, patch("safety.remote_client.moderate_file") as gpu:
+            result = visual_service.check_image(path)
+
+        assert result["compute_tier"] == "modal_cpu"
+        cpu.assert_called_once()
+        gpu.assert_not_called()
+    finally:
+        Path(path).unlink(missing_ok=True)
