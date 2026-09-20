@@ -104,6 +104,43 @@ def test_cloudflare_stream_ingest_uses_private_direct_upload(tmp_path, monkeypat
     assert writes
 
 
+
+def test_cloudflare_stream_ingest_reuses_existing_uid_on_retry(tmp_path, monkeypatch):
+    video = tmp_path / "sanitized.mp4"
+    video.write_bytes(b"video-bytes")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_API_TOKEN", "tok_abc")
+    monkeypatch.setenv("CLOUDFLARE_STREAM_SUBDOMAIN", "customer-test")
+
+    provider = CloudflareStreamDeliveryProvider()
+    existing = {
+        "media_id": 44,
+        "post_id": 101,
+        "provider": "CLOUDFLARE_STREAM",
+        "provider_asset_id": "stream_uid_existing",
+        "playback_id": "stream_uid_existing",
+        "published_reference": "uploads/r2/published/101/clean.mp4",
+        "status": "ENCODING",
+    }
+    monkeypatch.setattr("services.video_delivery.get_video_asset", lambda _post_id: existing)
+    monkeypatch.setattr(
+        provider,
+        "_api_request",
+        lambda *a, **k: (_ for _ in ()).throw(AssertionError("retry must not provision another Stream asset")),
+    )
+
+    result = provider.ingest(
+        post_id=101,
+        source_r2_key="uploads/r2/quarantine/101/source.mp4",
+        published_ref=existing["published_reference"],
+        poster_ref=None,
+        local_file=video,
+    )
+
+    assert result["provider_asset_id"] == "stream_uid_existing"
+    assert result["status"] == "ENCODING"
+
 def test_cloudflare_stream_ready_playback_uses_signed_hls(monkeypatch):
     monkeypatch.setenv("CLOUDFLARE_STREAM_ENABLED", "1")
     monkeypatch.setenv("CLOUDFLARE_STREAM_ACCOUNT_ID", "acc_123")
