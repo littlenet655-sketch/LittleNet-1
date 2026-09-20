@@ -91,6 +91,8 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
   switch (code) {
     case 'network_unreachable':
       return 'LittleNet server is unreachable. Check your internet or local connection.';
+    case 'insecure_api_configuration':
+      return 'This LittleNet build is not connected to the secure production service. Please update the app.';
     case 'verification_offline':
       return 'Internet is required to complete verification.';
     case 'request_timeout':

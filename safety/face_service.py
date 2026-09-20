@@ -3,6 +3,17 @@ from .common import timed_call,timeout_seconds
 from database.connection import fetch_one, execute
 
 
+def _face_match_threshold() -> float:
+    """Return a deployment-tunable threshold that can only tighten the reviewed default."""
+    try:
+        configured = float(os.getenv('LITTLENET_FACE_MATCH_MAX_DISTANCE', '0.35'))
+    except ValueError:
+        configured = 0.35
+    if not math.isfinite(configured):
+        configured = 0.35
+    return max(0.10, min(configured, 0.35))
+
+
 def _validated_embedding(values):
     if not isinstance(values,(list,tuple)) or not values:raise ValueError('embedding_missing')
     if len(values) != 512: raise ValueError('invalid_embedding_dimensions')
@@ -82,7 +93,10 @@ def verify(child_id,path):
                 reason=remote.get('reason','face_error')
                 execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,distance,reason) VALUES(%s,FALSE,%s,%s,%s)',(child_id,False if reason=='liveness_failed' else None,remote.get('distance'),reason))
                 return False,reason,remote.get('distance')
-            dist=float(remote['distance']);ok=remote.get('matched') is True
+            dist=float(remote['distance'])
+            # Re-apply the authoritative server threshold locally. A remote
+            # provider may tighten it, but can never silently weaken it.
+            ok=remote.get('matched') is True and dist < _face_match_threshold()
             execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,distance,reason) VALUES(%s,%s,TRUE,%s,%s)',(child_id,ok,dist,'matched' if ok else 'not_matched'))
             return ok,'matched' if ok else 'not_matched',dist
         test=_embedding(path)
@@ -93,7 +107,7 @@ def verify(child_id,path):
     if len(ref)!=len(test):
         execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,reason) VALUES(%s,FALSE,TRUE,%s)',(child_id,'embedding_mismatch'))
         return False,'face_error',None
-    dot=sum(a*b for a,b in zip(ref,test)); nr=math.sqrt(sum(a*a for a in ref)); nt=math.sqrt(sum(b*b for b in test)); dist=1-(dot/(nr*nt+1e-9)); ok=dist<0.35
+    dot=sum(a*b for a,b in zip(ref,test)); nr=math.sqrt(sum(a*a for a in ref)); nt=math.sqrt(sum(b*b for b in test)); dist=1-(dot/(nr*nt+1e-9)); ok=dist<_face_match_threshold()
     execute('INSERT INTO face_login_attempts(child_id,success,liveness_passed,distance,reason) VALUES(%s,%s,TRUE,%s,%s)',(child_id,ok,dist,'matched' if ok else 'not_matched'))
     return ok,'matched' if ok else 'not_matched',dist
 

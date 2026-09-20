@@ -22,10 +22,7 @@ OTP_MAX_ATTEMPTS = 5
 
 def _dev_otp_enabled() -> bool:
     """Return True only for an explicit non-production development override."""
-    return (
-        not Config._PRODUCTION
-        and os.getenv("ENABLE_DEV_OTP", "0").strip() == "1"
-    )
+    return bool(Config.ENABLE_DEV_OTP and not Config._PRODUCTION)
 
 
 def _ensure_table():
@@ -166,7 +163,7 @@ def begin_parent_registration(form):
         conn.close()
 
     sent = _send_code(user_id, email, full_name, code)
-    dev_code = code if _dev_otp_enabled() else None
+    dev_code = code if Config.ENABLE_DEV_OTP and not Config._PRODUCTION else None
     return {'user_id': user_id, 'email': email, 'full_name': full_name, 'email_sent': sent, 'dev_code': dev_code}
 
 
@@ -268,7 +265,7 @@ def resend_parent_email_otp(user_id, with_code=False):
         conn.close()
 
     sent = _send_code(user_id, user['email'], user['full_name'], code)
-    dev_code = code if _dev_otp_enabled() else None
+    dev_code = code if Config.ENABLE_DEV_OTP and not Config._PRODUCTION else None
     if not sent and not dev_code:
         if os.getenv('RESEND_API_KEY'):
             err = 'Email delivery failed. Check the verified Resend sender/domain configuration and try again.'

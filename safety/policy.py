@@ -18,6 +18,14 @@ class Decision:
     reason: str
 
 
+def policy_metadata():
+    """Stable, non-sensitive provenance attached to moderation evidence."""
+    return {
+        "policy_name": str(_POLICY.get("policy_name") or "littlenet-safety"),
+        "policy_version": int(_POLICY.get("version") or 1),
+    }
+
+
 def decide(signals: dict, safety_level: str = "STRICT", adult_threshold=None):
     thresholds = _POLICY["thresholds"]
     if adult_threshold is None:
@@ -31,12 +39,15 @@ def decide(signals: dict, safety_level: str = "STRICT", adult_threshold=None):
     total_failure = bool(signals.get("total_safety_failure"))
     partial_failure = bool(signals.get("partial_safety_failure"))
 
-    if category in HARD_TEXT_CATEGORIES or signals.get("deterministic_grooming") or signals.get("deterministic_severe_abuse"):
-        reason = (
-            "grooming/coercion hard blocked"
-            if category == "GROOMING" or signals.get("deterministic_grooming")
-            else "severe abuse/threat hard blocked"
-        )
+    if category in HARD_TEXT_CATEGORIES or signals.get("deterministic_grooming") or signals.get("deterministic_severe_abuse") or signals.get("deterministic_self_harm") or signals.get("deterministic_dangerous_challenge"):
+        if category == "GROOMING" or signals.get("deterministic_grooming"):
+            reason = "grooming/coercion hard blocked"
+        elif category == "SELF_HARM" or signals.get("deterministic_self_harm"):
+            reason = "self-harm crisis language blocked and escalated"
+        elif category == "DANGEROUS_CHALLENGE" or signals.get("deterministic_dangerous_challenge"):
+            reason = "dangerous challenge instruction blocked"
+        else:
+            reason = "severe abuse/threat hard blocked"
         return Decision("BLOCK", 100.0, reason)
     if total_failure:
         return Decision("BLOCK", 100.0, "AI safety unavailable: fail closed")

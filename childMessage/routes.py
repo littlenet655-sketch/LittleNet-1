@@ -118,11 +118,17 @@ def send_text(child_id):
     if not cid:return jsonify(error='approved connection required'),403
     final_decision=d
     high_risk_triggers = ('secret',"don't tell","dont tell",'meet','photo','pic','picture','selfie','wear','wearing','private','snap','insta','telegram','phone','number','address','alone')
-    needs_contextual_eval = any(t in text.lower() for t in high_risk_triggers) or d.action == 'REVIEW'
+    recent = fetch_all("SELECT sender_child_id, message_text FROM child_messages WHERE conversation_id=%s ORDER BY sent_at DESC LIMIT 20", (cid,))
+    from safety.chat_context import contextual_chat_risk
+    context_risk = contextual_chat_risk(recent, text)
+    needs_contextual_eval = any(t in text.lower() for t in high_risk_triggers) or d.action == 'REVIEW' or context_risk['suspicious']
     from services.ai import get_ai_client
     ai_client = get_ai_client()
     if needs_contextual_eval:
-        recent = fetch_all("SELECT sender_child_id, message_text FROM child_messages WHERE conversation_id=%s ORDER BY sent_at DESC LIMIT 5", (cid,))
+        if context_risk['suspicious'] and d.action == 'ALLOW':
+            final_decision=Decision('REVIEW',50.0,'multi-turn grooming pattern requires review')
+            sig['contextual_cue_families']=context_risk['cue_families']
+            sig['contextual_reason_code']=context_risk['reason_code']
         ai_res = ai_client.evaluate_chat_safety(recent, session['user_id'], child_id, text)
         if ai_res.action == 'BLOCK':
             parent_notify(session['user_id'],'MESSAGE_BLOCKED',f"AI detected {ai_res.primary_category}",'/parent/safety/')

@@ -4,13 +4,25 @@ import assert from 'node:assert/strict';
 
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://backend.test.invalid';
 
-import { ApiError, setUnauthorizedHandler } from '../src/api/client';
+import { ApiError, productionApiUrlProblem, setUnauthorizedHandler } from '../src/api/client';
 import { answerQuiz, createChild, enrollChildFace, faceLogin, fetchQuiz, registerParent, requestPasswordReset, resendParentEmail, resetPassword, verifyParentEmail, verifyParentLiveness } from '../src/api/auth';
 
 interface SeenRequest {
   url: string;
   init: RequestInit;
 }
+
+describe('production API destination safety', () => {
+  it('accepts public HTTPS and rejects cleartext/private destinations', () => {
+    assert.equal(productionApiUrlProblem('https://api.littlenet.example'), null);
+    assert.equal(productionApiUrlProblem('http://api.littlenet.example'), 'https_required');
+    assert.equal(productionApiUrlProblem('https://192.168.0.8:5000'), 'private_host');
+    assert.equal(productionApiUrlProblem('https://10.0.0.2'), 'private_host');
+    assert.equal(productionApiUrlProblem('https://172.20.0.2'), 'private_host');
+    assert.equal(productionApiUrlProblem('not a url'), 'invalid');
+    assert.equal(productionApiUrlProblem(''), 'missing');
+  });
+});
 
 let seen: SeenRequest[] = [];
 let nextPayload: unknown = { ok: true };

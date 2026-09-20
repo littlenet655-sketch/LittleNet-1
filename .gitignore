@@ -25,6 +25,7 @@ scratch/
 .neon
 node_modules/
 mobile_app/.expo/
+mobile_app/android/
 mobile_app/dist/
 mobile_app/test-dist/
 mobile_app/.env

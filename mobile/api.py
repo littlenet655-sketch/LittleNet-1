@@ -178,12 +178,15 @@ def _mobile_token_revoked(token: str) -> bool:
     from database.connection import fetch_one as db_fetch_one
 
     thash = hashlib.sha256(token.encode()).hexdigest()
-    return bool(
-        db_fetch_one(
-            "SELECT 1 FROM mobile_token_revocations WHERE token_hash=%s",
-            (thash,),
+    try:
+        return bool(
+            db_fetch_one(
+                "SELECT 1 FROM mobile_token_revocations WHERE token_hash=%s",
+                (thash,),
+            )
         )
-    )
+    except Exception:
+        return False
 
 
 def _require_mobile(*roles):
@@ -1398,11 +1401,17 @@ def register_mobile_api(bp):
             return jsonify(blocked=True, error="message_blocked", reason=local_decision.reason), 400
         final_decision = local_decision
         triggers = ("secret", "don't tell", "dont tell", "meet", "photo", "selfie", "private", "snap", "insta", "telegram", "phone", "number", "address", "alone")
-        if local_decision.action == "REVIEW" or any(t in text.lower() for t in triggers):
+        recent = fetch_all("SELECT sender_child_id,message_text FROM child_messages WHERE conversation_id=%s ORDER BY sent_at DESC LIMIT 20", (cid,))
+        from safety.chat_context import contextual_chat_risk
+        context_risk = contextual_chat_risk(recent, text)
+        if local_decision.action == "REVIEW" or any(t in text.lower() for t in triggers) or context_risk["suspicious"]:
+            if context_risk["suspicious"] and local_decision.action == "ALLOW":
+                final_decision = Decision("REVIEW", 50.0, "multi-turn grooming pattern requires review")
+                signals["contextual_cue_families"] = context_risk["cue_families"]
+                signals["contextual_reason_code"] = context_risk["reason_code"]
             try:
                 from services.ai import get_ai_client
 
-                recent = fetch_all("SELECT sender_child_id,message_text FROM child_messages WHERE conversation_id=%s ORDER BY sent_at DESC LIMIT 5", (cid,))
                 ai = get_ai_client().evaluate_chat_safety(recent, uid, peer_id, text)
                 if ai.action == "BLOCK":
                     parent_notify(uid, "MESSAGE_BLOCKED", f"AI detected {ai.primary_category}", "/parent/safety/")
@@ -2475,21 +2484,52 @@ def register_mobile_api(bp):
         kids = children(pid)
         for child in kids:
             cid = int(child["user_id"])
-            child["minutes_today"] = minutes_today(cid)
-            child["limit"] = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (cid,))
-            child["safety"] = fetch_one("SELECT safety_level FROM parent_safety_settings WHERE child_id=%s", (cid,)) or {"safety_level": "STRICT"}
-            child["open_reviews"] = (fetch_one("SELECT COUNT(*) n FROM moderation_events WHERE child_id=%s AND decision='REVIEW' AND status='OPEN'", (cid,)) or {"n": 0})["n"]
-            child["controls"] = controls_for_child(cid)
-            child["presence"] = online_state(cid)
-            child["behavior"] = behavior_summary(cid)
-            quiz = fetch_one("SELECT COUNT(*) attempted,COUNT(*) FILTER (WHERE is_correct) correct FROM child_quiz_attempts WHERE child_id=%s AND attempted_at>=NOW()-INTERVAL '7 days'", (cid,)) or {"attempted": 0, "correct": 0}
-            attempted = int(quiz.get("attempted") or 0)
-            correct = int(quiz.get("correct") or 0)
-            child["quiz_7d"] = {"attempted": attempted, "correct": correct, "accuracy": round(correct * 100 / attempted) if attempted else 0}
+            try:
+                child["minutes_today"] = minutes_today(cid)
+            except Exception:
+                child["minutes_today"] = 0
+            try:
+                child["limit"] = fetch_one("SELECT * FROM child_time_limits WHERE child_id=%s", (cid,))
+            except Exception:
+                child["limit"] = None
+            try:
+                child["safety"] = fetch_one("SELECT safety_level FROM parent_safety_settings WHERE child_id=%s", (cid,)) or {"safety_level": "STRICT"}
+            except Exception:
+                child["safety"] = {"safety_level": "STRICT"}
+            try:
+                child["open_reviews"] = (fetch_one("SELECT COUNT(*) n FROM moderation_events WHERE child_id=%s AND decision='REVIEW' AND status='OPEN'", (cid,)) or {"n": 0})["n"]
+            except Exception:
+                child["open_reviews"] = 0
+            try:
+                child["controls"] = controls_for_child(cid)
+            except Exception:
+                child["controls"] = {}
+            try:
+                child["presence"] = online_state(cid)
+            except Exception:
+                child["presence"] = {"online": False}
+            try:
+                child["behavior"] = behavior_summary(cid)
+            except Exception:
+                child["behavior"] = {"level": "STABLE", "trend": "stable", "reasons": []}
+            try:
+                quiz = fetch_one("SELECT COUNT(*) attempted,COUNT(*) FILTER (WHERE is_correct) correct FROM child_quiz_attempts WHERE child_id=%s AND attempted_at>=NOW()-INTERVAL '7 days'", (cid,)) or {"attempted": 0, "correct": 0}
+                attempted = int(quiz.get("attempted") or 0)
+                correct = int(quiz.get("correct") or 0)
+                child["quiz_7d"] = {"attempted": attempted, "correct": correct, "accuracy": round(correct * 100 / attempted) if attempted else 0}
+            except Exception:
+                child["quiz_7d"] = {"attempted": 0, "correct": 0, "accuracy": 0}
             if child.get("profile_picture"):
                 child["avatar_url"] = _asset_url(child.get("profile_picture"))
-        unread = (fetch_one("SELECT COUNT(*) n FROM parent_notifications WHERE parent_id=%s AND is_read=FALSE", (pid,)) or {"n": 0})["n"]
-        return jsonify(ok=True, children=_clean(kids), unread=unread, pending=_clean(pending_follows(pid)))
+        try:
+            unread = (fetch_one("SELECT COUNT(*) n FROM parent_notifications WHERE parent_id=%s AND is_read=FALSE", (pid,)) or {"n": 0})["n"]
+        except Exception:
+            unread = 0
+        try:
+            pending = pending_follows(pid)
+        except Exception:
+            pending = []
+        return jsonify(ok=True, children=_clean(kids), unread=unread, pending=_clean(pending))
 
     @bp.route("/api/mobile/v1/parent/children", methods=["POST"])
     @csrf.exempt

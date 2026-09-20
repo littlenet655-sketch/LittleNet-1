@@ -8,6 +8,9 @@ load_dotenv()
 class Config:
     BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:5000")
     _PRODUCTION = BASE_URL.startswith("https://")
+    ENABLE_DEV_OTP = os.getenv("ENABLE_DEV_OTP", "0").strip().lower() in {"1", "true", "yes", "on"}
+    if _PRODUCTION and ENABLE_DEV_OTP:
+        raise RuntimeError("ENABLE_DEV_OTP must never be enabled in production")
 
     # Never use a publicly known Flask signing key. Local development may use an
     # ephemeral key, but any HTTPS deployment must provide a stable secret.

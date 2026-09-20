@@ -7,6 +7,29 @@ export function apiBaseUrl(): string {
   return (process.env.EXPO_PUBLIC_API_BASE_URL ?? '').replace(/\/+$/, '');
 }
 
+/** Public releases must never transmit family data to local/private or cleartext endpoints. */
+export function productionApiUrlProblem(raw: string): string | null {
+  const value = raw.trim();
+  if (!value) return 'missing';
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    return 'invalid';
+  }
+  if (parsed.protocol !== 'https:') return 'https_required';
+  const host = parsed.hostname.toLowerCase();
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return 'private_host';
+  if (/^10\./.test(host) || /^192\.168\./.test(host)) return 'private_host';
+  const match = host.match(/^172\.(\d+)\./);
+  if (match && Number(match[1]) >= 16 && Number(match[1]) <= 31) return 'private_host';
+  return null;
+}
+
+function isDevelopmentRuntime(): boolean {
+  return (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ === true;
+}
+
 /** Kept for components that only need to know whether a backend is configured. */
 export const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL ?? '';
 
@@ -124,6 +147,12 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}, 
   const baseUrl = apiBaseUrl();
   if (!baseUrl) {
     throw new ApiError(0, 'misconfigured', 'The app is not pointed at a LittleNet backend.');
+  }
+  if (!isDevelopmentRuntime()) {
+    const problem = productionApiUrlProblem(baseUrl);
+    if (problem) {
+      throw new ApiError(0, 'insecure_api_configuration', 'This LittleNet build is not connected to the secure production service. Please update the app.');
+    }
   }
   const method = (options.method ?? 'GET').toUpperCase();
   const timeoutMs = options.timeoutMs ?? REQUEST_TIMEOUT_MS;

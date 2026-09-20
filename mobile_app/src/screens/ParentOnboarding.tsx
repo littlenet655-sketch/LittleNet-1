@@ -17,7 +17,7 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [dob, setDob] = useState('');
-  const [guardianAgreed, setGuardianAgreed] = useState(true);
+  const [guardianAgreed, setGuardianAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [keyboardHeight, setKeyboardHeight] = useState(0);
@@ -67,7 +67,10 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
       navigation.navigate('OtpVerify', {
         pendingToken: response.pending_token,
         emailSent: response.email_sent,
-        devCode: response.dev_code,
+        // A release client never consumes an OTP returned by an API, even if a
+        // server is accidentally misconfigured. Explicit dev builds retain the
+        // local-only escape hatch for isolated testing.
+        devCode: __DEV__ ? response.dev_code : undefined,
       });
     } catch (err) {
       setError(errorText(err));
@@ -276,7 +279,7 @@ export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerif
     setError('');
     try {
       const response = await resendParentEmail(pendingToken);
-      if (response.dev_code) {
+      if (__DEV__ && response.dev_code) {
         setOtp(response.dev_code);
         setInfo(`Verification code: ${response.dev_code} (expires in 10 minutes)`);
       } else {

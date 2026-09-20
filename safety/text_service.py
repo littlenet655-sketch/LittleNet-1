@@ -31,6 +31,16 @@ SEVERE_ABUSE_TERMS={
     'you deserve to die','go kill yourself','hurt yourself','cut yourself','hang yourself',
     'i will find you','i know where you live','i will come to your house'
 }
+SELF_HARM_TERMS={
+    'i want to kill myself','i am going to kill myself','i will kill myself',
+    'i want to die','i do not want to live','i dont want to live','end my life',
+    'how do i kill myself','ways to kill myself','help me commit suicide',
+}
+DANGEROUS_CHALLENGE_TERMS={
+    'choking game','blackout challenge','pass out challenge','fire challenge',
+    'hold your breath until you pass out','make yourself pass out',
+    'swallow detergent','eat a tide pod','set yourself on fire',
+}
 GROOMING_PATTERNS=(
     r"\bdon'?t tell (?:your )?(?:mom|mum|mother|dad|father|parents?)\b",
     r"\bkeep (?:this|it) (?:a )?secret\b",
@@ -58,6 +68,13 @@ def _normalized_text(text):
     value=re.sub(r'(.)\1{2,}',r'\1\1',value)
     value=re.sub(r'[^\w\s+\']+',' ',value,flags=re.UNICODE)
     value=re.sub(r'\s+',' ',value).strip()
+    # Collapse four-or-more deliberately spaced letters ("n u d e s") while
+    # leaving ordinary short phrases such as "i am ok" unchanged.
+    value=re.sub(
+        r'(?<!\w)(?:[a-z]\s+){3,}[a-z](?!\w)',
+        lambda match: re.sub(r'\s+','',match.group(0)),
+        value,
+    )
     return value
 
 
@@ -125,10 +142,17 @@ def check_text(text:str):
     from .remote_client import enabled,moderate_text
     text=(text or '').strip();low=_normalized_text(text)
 
-    adult=1.0 if any(t in low for t in ADULT_TERMS) or any(re.search(p,low) for p in ADULT_PATTERNS) else 0.0
+    compact=low.replace(' ','')
+    adult=1.0 if (
+        any(t in low for t in ADULT_TERMS)
+        or any(t.replace(' ','') in compact for t in ADULT_TERMS if ' ' in t)
+        or any(re.search(p,low) for p in ADULT_PATTERNS)
+    ) else 0.0
     profanity=1.0 if any(re.search(r'\b'+re.escape(t)+r'\b',low) for t in PROFANE) else 0.0
     bullying=.90 if any(t in low for t in BULLYING_TERMS) else 0.0
     severe=1.0 if any(t in low for t in SEVERE_ABUSE_TERMS) else 0.0
+    self_harm=1.0 if any(t in low for t in SELF_HARM_TERMS) else 0.0
+    dangerous_challenge=1.0 if any(t in low for t in DANGEROUS_CHALLENGE_TERMS) else 0.0
     grooming=1.0 if any(re.search(p,low) for p in GROOMING_PATTERNS) else 0.0
     remote_failed=False
 
@@ -137,20 +161,24 @@ def check_text(text:str):
             remote=normalize_signals(moderate_text(text),category='TEXT')
             remote['adult_score']=max(float(remote.get('adult_score',0)),adult)
             remote['sexual_score']=max(float(remote.get('sexual_score',0)),adult)
-            remote['toxicity_score']=max(float(remote.get('toxicity_score',0)),profanity,bullying,severe,grooming)
+            remote['toxicity_score']=max(float(remote.get('toxicity_score',0)),profanity,bullying,severe,self_harm,dangerous_challenge,grooming)
             remote['general_score']=max(float(remote.get('general_score',0)),remote['adult_score'],remote['toxicity_score'])
             if grooming:remote['category']='GROOMING'
+            elif self_harm:remote['category']='SELF_HARM'
+            elif dangerous_challenge:remote['category']='DANGEROUS_CHALLENGE'
             elif severe:remote['category']='SEVERE_ABUSE'
             elif adult:remote['category']='SEXUAL_LANGUAGE'
             elif bullying:remote['category']='CYBERBULLYING'
             remote['deterministic_grooming']=bool(grooming)
             remote['deterministic_severe_abuse']=bool(severe)
+            remote['deterministic_self_harm']=bool(self_harm)
+            remote['deterministic_dangerous_challenge']=bool(dangerous_challenge)
             remote['deterministic_sexual']=bool(adult)
             return normalize_signals(remote,category='TEXT')
         except Exception:
             remote_failed=True
 
-    toxicity=max(profanity,bullying,severe,grooming);sexual=adult;ran=0
+    toxicity=max(profanity,bullying,severe,self_harm,dangerous_challenge,grooming);sexual=adult;ran=0
     errors=['remote_ai_unavailable'] if remote_failed else []
     extras={}
     if text:
@@ -172,16 +200,20 @@ def check_text(text:str):
             except Exception as exc:errors.append('text_classifier_timeout' if 'timeout' in str(exc).lower() else 'text_classifier')
 
     if grooming:category='GROOMING'
+    elif self_harm:category='SELF_HARM'
+    elif dangerous_challenge:category='DANGEROUS_CHALLENGE'
     elif severe:category='SEVERE_ABUSE'
     elif sexual>=.4:category='SEXUAL_LANGUAGE'
     elif bullying>=.6:category='CYBERBULLYING'
     else:category='TEXT'
 
-    deterministic=adult>0 or bullying>0 or profanity>0 or severe>0 or grooming>0
+    deterministic=adult>0 or bullying>0 or profanity>0 or severe>0 or self_harm>0 or dangerous_challenge>0 or grooming>0
     result={
         'adult_score':sexual,'sexual_score':sexual,'violence_score':severe,'weapon_score':0,
         'toxicity_score':toxicity,'general_score':max(sexual,toxicity,severe),'category':category,
         'deterministic_grooming':bool(grooming),'deterministic_severe_abuse':bool(severe),
+        'deterministic_self_harm':bool(self_harm),
+        'deterministic_dangerous_challenge':bool(dangerous_challenge),
         'deterministic_sexual':bool(adult),
         'total_safety_failure':bool(text) and ran==0 and not deterministic,
         'partial_safety_failure':bool(text) and bool(errors) and (ran>0 or deterministic),

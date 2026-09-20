@@ -1,7 +1,7 @@
 import json
 from database.connection import execute, fetch_one
 from .common import normalize_signals
-from .policy import decide, Decision
+from .policy import decide, Decision, policy_metadata
 from .text_service import check_text
 from .visual_service import check_image
 from .video_service import check_video
@@ -36,6 +36,10 @@ def evaluate(child_id,content_type,payload,adult_threshold=.40):
 
 def record(child_id,content_type,content_id,signals,decision):
     signals=normalize_signals(signals,category=content_type)
+    # Persist policy provenance with the evidence so later review and incident
+    # analysis can reproduce which rules made the decision.
+    for key,value in policy_metadata().items():
+        signals.setdefault(key,value)
     status='OPEN' if decision.action=='REVIEW' else 'RESOLVED'
     return execute('''INSERT INTO moderation_events(child_id,content_type,content_id,risk_score,adult_score,violence_score,weapon_score,toxicity_score,decision,reason,signals,status) VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s) RETURNING event_id''',(
         child_id,content_type,content_id,decision.risk,float(signals.get('adult_score',0))*100,float(signals.get('violence_score',0))*100,float(signals.get('weapon_score',0))*100,float(signals.get('toxicity_score',0))*100,decision.action,decision.reason,json.dumps(signals),status),returning=True)['event_id']

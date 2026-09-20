@@ -20,6 +20,8 @@ thresholds:
 hard_text_categories:
   - GROOMING
   - SEVERE_ABUSE
+  - SELF_HARM
+  - DANGEROUS_CHALLENGE
 
 adult_categories:
   - ADULT
