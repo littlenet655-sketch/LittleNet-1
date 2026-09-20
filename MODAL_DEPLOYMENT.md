@@ -70,11 +70,12 @@ sender is not an acceptable fallback.
 
 ```text
 RESEND_API_KEY
+RESEND_WEBHOOK_SECRET
 RESEND_FROM_EMAIL
 RESEND_FROM_NAME
 ```
 
-The sender must be a domain-verified LittleNet address. LittleNet deliberately does not fall back to a sandbox sender, SMTP, or demo delivery because parent OTP success must prove real inbox delivery.
+The sender must be a domain-verified LittleNet address. Configure a Resend webhook for `https://<public-littlenet-web-url>/webhooks/resend` and subscribe to delivery, bounce, failed, suppressed and complaint events. `RESEND_WEBHOOK_SECRET` must be the signing secret for that webhook. LittleNet deliberately does not fall back to a sandbox sender, SMTP, or demo delivery because parent OTP success must prove real inbox delivery.
 
 
 A complete example is:
@@ -95,6 +96,7 @@ modal secret create littlenet-web-secrets \
 ```bash
 modal secret create littlenet-email --force \
   RESEND_API_KEY="<resend-api-key>" \
+  RESEND_WEBHOOK_SECRET="<resend-webhook-signing-secret>" \
   RESEND_FROM_EMAIL="no-reply@littlenet.in" \
   RESEND_FROM_NAME="LittleNet"
 ```
