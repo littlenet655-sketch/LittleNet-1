@@ -124,6 +124,23 @@ def test_empty_social_graph_returns_curated_content(monkeypatch):
     assert all_candidates[0]["source_type"] == "CURATED"
 
 
+def test_legacy_missing_media_is_not_rendered_as_a_broken_feed_tile(monkeypatch):
+    import services.curated_feed as cf
+
+    valid=normalize_social_item(_dummy_social_row(1))
+    assert cf._social_media_renderable(valid) is True
+
+    missing=normalize_social_item({**_dummy_social_row(2), "media_path": "uploads/legacy/missing.jpg"})
+    monkeypatch.setattr(cf.os.path, "exists", lambda path: False)
+    assert cf._social_media_renderable(missing) is False
+
+    stale=normalize_social_item({**_dummy_social_row(3), "media_path": "posts/clean.jpg"})
+    assert cf._social_media_renderable(stale) is False
+
+    text_post=normalize_social_item({**_dummy_social_row(4), "media_type": "TEXT", "media_path": None})
+    assert cf._social_media_renderable(text_post) is True
+
+
 def test_social_and_curated_merge(monkeypatch):
     """When both social and curated items exist, they are merged in a balanced feed."""
     social_items = [normalize_social_item(_dummy_social_row(1)), normalize_social_item(_dummy_social_row(2))]

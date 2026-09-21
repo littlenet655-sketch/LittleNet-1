@@ -128,6 +128,21 @@ def normalize_social_item(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _social_media_renderable(item: dict[str, Any]) -> bool:
+    """Keep legacy/missing media rows out of mobile feeds instead of rendering broken tiles."""
+    media_type=str(item.get("media_type") or "TEXT").upper()
+    if media_type == "TEXT":
+        return True
+    ref=str(item.get("media_reference") or "").strip()
+    if not ref:
+        return False
+    if ref.startswith(("https://","http://","uploads/r2/","static/")):
+        return True
+    if ref.startswith("uploads/"):
+        return os.path.exists(ref)
+    return False
+
+
 def fetch_curated_candidates(child_id: int, surface: str = "FEED", limit: int = 60) -> list[dict[str, Any]]:
     """Retrieve verified safe curated content with database-level safety gates."""
     cats = effective_categories(child_id)
@@ -198,7 +213,8 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
                LIMIT %s""",
              (child_id, child_id, allowed_child_ids, cats, age_grp, age_grp, child_id, child_id, child_id, child_id, limit),
         )
-        return [normalize_social_item(r) for r in rows]
+        normalized=[normalize_social_item(r) for r in rows]
+        return [item for item in normalized if _social_media_renderable(item)]
     rows = fetch_all(
         """SELECT p.*, u.full_name, cp.profile_picture,
              (SELECT COUNT(*) FROM likes l WHERE l.post_id = p.post_id) AS likes,
@@ -223,7 +239,8 @@ def fetch_social_candidates(child_id: int, surface: str = "FEED", limit: int = 6
         (child_id, child_id, allowed_child_ids, allowed_child_ids, cats, age_grp, age_grp,
          child_id, child_id, child_id, child_id, limit),
     )
-    return [normalize_social_item(r) for r in rows]
+    normalized=[normalize_social_item(r) for r in rows]
+    return [item for item in normalized if _social_media_renderable(item)]
 
 
 def get_recent_impression_keys(child_id: int, surface: str, hours: int = 2) -> set[tuple[str, int]]:

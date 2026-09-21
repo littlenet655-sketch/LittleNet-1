@@ -89,6 +89,8 @@ def _install_fake_deepface(monkeypatch, faces, age):
         def extract_faces(**kwargs):return faces
         @staticmethod
         def analyze(**kwargs):return [{'age':age}]
+        @staticmethod
+        def represent(**kwargs):return [{'embedding':[0.01]*512}]
     module=types.ModuleType('deepface')
     module.DeepFace=FakeDeepFace
     monkeypatch.setitem(sys.modules,'deepface',module)
@@ -103,12 +105,33 @@ def test_mobile_guardian_verification_preserves_actionable_failure_reasons():
     assert 'error="age_verification_unavailable"' in block
 
 
+def test_mobile_guardian_reuses_verified_embedding_before_fallback_inference():
+    src=(Path(__file__).parents[1]/'mobile/api.py').read_text(encoding='utf-8')
+    block=src[src.index('def mobile_parent_verify_liveness'):src.index('@bp.route("/api/mobile/v1/me")')]
+    assert 'verified_embedding = result.get("embedding")' in block
+    assert 'store_embedding(int(pending["uid"]), verified_embedding)' in block
+    assert block.index('store_embedding(int(pending["uid"]), verified_embedding)') < block.index('enroll(int(pending["uid"]), path)')
+
+
 def test_mobile_guardian_does_not_create_empty_biometric_profile():
     src=(Path(__file__).parents[1]/'mobile/api.py').read_text(encoding='utf-8')
     block=src[src.index('def mobile_parent_verify_liveness'):src.index('@bp.route("/api/mobile/v1/me")')]
     assert "'LocalBiometricV1'" not in block
     assert "'[]'::jsonb" not in block
     assert "model_name='Facenet512'" in block
+
+
+def test_guardian_adult_result_reuses_same_verified_selfie_for_embedding(monkeypatch):
+    import safety.remote_client as remote
+    from safety.face_service import verify_adult_face
+
+    monkeypatch.setattr(remote,'enabled',lambda:False)
+    monkeypatch.delenv('GEMINI_API_KEY',raising=False)
+    monkeypatch.delenv('GOOGLE_API_KEY',raising=False)
+    _install_fake_deepface(monkeypatch,[{'is_real':True}],30)
+    result=verify_adult_face('synthetic.jpg')
+    assert result['is_adult'] is True
+    assert len(result['embedding']) == 512
 
 
 def test_guardian_empty_face_evidence_cannot_pass(monkeypatch):
