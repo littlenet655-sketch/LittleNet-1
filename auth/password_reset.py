@@ -20,6 +20,10 @@ from mailg.send_email import send_email
 
 OTP_TTL_MINUTES = 15
 OTP_MAX_ATTEMPTS = 5
+# Minimum seconds between issuing a new reset code for the same user.
+# Stops rapid re-requests from churning the victim's active code and from
+# email-bombing the recipient. The response stays uniform either way.
+RESET_RESEND_COOLDOWN_SECONDS = 60
 
 # Uniform anti-enumeration response for password-reset requests. Returned
 # whether or not an account matched (and whether or not a code was sent),
@@ -123,6 +127,22 @@ def request_password_reset(identifier: str):
         # No usable email: uniform response, no code sent. The distinct
         # "no parent email" / "no valid email" messages used to confirm the
         # account exists.
+        return True, UNIFORM_RESET_MESSAGE, None
+
+    # Resend cooldown: if a live (unexpired) code was issued within the
+    # cooldown window, do not churn it and do not send another email.
+    # Uniform response, so this reveals nothing about the account.
+    recent = fetch_one(
+        """
+        SELECT 1 FROM password_reset_otps
+        WHERE user_id = %s
+          AND expires_at > NOW()
+          AND sent_at > NOW() - make_interval(secs => %s)
+        LIMIT 1
+        """,
+        (user["user_id"], RESET_RESEND_COOLDOWN_SECONDS),
+    )
+    if recent:
         return True, UNIFORM_RESET_MESSAGE, None
 
     code = f"{secrets.randbelow(1_000_000):06d}"
