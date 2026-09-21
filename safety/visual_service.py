@@ -80,6 +80,204 @@ def _extra_hf_nsfw(path):
     return score
 
 
+# ---------------------------------------------------------------------------
+# OCR for burned-in text (phone numbers, handles, URLs) in images.
+#
+# OCR is an optional, bounded enhancement: it is OFF unless
+# LITTLENET_ENABLE_OCR=1. When enabled, extracted text is routed through the
+# SAME text + PII policy as user-typed text (check_text + scan_pii); no policy
+# logic is duplicated here. OCR evidence can only strengthen the visual
+# decision: scores merge by max, hard-block text flags propagate, and any OCR
+# failure becomes partial safety evidence (REVIEW at most), never a bypass.
+#
+# No OCR dependency ships in requirements-*.txt. Enabling OCR requires
+# installing one backend package (see docs/IMAGE_OCR_SAFETY.md). When the flag
+# is on but no backend is importable the stage degrades gracefully, logs once,
+# and records 'ocr_unavailable' as partial safety evidence (fail closed).
+# ---------------------------------------------------------------------------
+
+class _OCRUnavailable(RuntimeError):
+    pass
+
+
+_OCR_READER = None           # cached backend reader callable: path -> str
+_OCR_BACKEND_NAME = None
+_OCR_BACKEND_MISSING = False
+_OCR_UNAVAILABLE_LOGGED = False
+
+
+def _rapidocr_reader():
+    from rapidocr_onnxruntime import RapidOCR
+    engine = RapidOCR()
+
+    def read(path):
+        out = engine(path)
+        rows = out[0] if isinstance(out, tuple) else out
+        parts = []
+        for row in rows or []:
+            try:
+                parts.append(str(row[1]))
+            except Exception:
+                continue
+        return ' '.join(parts)
+
+    return read
+
+
+def _easyocr_reader():
+    import easyocr
+    reader = easyocr.Reader(['en'], gpu=False)
+
+    def read(path):
+        return ' '.join(str(row[1]) for row in (reader.readtext(path) or []))
+
+    return read
+
+
+def _pytesseract_reader():
+    import pytesseract
+    from PIL import Image
+
+    def read(path):
+        with Image.open(path) as img:
+            return pytesseract.image_to_string(img.convert('RGB'))
+
+    return read
+
+
+def _load_ocr_backend():
+    """Return a cached ``read_text(path) -> str`` callable.
+
+    Guarded optional import: raises ``_OCRUnavailable`` when no supported OCR
+    backend is installed, instead of silently pretending OCR works.
+    """
+    global _OCR_READER, _OCR_BACKEND_NAME, _OCR_BACKEND_MISSING
+    if _OCR_READER is not None:
+        return _OCR_READER
+    if _OCR_BACKEND_MISSING:
+        raise _OCRUnavailable('no_ocr_backend')
+    last_error = None
+    for name, factory in (('rapidocr', _rapidocr_reader),
+                          ('easyocr', _easyocr_reader),
+                          ('pytesseract', _pytesseract_reader)):
+        try:
+            _OCR_READER = factory()
+            _OCR_BACKEND_NAME = name
+            return _OCR_READER
+        except Exception as exc:
+            last_error = exc
+    _OCR_BACKEND_MISSING = True
+    raise _OCRUnavailable(
+        f'no_ocr_backend: {type(last_error).__name__}' if last_error else 'no_ocr_backend'
+    )
+
+
+def _downscale_for_ocr(path, max_px=1024):
+    """Bounded OCR input: downscale to a temp PNG so OCR stays fast."""
+    from PIL import Image
+    fd, tmp = tempfile.mkstemp(prefix='littlenet_ocr_', suffix='.png')
+    os.close(fd)
+    try:
+        with Image.open(path) as img:
+            work = img.convert('RGB')
+            work.thumbnail((max_px, max_px))
+            work.save(tmp, format='PNG')
+    except Exception:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+    return tmp
+
+
+def _ocr_extract_text(path):
+    """Extract burned-in text, bounded by downscale + timeout.
+
+    Returns ``(text, error_code)``; ``error_code`` is None on success (even
+    when no text is found). Never raises: failures are reported as codes so
+    the caller records partial safety evidence instead of bypassing.
+    """
+    global _OCR_UNAVAILABLE_LOGGED
+    try:
+        read = _load_ocr_backend()
+    except _OCRUnavailable:
+        if not _OCR_UNAVAILABLE_LOGGED:
+            _OCR_UNAVAILABLE_LOGGED = True
+            print('[littlenet-safety] LITTLENET_ENABLE_OCR=1 but no OCR backend is installed; '
+                  'burned-in text screening is inactive. Install easyocr, rapidocr-onnxruntime, '
+                  'or pytesseract (+ tesseract binary) to enable it.')
+        return None, 'ocr_unavailable'
+    tmp = None
+    try:
+        tmp = _downscale_for_ocr(path)
+        text = timed_call('ocr', lambda: read(tmp), timeout_seconds('ocr', 30))
+    except Exception as exc:
+        code = 'ocr_timeout' if 'timeout' in str(exc).lower() else 'ocr_failed'
+        return None, code
+    finally:
+        if tmp:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    text = (text or '').strip()
+    return (text or None), None
+
+
+def _apply_ocr_evidence(result, ocr_text):
+    """Fold OCR-extracted text into image signals through the shared policy.
+
+    Routes ``ocr_text`` through the SAME ``check_text`` + PII policy used for
+    user-typed text. Visual evidence is never weakened: scores merge by max,
+    deterministic hard-block text flags propagate, and burned-in contact/PII
+    (scan_pii policy_action BLOCK) sets ``deterministic_ocr_pii`` so
+    ``policy.decide`` hard-blocks. OCR text that cannot be moderated (text
+    models unavailable, no deterministic hits) is partial safety evidence
+    only: it can push the image to REVIEW, never to ALLOW, and never escalates
+    the image to a total safety failure.
+    """
+    from .pii_service import scan_pii
+    from .text_service import check_text
+
+    text = (ocr_text or '').strip()
+    if not text:
+        return result
+    ocr_signals = check_text(text)
+    pii = scan_pii(text)
+
+    for key in ('adult_score', 'sexual_score', 'violence_score', 'weapon_score',
+                'toxicity_score', 'general_score'):
+        result[key] = max(float(result.get(key, 0) or 0),
+                          float(ocr_signals.get(key, 0) or 0))
+    for flag in ('deterministic_grooming', 'deterministic_severe_abuse',
+                 'deterministic_self_harm', 'deterministic_dangerous_challenge',
+                 'deterministic_sexual'):
+        if ocr_signals.get(flag):
+            result[flag] = True
+
+    errors = list(result.get('errors') or [])
+    errors.append('ocr_text_present')
+    if pii.get('detected'):
+        errors.append('ocr_pii_detected:' + ','.join(pii.get('categories', []) or []))
+    if pii.get('detected') and pii.get('policy_action') == 'BLOCK':
+        # Burned-in contact/PII sharing: honored as a hard block by policy.decide.
+        result['deterministic_ocr_pii'] = True
+        errors.append('ocr_pii_block')
+    if ocr_signals.get('total_safety_failure'):
+        # OCR text extracted but text models unavailable and no deterministic
+        # hits: partial evidence (REVIEW at most), never a bypass, never an
+        # escalation of the image to a total failure.
+        errors.append('ocr_text_unmoderated')
+        result['partial_safety_failure'] = True
+    if ocr_signals.get('partial_safety_failure'):
+        result['partial_safety_failure'] = True
+    result['errors'] = errors
+    # Store the redacted form only, so raw PII is not persisted in evidence.
+    result['ocr_redacted_text'] = str(pii.get('redacted_text') or '')[:500]
+    return result
+
+
 def _yolo_objects(path):
     """Run the bundled YOLO model and return dangerous-object evidence."""
     global _YOLO
@@ -108,7 +306,13 @@ def _yolo_objects(path):
     return {'weapon':max(weapon_score,danger_score),'danger':danger_score,'detections':detections[:25]}
 
 
-def check_image(path):
+def check_image(path, *, ocr=None):
+    """Moderate an image through the local visual stack plus optional OCR.
+
+    ``ocr``: None (default) honors LITTLENET_ENABLE_OCR; True/False forces the
+    OCR stage on/off. Video frame samplers pass False unless
+    LITTLENET_ENABLE_OCR_VIDEO_FRAMES=1 so per-frame OCR stays bounded.
+    """
     # Prefer the scale-to-zero CPU tier for all web-side image moderation,
     # including the legacy/Jinja upload path. Inside an AI worker this client is
     # disabled, so local model execution continues without recursion.
@@ -181,6 +385,20 @@ def check_image(path):
             s=float(timed_call('extra_nsfw',lambda:_extra_hf_nsfw(path),timeout_seconds('extra_nsfw',90)));ran+=1;adult=max(adult,s);sexual=max(sexual,s);details['extra_nsfw']=s
         except Exception as exc:errors.append('extra_nsfw_timeout' if 'timeout' in str(exc) else 'extra_nsfw')
     result={'adult_score':adult,'sexual_score':sexual,'violence_score':violence,'weapon_score':weapon,'toxicity_score':0,'general_score':max(general,adult,sexual,violence,weapon),'category':'ADULT' if max(adult,sexual)>=.4 else ('WEAPON' if weapon>=.45 else 'IMAGE'),'total_safety_failure':ran==0,'partial_safety_failure':ran>0 and bool(errors),'errors':errors,'model_signals':details}
+    if ocr is None:
+        ocr = env_flag('LITTLENET_ENABLE_OCR')
+    if ocr:
+        # Burned-in text screening. OCR evidence can only strengthen the
+        # visual decision; OCR failure is partial safety evidence, never a
+        # bypass of the visual models above.
+        ocr_text, ocr_error = _ocr_extract_text(path)
+        if ocr_error:
+            result['errors'].append(ocr_error)
+        elif ocr_text:
+            details['ocr'] = {'backend': _OCR_BACKEND_NAME, 'text_chars': len(ocr_text)}
+            _apply_ocr_evidence(result, ocr_text)
+        if ran > 0 and result['errors']:
+            result['partial_safety_failure'] = True
     return normalize_signals(result,category='IMAGE')
 
 
@@ -249,7 +467,9 @@ def _video_frames(path,max_frames):
         if not good:continue
         fd,tmp=tempfile.mkstemp(suffix='.jpg');os.close(fd);cv2.imwrite(tmp,frame)
         try:
-            signals=check_image(tmp);outs.append(signals)
+            # Frame OCR stays off unless explicitly enabled: per-frame OCR on
+            # up to 60 frames would otherwise blow the moderation time budget.
+            signals=check_image(tmp,ocr=env_flag('LITTLENET_ENABLE_OCR_VIDEO_FRAMES'));outs.append(signals)
             if decide(signals).action=='BLOCK':break
         finally:
             try:os.unlink(tmp)

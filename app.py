@@ -72,13 +72,13 @@ def create_app():
         except (TypeError,ValueError):
             return None
         if not post_id:return None
-        sql='SELECT media_path,story_music_path FROM posts WHERE post_id=%s AND child_id=%s'
+        sql='SELECT media_path,poster_path,story_music_path FROM posts WHERE post_id=%s AND child_id=%s'
         params=(post_id,session['user_id'])
         if story_only:sql+=" AND is_story=TRUE"
         row=fetch_one(sql,params)
         if not row:return None
         refs=[]
-        for ref in (row.get('media_path'),row.get('story_music_path')):
+        for ref in (row.get('media_path'),row.get('poster_path'),row.get('story_music_path')):
             if ref and str(ref).startswith('uploads/r2/'):
                 refs.append(str(ref))
         if refs:g.r2_delete_refs=refs

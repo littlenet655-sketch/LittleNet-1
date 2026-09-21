@@ -591,6 +591,36 @@ def _resolve_parent_review(
             return False, "forbidden"
 
         status = "ALLOWED" if requested == "APPROVE" else "BLOCKED"
+        # Safety: a MESSAGE approval is only effective while the sender/receiver pair is
+        # still an unblocked, approved connection. If the relationship broke (or the
+        # message row vanished) while the item sat in REVIEW, the approval is safely
+        # converted to a block so the message can never be delivered after the fact.
+        # Mirrors the web parent review path in parent/routes.py.
+        effective = requested
+        if event["content_type"] == "MESSAGE" and event.get("content_id") and requested == "APPROVE":
+            cur.execute(
+                "SELECT sender_child_id,receiver_child_id FROM child_messages WHERE child_message_id=%s FOR UPDATE",
+                (event["content_id"],),
+            )
+            msg_row = cur.fetchone()
+            if not msg_row:
+                effective = "BLOCK"
+            else:
+                a, b = msg_row["sender_child_id"], msg_row["receiver_child_id"]
+                cur.execute(
+                    "SELECT 1 FROM blocked_users WHERE (blocker_id=%s AND blocked_id=%s) OR (blocker_id=%s AND blocked_id=%s)",
+                    (a, b, b, a),
+                )
+                blocked_pair = cur.fetchone()
+                cur.execute(
+                    """SELECT 1 FROM followers WHERE approved=TRUE AND approval_stage='ACTIVE'
+                       AND ((child_id=%s AND following_child_id=%s) OR (child_id=%s AND following_child_id=%s))""",
+                    (a, b, b, a),
+                )
+                connected = cur.fetchone()
+                if blocked_pair or not connected:
+                    effective = "BLOCK"
+            status = "ALLOWED" if effective == "APPROVE" else "BLOCKED"
         p_row = None
         kind = "post"
         pub_media = None
@@ -619,26 +649,25 @@ def _resolve_parent_review(
                         )
                     except Exception as exc:
                         # Fail-closed: do not publish unsanitized media; compensate if published
+                        compensation_failed: list[str] = []
                         if pub_media:
-                            try:
-                                from services.object_storage import object_storage
-                                if object_storage.enabled():
-                                    object_storage.delete_reference(pub_media)
-                                    if pub_poster:
-                                        object_storage.delete_reference(pub_poster)
-                                else:
-                                    Path(pub_media).unlink(missing_ok=True)
-                                    if pub_poster:
-                                        Path(pub_poster).unlink(missing_ok=True)
-                            except Exception:
-                                pass
+                            from services.media_processor import delete_orphaned_media_refs
+
+                            compensation_failed = delete_orphaned_media_refs(
+                                (pub_media, pub_poster), context="review_approve_sanitization_failed"
+                            )
+                        compensation_note = (
+                            f"; orphan_compensation_failed={len(compensation_failed)}"
+                            if compensation_failed
+                            else ""
+                        )
                         cur.execute(
                             """UPDATE posts
                                SET moderation_status='BLOCKED', processing_status='FAILED',
                                    processing_error=%s, is_safe=FALSE, processing_completed_at=NOW(),
                                    processing_lease_token=NULL, processing_lease_expires_at=NULL
                                WHERE post_id=%s""",
-                            (f"sanitization_failed: {exc}", post_id),
+                            (f"sanitization_failed: {exc}{compensation_note}", post_id),
                         )
                         cur.execute(
                             "INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)",
@@ -682,7 +711,7 @@ def _resolve_parent_review(
 
         cur.execute(
             "INSERT INTO moderation_reviews(event_id,reviewer_id,action,notes) VALUES(%s,%s,%s,%s)",
-            (event_id, reviewer_id, requested, notes),
+            (event_id, reviewer_id, effective, ("Connection changed; approval safely converted to block." if effective != requested else notes)),
         )
         cur.execute("UPDATE moderation_events SET status='RESOLVED' WHERE event_id=%s", (event_id,))
         if is_admin:
@@ -691,13 +720,31 @@ def _resolve_parent_review(
                    VALUES(%s,%s,'MODERATION_EVENT',%s,%s::jsonb)""",
                 (
                     reviewer_id,
-                    f"MODERATION_{requested}",
+                    f"MODERATION_{effective}",
                     event_id,
                     json.dumps({"child_id": event["child_id"], "content_type": event["content_type"]}),
                 ),
             )
         # Commit DB state FIRST before external notifications and storage mutations
         conn.commit()
+
+        # A message that survived REVIEW and was approved must now be delivered like a
+        # normal send: the receiver gets a notification so it shows as new/unread.
+        # Mirrors the web parent review path in parent/routes.py. BLOCKED messages are
+        # never notified and never become visible to the receiver.
+        if event["content_type"] == "MESSAGE" and event.get("content_id") and effective == "APPROVE":
+            msg = fetch_one(
+                "SELECT sender_child_id,receiver_child_id FROM child_messages WHERE child_message_id=%s",
+                (event["content_id"],),
+            )
+            if msg:
+                notify(
+                    msg["receiver_child_id"],
+                    "MESSAGE",
+                    "A reviewed message is now available",
+                    f"/chat/{msg['sender_child_id']}/",
+                    msg["sender_child_id"],
+                )
 
         if p_row:
             post_id = int(p_row["post_id"])
@@ -711,23 +758,16 @@ def _resolve_parent_review(
                 from services.media_processor import block_and_cleanup_quarantine
                 block_and_cleanup_quarantine(post_id, p_row["source_media_path"])
 
-        return True, requested
+        return True, effective
     except Exception:
         conn.rollback()
         if requested == "APPROVE" and pub_media:
-            # Compensate orphan published object on commit failure
-            try:
-                from services.object_storage import object_storage
-                if object_storage.enabled():
-                    object_storage.delete_reference(pub_media)
-                    if pub_poster:
-                        object_storage.delete_reference(pub_poster)
-                else:
-                    Path(pub_media).unlink(missing_ok=True)
-                    if pub_poster:
-                        Path(pub_poster).unlink(missing_ok=True)
-            except Exception:
-                pass
+            # Compensate orphan published object on commit failure. Failures are
+            # logged and queued to the durable outbox inside the helper; the
+            # original exception is still re-raised below.
+            from services.media_processor import delete_orphaned_media_refs
+
+            delete_orphaned_media_refs((pub_media, pub_poster), context="review_approve_commit_failed")
         raise
     finally:
         conn.close()
@@ -2393,6 +2433,15 @@ def register_mobile_api(bp):
             raw_stale = 300
         stale_sec = max(30, min(raw_stale, 86400))
         res = reap_stale_media_jobs(stale_seconds=stale_sec)
+        # Bounded abandoned-upload sweep (same TTL-gated, LIMIT-bounded model):
+        # direct-to-R2 quarantine objects whose upload session was never
+        # completed have no post row, so the job reaper above cannot see them.
+        try:
+            from services.media_processor import reconcile_abandoned_upload_sessions
+
+            res["abandoned_uploads"] = reconcile_abandoned_upload_sessions()
+        except Exception as exc:
+            res["abandoned_uploads"] = {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
         return jsonify(res)
 
 

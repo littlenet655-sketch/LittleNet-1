@@ -3,11 +3,24 @@
 Normal LittleNet text/chat/comment moderation uses the same scale-to-zero CPU
 AI function as image-upload captions. This prevents routine text from waking the
 T4. GPU fallback must be explicitly enabled by an operator.
+
+The function name is configurable via LITTLENET_AI_TEXT_CPU_FUNCTION. The legacy
+LITTLENET_AI_IMAGE_CPU_FUNCTION name is still honored as a fallback so existing
+deployments that overrode it keep working; new deployments should use the
+text-specific name.
 """
 from __future__ import annotations
 
 import os
 from typing import Any
+
+
+def _cpu_function_name() -> str:
+    return (
+        os.getenv("LITTLENET_AI_TEXT_CPU_FUNCTION", "").strip()
+        or os.getenv("LITTLENET_AI_IMAGE_CPU_FUNCTION", "").strip()
+        or "moderate_image_upload_cpu"
+    )
 
 
 def enabled() -> bool:
@@ -29,10 +42,7 @@ def moderate_text(text: str) -> dict[str, Any]:
     import modal
 
     app_name = os.getenv("LITTLENET_AI_MODAL_APP", "littlenet-ai").strip() or "littlenet-ai"
-    function_name = os.getenv(
-        "LITTLENET_AI_IMAGE_CPU_FUNCTION",
-        "moderate_image_upload_cpu",
-    ).strip() or "moderate_image_upload_cpu"
+    function_name = _cpu_function_name()
 
     fn = modal.Function.from_name(app_name, function_name)
     result = fn.remote(

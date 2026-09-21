@@ -2,7 +2,6 @@ import os, uuid, base64, tempfile
 from flask import Blueprint, render_template, request, redirect, session, jsonify, flash, url_for
 from auth.service import (
     approve_child_account,
-    register_parent_account,
     login_user,
     profile_exists,
     get_parent_verification_data,

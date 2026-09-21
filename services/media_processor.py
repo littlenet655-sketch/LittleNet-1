@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from config import Config
-from database.connection import execute, fetch_all, fetch_one
+from database.connection import execute, execute_count, fetch_all, fetch_one
 from safety.moderation_service import evaluate, record, safety_level
 from safety.policy import decide
 from services import object_storage
@@ -28,6 +28,61 @@ from services.social import parent_notify
 logger = logging.getLogger(__name__)
 _worker_locks_guard = threading.Lock()
 _worker_locks: dict[int, threading.Lock] = {}
+
+
+def delete_orphaned_media_refs(refs: list[str | None], context: str) -> list[str]:
+    """Delete orphaned R2 references or local files left behind by a failed publish.
+
+    Uses the real ``object_storage.is_reference`` API (the historical
+    ``is_r2_reference`` attribute never existed; the resulting AttributeError
+    used to be swallowed by the inner except, leaking orphaned R2 objects).
+
+    Every failure is logged with the object-key prefix as context (never
+    secrets or credential-bearing URLs) and the ref is handed to the durable
+    media-delete outbox so a transient R2 outage does not lose the cleanup.
+    Returns the list of refs that could NOT be deleted so the caller can
+    record or re-raise — failures are never silently swallowed.
+    """
+    failed: list[str] = []
+    for ref in refs:
+        if not ref:
+            continue
+        ref_str = str(ref)
+        try:
+            if object_storage.is_reference(ref_str):
+                object_storage.delete_reference(ref_str)
+            else:
+                Path(ref_str).unlink(missing_ok=True)
+        except (RuntimeError, OSError) as exc:
+            logger.exception(
+                "Orphan media cleanup failed (%s): ref_prefix=%s error=%s: %s",
+                context,
+                ref_str[:64],
+                type(exc).__name__,
+                exc,
+            )
+            failed.append(ref_str)
+        except Exception as exc:
+            logger.exception(
+                "Orphan media cleanup failed unexpectedly (%s): ref_prefix=%s error=%s: %s",
+                context,
+                ref_str[:64],
+                type(exc).__name__,
+                exc,
+            )
+            failed.append(ref_str)
+        if ref_str in failed:
+            try:
+                from services.media_outbox import enqueue_delete
+
+                enqueue_delete(ref_str, source_table=f"orphan_cleanup:{context}")
+            except Exception:
+                logger.exception(
+                    "Failed to enqueue orphan delete for %s (context=%s)",
+                    ref_str[:64],
+                    context,
+                )
+    return failed
 
 
 def _notify_approved_followers(post_id: int, child_id: int, kind: str) -> None:
@@ -569,7 +624,11 @@ def _process_media_job_impl(
                 notify_child_content_status(child_id, post_id, "BLOCKED", kind)
             except Exception:
                 pass
-            block_and_cleanup_quarantine(post_id, object_key)
+            if not block_and_cleanup_quarantine(post_id, object_key):
+                logger.warning(
+                    "Quarantine cleanup incomplete after BLOCK for post %s; durable outbox retry queued",
+                    post_id,
+                )
             return {"ok": True, "status": "BLOCKED", "reason": decision.reason}
 
         elif decision.action == "REVIEW":
@@ -621,7 +680,15 @@ def _process_media_job_impl(
             published_poster_ref = None
 
             if object_storage.enabled():
-                object_storage.upload_file(str(final_media_local), f"{namespace}/{child_id}/{post_id}_media.{ext}", content_type=media_mime)
+                # VIDEO bytes were already audio-stripped by _make_video_derivatives
+                # (fail-closed); skip upload_file's redundant second strip. All
+                # other video callers must leave upload_file's default strip on.
+                object_storage.upload_file(
+                    str(final_media_local),
+                    f"{namespace}/{child_id}/{post_id}_media.{ext}",
+                    content_type=media_mime,
+                    skip_audio_strip=(media_type == "VIDEO"),
+                )
                 if final_poster_local and final_poster_local.is_file():
                     published_poster_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_poster.jpg"
                     object_storage.upload_file(
@@ -643,16 +710,16 @@ def _process_media_job_impl(
             try:
                 require_active_lease()
             except RuntimeError:
-                for orphan_ref in (published_media_ref, published_poster_ref):
-                    if not orphan_ref:
-                        continue
-                    try:
-                        if object_storage.is_r2_reference(orphan_ref):
-                            object_storage.delete_reference(orphan_ref)
-                        else:
-                            Path(orphan_ref).unlink(missing_ok=True)
-                    except Exception:
-                        logger.exception("Failed to remove orphaned publication object %s", orphan_ref)
+                failed_orphans = delete_orphaned_media_refs(
+                    (published_media_ref, published_poster_ref), context="lease_lost_before_commit"
+                )
+                if failed_orphans:
+                    logger.warning(
+                        "Lease lost for post %s; %d orphaned publication object(s) queued for retry: %s",
+                        post_id,
+                        len(failed_orphans),
+                        [r[:64] for r in failed_orphans],
+                    )
                 raise
 
             allowed_row = execute(
@@ -680,16 +747,16 @@ def _process_media_job_impl(
             )
             if not allowed_row:
                 logger.warning("Worker lease expired or stolen during ALLOW for post %s; aborting publication", post_id)
-                for orphan_ref in (published_media_ref, published_poster_ref):
-                    if not orphan_ref:
-                        continue
-                    try:
-                        if object_storage.is_r2_reference(orphan_ref):
-                            object_storage.delete_reference(orphan_ref)
-                        else:
-                            Path(orphan_ref).unlink(missing_ok=True)
-                    except Exception:
-                        logger.exception("Failed to remove orphaned publication object %s", orphan_ref)
+                failed_orphans = delete_orphaned_media_refs(
+                    (published_media_ref, published_poster_ref), context="lease_lost_after_publish"
+                )
+                if failed_orphans:
+                    logger.warning(
+                        "Lease stolen for post %s; %d orphaned publication object(s) queued for retry: %s",
+                        post_id,
+                        len(failed_orphans),
+                        [r[:64] for r in failed_orphans],
+                    )
                 return {"ok": False, "status": "EXPIRED", "error": "lease_lost"}
             if media_type == "VIDEO":
                 try:
@@ -713,7 +780,11 @@ def _process_media_job_impl(
                 notify_child_content_status(child_id, post_id, "ALLOWED", kind)
             except Exception:
                 pass
-            block_and_cleanup_quarantine(post_id, object_key)
+            if not block_and_cleanup_quarantine(post_id, object_key):
+                logger.warning(
+                    "Quarantine cleanup incomplete after ALLOW for post %s; durable outbox retry queued",
+                    post_id,
+                )
             return {
                 "ok": True,
                 "status": "ALLOWED",
@@ -790,7 +861,15 @@ def sanitize_and_promote_media(
         if object_storage.enabled():
             published_media_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_media.{ext}"
             published_poster_ref = None
-            object_storage.upload_file(str(final_media_local), f"{namespace}/{child_id}/{post_id}_media.{ext}", content_type=media_mime)
+            # VIDEO bytes were already audio-stripped by _make_video_derivatives
+            # (fail-closed); skip upload_file's redundant second strip. All
+            # other video callers must leave upload_file's default strip on.
+            object_storage.upload_file(
+                str(final_media_local),
+                f"{namespace}/{child_id}/{post_id}_media.{ext}",
+                content_type=media_mime,
+                skip_audio_strip=(ext == "mp4"),
+            )
             if final_poster_local and final_poster_local.is_file():
                 published_poster_ref = f"uploads/r2/{namespace}/{child_id}/{post_id}_poster.jpg"
                 object_storage.upload_file(
@@ -816,29 +895,76 @@ def sanitize_and_promote_media(
         shutil.rmtree(temp_dir, ignore_errors=True)
 
 
-def block_and_cleanup_quarantine(post_id: int, object_key: str | None) -> None:
-    """Delete and invalidate quarantine media on moderation BLOCK (called after DB commit)."""
+def block_and_cleanup_quarantine(post_id: int, object_key: str | None) -> bool:
+    """Delete and invalidate quarantine media after moderation BLOCK or ALLOW.
+
+    Called only after the database state commits. Returns True when the
+    quarantine object was fully cleaned, False when any part failed. Failures
+    are logged with the object-key prefix as context (never secrets or
+    credential-bearing URLs) and the R2 reference is handed to the durable
+    media-delete outbox for retry — nothing is silently swallowed.
+    """
     if not object_key:
-        return
+        return True
     cleaned = True
+    key_prefix = str(object_key)[:64]
     if object_storage.enabled():
         try:
             object_storage.delete_reference(object_key)
-        except Exception:
+        except (RuntimeError, OSError) as exc:
+            logger.warning(
+                "Quarantine R2 delete failed for post %s ref_prefix=%s: %s: %s",
+                post_id,
+                key_prefix,
+                type(exc).__name__,
+                exc,
+            )
+            cleaned = False
+        except Exception as exc:
+            logger.warning(
+                "Quarantine R2 delete failed unexpectedly for post %s ref_prefix=%s: %s: %s",
+                post_id,
+                key_prefix,
+                type(exc).__name__,
+                exc,
+            )
             cleaned = False
     try:
         for p in Path("uploads/mock_quarantine").rglob("*"):
             if p.is_file() and object_key in str(p):
                 p.unlink(missing_ok=True)
-    except Exception:
-        pass
+    except (OSError, RuntimeError) as exc:
+        logger.warning(
+            "Mock quarantine sweep failed for post %s ref_prefix=%s: %s: %s",
+            post_id,
+            key_prefix,
+            type(exc).__name__,
+            exc,
+        )
+        cleaned = False
+    except Exception as exc:
+        logger.warning(
+            "Mock quarantine sweep failed unexpectedly for post %s ref_prefix=%s: %s: %s",
+            post_id,
+            key_prefix,
+            type(exc).__name__,
+            exc,
+        )
+        cleaned = False
 
     if not cleaned:
         try:
             from services.media_outbox import enqueue_delete
+
             enqueue_delete(object_key, "posts", post_id)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.exception(
+                "Failed to enqueue quarantine delete for post %s ref_prefix=%s: %s: %s",
+                post_id,
+                key_prefix,
+                type(exc).__name__,
+                exc,
+            )
 
     return cleaned
 
@@ -1019,7 +1145,7 @@ def reap_stale_media_jobs(stale_seconds: int = 300) -> dict[str, Any]:
         max_attempts = int(p.get("max_processing_attempts") or 3)
 
         if attempts >= max_attempts:
-            execute(
+            transitioned = execute_count(
                 """UPDATE posts
                    SET processing_status='FAILED', processing_error='max_attempts_exceeded_stale_reap',
                        processing_completed_at=NOW(), processing_lease_token=NULL,
@@ -1027,7 +1153,13 @@ def reap_stale_media_jobs(stale_seconds: int = 300) -> dict[str, Any]:
                    WHERE post_id=%s AND processing_status NOT IN ('ALLOWED', 'BLOCKED', 'FAILED')""",
                 (post_id,),
             )
-            failed.append({"post_id": post_id, "error": "max_attempts_exceeded"})
+            entry = {"post_id": post_id, "error": "max_attempts_exceeded"}
+            if transitioned:
+                # Terminal FAILED: the quarantine object can never be consumed
+                # now, so delete it (outbox-backed on R2 failure). Skipped when
+                # another worker already transitioned the row.
+                entry["quarantine_cleaned"] = block_and_cleanup_quarantine(post_id, object_key)
+            failed.append(entry)
             continue
 
         if not object_key:
@@ -1057,4 +1189,106 @@ def reap_stale_media_jobs(stale_seconds: int = 300) -> dict[str, Any]:
     return {"ok": True, "count": len(redriven), "redriven": redriven, "failed": failed}
 
 
+def reconcile_abandoned_upload_sessions(stale_seconds: int = 86400) -> dict[str, Any]:
+    """Bounded reconciliation of abandoned direct-upload sessions.
 
+    A client may PUT bytes to a quarantine R2 object via the presigned upload
+    URL and never call ``/complete`` — or the session expires first. Those
+    objects have no post row, so the media-job reaper can never see them.
+    This sweeps the bounded ``upload_sessions`` table (LIMIT 50, TTL-gated)
+    for sessions still PENDING/EXPIRED long after ``expires_at``, deletes the
+    quarantine object (durable outbox on R2 failure), removes local
+    mock-quarantine files, and marks the session CANCELLED so it is never
+    swept twice. The DB is the source of truth: no R2 prefix listings, no
+    unbounded scans.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    stale_seconds = max(3600, min(int(stale_seconds), 7 * 86400))
+    threshold = datetime.now(timezone.utc) - timedelta(seconds=stale_seconds)
+
+    rows = fetch_all(
+        """SELECT upload_id, child_id, object_key, extension
+           FROM upload_sessions
+           WHERE status IN ('PENDING', 'EXPIRED')
+             AND expires_at < %s
+           ORDER BY expires_at ASC LIMIT 50""",
+        (threshold,),
+    )
+
+    cleaned: list[str] = []
+    failed: list[dict[str, Any]] = []
+    r2_enabled = object_storage.enabled()
+
+    for row in rows or []:
+        upload_id = str(row["upload_id"])
+        child_id = row["child_id"]
+        object_key = str(row["object_key"] or "")
+        row_failed: str | None = None
+
+        if object_key and r2_enabled and object_storage.is_reference(object_key):
+            try:
+                object_storage.delete_reference(object_key)
+            except (RuntimeError, OSError) as exc:
+                logger.warning(
+                    "Abandoned upload cleanup: R2 delete failed upload_id=%s ref_prefix=%s: %s: %s",
+                    upload_id,
+                    object_key[:64],
+                    type(exc).__name__,
+                    exc,
+                )
+                row_failed = f"r2_delete_failed:{type(exc).__name__}"
+                try:
+                    from services.media_outbox import enqueue_delete
+
+                    enqueue_delete(object_key, source_table="abandoned_upload_session", source_id=upload_id)
+                except Exception:
+                    logger.exception(
+                        "Abandoned upload cleanup: outbox enqueue failed upload_id=%s ref_prefix=%s",
+                        upload_id,
+                        object_key[:64],
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Abandoned upload cleanup: R2 delete failed unexpectedly upload_id=%s ref_prefix=%s: %s: %s",
+                    upload_id,
+                    object_key[:64],
+                    type(exc).__name__,
+                    exc,
+                )
+                row_failed = f"r2_delete_failed:{type(exc).__name__}"
+
+        try:
+            mock_dir = Path("uploads/mock_quarantine") / str(child_id) / upload_id
+            if mock_dir.is_dir():
+                shutil.rmtree(mock_dir, ignore_errors=True)
+        except (OSError, RuntimeError) as exc:
+            logger.warning(
+                "Abandoned upload cleanup: mock quarantine sweep failed upload_id=%s: %s: %s",
+                upload_id,
+                type(exc).__name__,
+                exc,
+            )
+            row_failed = row_failed or f"mock_sweep_failed:{type(exc).__name__}"
+
+        try:
+            execute_count(
+                """UPDATE upload_sessions SET status='CANCELLED'
+                   WHERE upload_id=%s AND status IN ('PENDING', 'EXPIRED')""",
+                (upload_id,),
+            )
+        except Exception as exc:
+            logger.exception(
+                "Abandoned upload cleanup: failed to mark session CANCELLED upload_id=%s: %s: %s",
+                upload_id,
+                type(exc).__name__,
+                exc,
+            )
+            row_failed = row_failed or f"mark_cancelled_failed:{type(exc).__name__}"
+
+        if row_failed:
+            failed.append({"upload_id": upload_id, "error": row_failed})
+        else:
+            cleaned.append(upload_id)
+
+    return {"ok": True, "checked": len(rows or []), "cleaned": cleaned, "failed": failed}

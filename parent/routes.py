@@ -182,7 +182,9 @@ def time_limit():
 @parent_bp.route('/parent/safety/',methods=['GET'])
 @parent_required
 def safety():
-    ev=fetch_all("SELECT e.*,u.full_name FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.decision='REVIEW' AND e.status='OPEN' AND e.child_id IN (SELECT child_id FROM parent_child_map WHERE parent_id=%s) ORDER BY e.created_at DESC",(session['user_id'],))
+    # Only children under an approved Parent Mode mapping, matching the
+    # canonical owns() check, so a pending/declined link never leaks review events.
+    ev=fetch_all("SELECT e.*,u.full_name FROM moderation_events e JOIN users u ON u.user_id=e.child_id WHERE e.decision='REVIEW' AND e.status='OPEN' AND e.child_id IN (SELECT m.child_id FROM parent_child_map m WHERE m.approved=TRUE AND m.approval_status='APPROVED' AND (m.parent_id=%s OR m.verified_parent_id=%s)) ORDER BY e.created_at DESC",(session['user_id'],session['user_id']))
     for e in ev:
         preview={}
         if e['content_type'] in {'IMAGE','VIDEO','AUDIO','TEXT'} and e['content_id']:
@@ -291,7 +293,7 @@ def child_posts():
 @parent_bp.route('/parent/deleted-posts/')
 @parent_required
 def deleted_posts():
-    return render_template('deleted_posts.html',posts=fetch_all('SELECT d.*,u.full_name FROM deleted_posts d JOIN users u ON u.user_id=d.child_id WHERE d.child_id IN (SELECT child_id FROM parent_child_map WHERE parent_id=%s) ORDER BY d.deleted_at DESC',(session['user_id'],)))
+    return render_template('deleted_posts.html',posts=fetch_all("SELECT d.*,u.full_name FROM deleted_posts d JOIN users u ON u.user_id=d.child_id WHERE d.child_id IN (SELECT m.child_id FROM parent_child_map m WHERE m.approved=TRUE AND m.approval_status='APPROVED' AND (m.parent_id=%s OR m.verified_parent_id=%s)) ORDER BY d.deleted_at DESC",(session['user_id'],session['user_id'])))
 
 @parent_bp.route('/parent/usage-report/')
 @parent_required

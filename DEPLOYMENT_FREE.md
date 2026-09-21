@@ -1,5 +1,10 @@
 # LittleNet  -  Railway Free / Low-RAM Deployment
 
+> **Legacy / optional demo path — not production.** The canonical production
+> deployment is Modal; see **[MODAL_DEPLOYMENT.md](./MODAL_DEPLOYMENT.md)**,
+> the single authoritative deployment guide. This document is kept for the
+> low-RAM Railway demo layout only.
+
 LittleNet supports a split runtime so the social web application does not need to
 load PyTorch, TensorFlow, YOLO and DeepFace in the same 512 MB process.
 

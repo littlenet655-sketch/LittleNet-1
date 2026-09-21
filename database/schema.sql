@@ -1,4 +1,13 @@
--- LittleNet complete PostgreSQL schema. Safe to run on a fresh database.
+-- LittleNet PostgreSQL baseline schema. Safe to run on a fresh database.
+--
+-- MIGRATION OWNERSHIP: this file (plus database/upgrade.sql and
+-- database/friendship_upgrade.sql) is the *legacy baseline bootstrap* applied
+-- by tools/init_db.py. All schema changes adopted after 2026-09-06 live in
+-- db/migrations/ and are owned exclusively by dbmate. On a fresh database the
+-- required order is: tools/init_db.py THEN `dbmate up`. Never run `dbmate up`
+-- alone on an empty database: the migrations are deltas, not a full baseline.
+-- This snapshot is kept in sync with the post-migration schema for the objects
+-- it owns (see db/migrations/README.md).
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -10,7 +19,7 @@ CREATE TABLE IF NOT EXISTS users (
  role VARCHAR(20) NOT NULL CHECK (role IN ('CHILD','PARENT','ADMIN')),
  age INTEGER CHECK (age IS NULL OR age BETWEEN 4 AND 18),
  dob DATE,
- account_status VARCHAR(30) NOT NULL DEFAULT 'PENDING_APPROVAL' CHECK (account_status IN ('PENDING_APPROVAL','ACTIVE','REJECTED','SUSPENDED')),
+ account_status VARCHAR(30) NOT NULL DEFAULT 'PENDING_APPROVAL' CHECK (account_status IN ('PENDING_APPROVAL','ACTIVE','REJECTED','SUSPENDED','DEACTIVATED')),
  session_version INTEGER NOT NULL DEFAULT 1,
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -20,6 +29,15 @@ CREATE TABLE IF NOT EXISTS parent_child_map (
  parent_name VARCHAR(100) NOT NULL, parent_email VARCHAR(150) NOT NULL,
  approval_token UUID UNIQUE, approved BOOLEAN NOT NULL DEFAULT FALSE, approved_at TIMESTAMP,
  rejection_reason TEXT,
+ verification_token VARCHAR(255),
+ approval_status VARCHAR(64) DEFAULT 'PENDING_APPROVAL',
+ is_token_used BOOLEAN DEFAULT FALSE,
+ parent_verified BOOLEAN DEFAULT FALSE,
+ parent_masked_id VARCHAR(64),
+ parent_id_type VARCHAR(64),
+ verified_parent_id INTEGER REFERENCES users(user_id) ON DELETE SET NULL,
+ verified_at TIMESTAMP,
+ approval_token_expires_at TIMESTAMP,
  created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
  UNIQUE(child_id,parent_email)
 );
@@ -222,7 +240,7 @@ CREATE TABLE IF NOT EXISTS user_preferences (
 CREATE TABLE IF NOT EXISTS quizzes (
  quiz_id SERIAL PRIMARY KEY, category VARCHAR(100) NOT NULL, question TEXT NOT NULL,
  option_a VARCHAR(255) NOT NULL, option_b VARCHAR(255) NOT NULL, option_c VARCHAR(255) NOT NULL, option_d VARCHAR(255) NOT NULL,
- correct_answer VARCHAR(255) NOT NULL, age_group VARCHAR(10) NOT NULL CHECK(age_group IN ('6-8','9-11','12-13')), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+ correct_answer VARCHAR(255) NOT NULL, age_group VARCHAR(10) NOT NULL CHECK(age_group IN ('6-8','9-11','12-13','14-18')), created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE IF NOT EXISTS parent_quiz_settings (
  setting_id SERIAL PRIMARY KEY, parent_id INTEGER REFERENCES users(user_id) ON DELETE CASCADE, child_id INTEGER UNIQUE NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,

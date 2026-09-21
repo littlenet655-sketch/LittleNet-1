@@ -9,7 +9,7 @@ from __future__ import annotations
 import os
 import tempfile
 
-from .common import normalize_signals, timed_call, timeout_seconds
+from .common import env_flag, normalize_signals, timed_call, timeout_seconds
 from .scene_sampler import combined_frame_indices
 from .visual_service import check_image, _video_sample_count, video_sampling_coverage
 
@@ -52,7 +52,9 @@ def _sample_frames(path: str, requested: int):
             os.close(fd)
             cv2.imwrite(tmp, frame)
             try:
-                signals = check_image(tmp)
+                # Frame OCR stays off unless explicitly enabled: per-frame OCR on
+                # up to 60 frames would otherwise blow the moderation time budget.
+                signals = check_image(tmp, ocr=env_flag('LITTLENET_ENABLE_OCR_VIDEO_FRAMES'))
                 outs.append(signals)
                 inspected.append(int(idx))
                 if decide(signals).action == "BLOCK":

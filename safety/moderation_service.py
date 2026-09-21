@@ -28,7 +28,15 @@ def evaluate(child_id,content_type,payload,adult_threshold=.40):
     elif t=='IMAGE':
         signals=check_image(payload)
     else:
-        raise ValueError(f'Unsupported moderation content type: {t}')
+        # Fail closed on unsupported content types: an explicit BLOCK decision
+        # (never ALLOW, never publish) so API callers map it to 4xx instead of
+        # surfacing a 500 from a raised ValueError.
+        signals=normalize_signals({
+            'category':t,
+            'total_safety_failure':True,
+            'errors':['unsupported_content_type'],
+        },category=t)
+        return signals,Decision('BLOCK',100.0,f'Unsupported moderation content type: {t}')
     signals=normalize_signals(signals,category=t)
     d=decide(signals,safety_level(child_id),adult_threshold)
     return signals,d

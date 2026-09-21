@@ -729,35 +729,6 @@ def register_parent_account(token, form):
     finally:
         conn.close()
 
-def register_parent_direct(form):
-    """Create a standalone Parent Mode account for the parent-first workflow."""
-    if not validate_username(form.get('username')):
-        raise ValueError('invalid_username')
-    if not validate_name(form.get('full_name')):
-        raise ValueError('invalid_full_name')
-    password = form.get('password', '')
-    if len(password) < 8:
-        raise ValueError('weak_password')
-    email = (form.get('email') or '').strip().lower()
-    if '@' not in email:
-        raise ValueError('invalid_email')
-    dob_str = (form.get('dob') or form.get('date_of_birth') or '').strip()
-    if dob_str:
-        try:
-            from datetime import datetime
-            dt = datetime.strptime(dob_str[:10], '%Y-%m-%d')
-            if (datetime.now() - dt).days < (18 * 365):
-                raise ValueError('Adult verification failed: Parent must be 18 years of age or older.')
-        except ValueError as ve:
-            if '18 years' in str(ve):
-                raise
-    if form.get('adult_challenge_expected') and form.get('adult_challenge_answer'):
-        if form.get('adult_challenge_expected').strip() != form.get('adult_challenge_answer').strip():
-            raise ValueError('Adult verification challenge incorrect. Please verify you are an adult.')
-    return execute("""INSERT INTO users(username,full_name,email,password_hash,role,dob,account_status)
-      VALUES(%s,%s,%s,%s,'PARENT',%s,'ACTIVE') RETURNING user_id""",
-      (form['username'].strip(), form['full_name'].strip(), email, hash_password(password), dob_str or None), returning=True)
-
 def create_child_by_parent(parent_id, form):
     """Atomically create + approve a child from an authenticated Parent Mode account."""
     username = (form.get('username') or '').strip()

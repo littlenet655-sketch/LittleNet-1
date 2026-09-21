@@ -24,6 +24,57 @@ from services.social import _age_group
 from services.recommendation_signals import signal_scores
 
 
+def _item_key(item: dict[str, Any]) -> tuple[str, int] | None:
+    """Canonical (source_type, source_id) key for an item, or None if unusable."""
+    try:
+        source_id = int(item.get("source_id", item.get("post_id", 0)) or 0)
+    except (TypeError, ValueError):
+        return None
+    if source_id <= 0:
+        return None
+    return (str(item.get("source_type") or "SOCIAL").upper(), source_id)
+
+
+def hidden_items(child_id: int, rows: list[dict[str, Any]]) -> set[tuple[str, int]]:
+    """Return items the child explicitly hid or marked not-interested.
+
+    Unlike the advisory `signal_scores` weights (which only demote), an explicit
+    HIDE / NOT_INTERESTED is a hard exclusion: the item must not be recommended
+    again in any feed surface. BLOCK and MUTE are creator-scoped and are
+    enforced separately through the block/mute feed filters.
+    """
+    if not rows:
+        return set()
+    social_ids = set()
+    curated_ids = set()
+    for item in rows:
+        key = _item_key(item)
+        if not key:
+            continue
+        (curated_ids if key[0] == "CURATED" else social_ids).add(key[1])
+    if not social_ids and not curated_ids:
+        return set()
+    try:
+        found = fetch_all(
+            """SELECT DISTINCT source_type, source_id
+                 FROM recommendation_signals
+                WHERE child_id = %s
+                  AND signal IN ('NOT_INTERESTED', 'HIDE')
+                  AND ((source_type = 'SOCIAL' AND source_id = ANY(%s))
+                    OR (source_type = 'CURATED' AND source_id = ANY(%s)))""",
+            (int(child_id), list(social_ids), list(curated_ids)),
+        )
+    except Exception:
+        # Fail open on telemetry read failure: scoring still applies the
+        # strong negative weight, so the item is demoted even if not hidden.
+        return set()
+    return {
+        (str(r.get("source_type") or "").upper(), int(r["source_id"]))
+        for r in found or []
+        if r.get("source_id") is not None
+    }
+
+
 def _flag(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
@@ -338,8 +389,12 @@ def _safe_rank_candidates(cid: int, rows: list[dict[str, Any]]) -> list[dict[str
             blocked_ids = {int(row["creator_id"]) for row in blocked_rows or [] if row.get("creator_id") is not None}
         except Exception:
             blocked_ids = set()
+    hidden = hidden_items(cid, rows)
     eligible = []
     for item in rows:
+        key = _item_key(item)
+        if key is not None and key in hidden:
+            continue
         if str(item.get("moderation_status") or "").upper() != "ALLOWED":
             continue
         if item.get("is_safe") is not True:

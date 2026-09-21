@@ -46,7 +46,9 @@ web_image = (
             "LITTLENET_RESEND_DOMAIN_VERIFIED": "1",
             "ENABLE_DEV_OTP": "0",
             "STRICT_PRODUCTION_PREFLIGHT": "1",
-            "LITTLENET_USE_MODAL_QUEUE": "1",
+            # LITTLENET_USE_MODAL_QUEUE was a legacy name. The job queue reads
+            # JOB_QUEUE_PROVIDER (see services/job_queue.py); nothing reads the
+            # old name, so it is intentionally not set here.
             # Ordinary image moderation runs on a scale-to-zero CPU function.
             # GPU fallback is deliberately off so a transient CPU issue cannot
             # silently burn T4 credit; the moderation pipeline fails closed.

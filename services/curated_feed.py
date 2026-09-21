@@ -447,7 +447,22 @@ def _materialize_session_items(raw_items: list[dict[str, Any]], child_id: int, s
     )
     blocked_ids = {int(row["creator_id"]) for row in blocked_rows or [] if row.get("creator_id") is not None}
 
+    # A HIDE / NOT_INTERESTED recorded after the session was created must take
+    # effect immediately, without waiting for the session TTL to expire.
+    from services.recommendation import hidden_items as _hidden_items
+    _probe = []
+    for r in raw_items:
+        sid = int(r["source_id"])
+        stype = r["source_type"]
+        item = curated_map.get(sid) if stype == "CURATED" else social_map.get(sid)
+        if item:
+            _probe.append({"source_type": stype, "source_id": sid})
+    hidden_keys = _hidden_items(child_id, _probe)
+
     def current_eligible(item: dict[str, Any]) -> bool:
+        key = (str(item.get("source_type") or "SOCIAL").upper(), int(item.get("source_id", 0) or 0))
+        if key in hidden_keys:
+            return False
         if item.get("moderation_status") != "ALLOWED" or item.get("is_safe") is not True:
             return False
         if bool(item.get("is_reel")) != (surface_clean == "REELS"):
@@ -514,6 +529,34 @@ def get_feed_page(
         "has_more": has_more,
         "total_in_session": total,
     }
+
+
+def curated_item_visible_to(child_id: int, content_id: int) -> bool:
+    """Light eligibility check for a curated item (publication, asset safety, category, age).
+
+    Used for validating feedback actions without resolving media delivery URLs.
+    """
+    cats = effective_categories(child_id)
+    if not cats:
+        return False
+    child_age = _child_real_age(child_id)
+    age_group = _age_group(child_id)
+    row = fetch_one(
+        """SELECT 1
+             FROM curated_content cc
+             JOIN curated_media_assets cma ON cma.asset_id = cc.asset_id
+             JOIN content_categories cat ON cat.category_id = cc.category_id
+            WHERE cc.content_id = %s
+              AND cc.publish_status = 'PUBLISHED'
+              AND cma.moderation_status = 'ALLOWED'
+              AND cma.is_safe = TRUE
+              AND cat.active = TRUE
+              AND cat.display_name = ANY(%s)
+              AND cc.min_age <= %s AND cc.max_age >= %s
+              AND (%s IS NULL OR cc.audience_age_group = 'ALL' OR cc.audience_age_group = %s)""",
+        (content_id, cats, child_age, child_age, age_group, age_group),
+    )
+    return bool(row)
 
 
 def authorize_curated_media(child_id: int, content_id: int) -> dict[str, Any]:

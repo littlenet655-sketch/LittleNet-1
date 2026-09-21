@@ -49,6 +49,10 @@ def decide(signals: dict, safety_level: str = "STRICT", adult_threshold=None):
         else:
             reason = "severe abuse/threat hard blocked"
         return Decision("BLOCK", 100.0, reason)
+    if signals.get("deterministic_ocr_pii"):
+        # Burned-in contact/PII sharing detected by the image OCR stage is
+        # honored as a hard block, the same as typed contact sharing.
+        return Decision("BLOCK", 100.0, "burned-in contact/PII text detected in image (OCR)")
     if total_failure:
         return Decision("BLOCK", 100.0, "AI safety unavailable: fail closed")
 

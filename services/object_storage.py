@@ -106,13 +106,24 @@ def _client():
     )
 
 
-def upload_file(local_path: str, key: str, content_type: Optional[str] = None) -> str:
-    """Upload moderated content to private R2; video audio is stripped first."""
+def upload_file(local_path: str, key: str, content_type: Optional[str] = None, skip_audio_strip: bool = False) -> str:
+    """Upload moderated content to private R2.
+
+    Video audio policy (Option A: all published video bytes are silent):
+    by default (``skip_audio_strip=False``) any ``video/*`` upload is stripped
+    of audio in place before upload, failing closed on any error. Callers that
+    already stripped the bytes through ``services.media_processor``
+    ``_make_video_derivatives`` (the async worker path and quarantine
+    promotion) may pass ``skip_audio_strip=True`` to avoid a redundant second
+    ffmpeg pass. Every other video caller (``persist_before_db`` mobile/chat
+    uploads, legacy web after-request persistence, tools) MUST leave the
+    default on — there is no other strip on those paths.
+    """
     path = Path(local_path)
     if not path.is_file():
         raise FileNotFoundError(local_path)
     ctype = content_type or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
-    if ctype.lower().startswith("video/"):
+    if ctype.lower().startswith("video/") and not skip_audio_strip:
         from services.media_sanitizer import strip_video_audio_in_place
 
         strip_video_audio_in_place(str(path))

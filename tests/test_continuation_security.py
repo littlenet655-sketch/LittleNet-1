@@ -9,17 +9,23 @@ def text(path):
 
 def test_parent_flow_is_email_then_otp_then_live_adult_activation():
     api = text('auth/api.py')
+    routes = text('auth/routes.py')
     otp = text('auth/parent_email_otp.py')
     live = text('auth/templates/parent_liveness_verify.html')
     live_js = text('static/js/parent_liveness_mediapipe.js')
     assert "request.path.rstrip('/')!='/register-parent'" in api
     assert "'PARENT',%s,'PENDING_APPROVAL'" in otp
     assert 'pending_parent_email_verified' in api
-    assert "return redirect('/verify-parent-liveness/')" in api
-    assert "@api_bp.route('/verify-parent-liveness/'" in api
-    assert "UPDATE users SET account_status='ACTIVE'" in api
+    assert "return redirect('/verify-parent-email/')" in api
+    assert "return redirect('/verify-parent-liveness/')" in routes
+    # The verify-parent-* routes live only on auth_bp (auth/routes.py); the
+    # shadowed api_bp duplicates were removed. auth_bp registers first, so it
+    # is the single authoritative implementation.
+    assert "@api_bp.route('/verify-parent-liveness/'" not in api
+    assert "@auth_bp.route('/verify-parent-liveness/'" in routes
+    assert "UPDATE users SET account_status='ACTIVE'" in routes
     assert "UPDATE users SET account_status='ACTIVE'" not in otp
-    assert 'verify_adult_face' in api
+    assert 'verify_adult_face' in routes
     assert '/static/js/parent_liveness_mediapipe.js' in live
     assert 'navigator.mediaDevices.getUserMedia' in live_js
     assert 'FaceLandmarker.createFromOptions' in live_js
@@ -29,14 +35,14 @@ def test_parent_flow_is_email_then_otp_then_live_adult_activation():
 
 def test_parent_otp_is_hashed_expiring_and_rate_limited():
     otp = text('auth/parent_email_otp.py')
-    api = text('auth/api.py')
+    routes = text('auth/routes.py')
     assert 'hashlib.sha256' in otp
     assert 'hmac.compare_digest' in otp
     assert 'OTP_MAX_ATTEMPTS = 5' in otp
     assert "INTERVAL '10 minutes'" in otp
     assert 'code VARCHAR' not in otp
     assert 'code TEXT' not in otp
-    assert "3 per 15 minutes" in api
+    assert "5 per 10 minutes" in routes
 
 
 def test_parent_liveness_has_no_demo_or_manual_capture_bypass():

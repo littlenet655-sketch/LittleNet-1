@@ -7,8 +7,10 @@ from .sanitizer import (
     sanitize_chat_context,
     sanitize_child_learning_profile,
     sanitize_parent_digest_input,
-    sanitize_content_metadata
+    sanitize_content_metadata,
+    sanitize_text
 )
+from safety.pii_service import RE_ADDRESS_SHARING
 from .schemas import (
     ChatSafetyResult,
     QuizBatchResult,
@@ -68,6 +70,13 @@ class AIServiceClient:
             )
 
         sanitized_history = sanitize_chat_context(recent_messages, sender_id, receiver_id)
+        # SECURITY: the new message must never reach the external LLM provider
+        # with raw PII. Apply the same scrubber used for chat history (phone /
+        # email redaction) plus physical-address redaction. The provider layer
+        # (K2Provider.generate -> format_sandboxed_prompt) still wraps this in
+        # <untrusted_user_content> tags; sanitization must happen before that.
+        sanitized_current = sanitize_text(current_message or "").strip()
+        sanitized_current = RE_ADDRESS_SHARING.sub("[ADDRESS_REDACTED]", sanitized_current)[:500]
         system_prompt = (
             "You are a specialized child safety AI for an under-13 social app. "
             "Analyze the conversational exchange and current message for:\n"
@@ -84,7 +93,7 @@ class AIServiceClient:
 
         user_content = (
             f"Conversation History:\n{sanitized_history}\n\n"
-            f"New Message to evaluate:\n{current_message}"
+            f"New Message to evaluate:\n{sanitized_current}"
         )
 
         try:

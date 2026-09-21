@@ -8,7 +8,7 @@ checks = {
     'Reels': ('uploadPost/routes.py', '/reels/'),
     'Messages/chat': ('childMessage/routes.py', '/messages/'),
     'Discover': ('child/routes.py', '/discover/'),
-    'Parent email OTP gate': ('auth/api.py', '/verify-parent-email/'),
+    'Parent email OTP gate': ('auth/routes.py', '/verify-parent-email/'),
     'Child face-first onboarding': ('auth/api.py', '/face/enroll/'),
     'Mandatory age onboarding quiz': ('auth/api.py', '/quiz/start/?onboarding=1'),
     '18+ hard block': ('safety/policy.py', '18+ content hard blocked'),

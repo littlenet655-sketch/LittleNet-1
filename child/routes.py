@@ -3,7 +3,7 @@ from flask import Blueprint,render_template,request,redirect,session,jsonify
 from extensions import limiter
 from decorators import child_required
 from child.service import *
-from services.social import visible_posts,active_stories,story_visible_to,parent_notify,visible_profile_posts,can_interact,_age_group
+from services.social import visible_posts,active_stories,story_visible_to,parent_notify,visible_profile_posts,can_interact,_age_group,post_visible_to
 from services.usage import lock_state,heartbeat,minutes_today,start_session,close_session
 from quiz.service import quiz_due
 from database.connection import execute,fetch_one,fetch_all
@@ -199,6 +199,33 @@ def block(user_id):
 def mute(user_id):
     if user_id!=session['user_id']:execute('INSERT INTO muted_users(muter_id,muted_id) VALUES(%s,%s) ON CONFLICT DO NOTHING',(session['user_id'],user_id));record_signal(session['user_id'],'CREATOR',user_id,'MUTE')
     return redirect(request.referrer or '/child/dashboard/')
+
+@child_bp.route('/api/recommendation-action/',methods=['POST'])
+@limiter.limit('60 per minute')
+@child_required
+def recommendation_action():
+    """Record NOT_INTERESTED / HIDE feedback from the web client.
+
+    Mirrors the mobile recommendation-actions endpoint so web kids get the same
+    behavior: a hidden item is hard-excluded from future recommendations.
+    The item must be currently visible to the child; signals are only recorded
+    for content the child could actually see.
+    """
+    data=request.get_json(silent=True) or {}
+    action=str(data.get('action') or '').upper()
+    if action not in {'NOT_INTERESTED','HIDE'}:return jsonify(error='invalid_action'),400
+    source_type=str(data.get('source_type') or 'SOCIAL').upper()
+    source_type='CURATED' if source_type=='CURATED' else 'SOCIAL'
+    try:source_id=int(data.get('source_id'))
+    except (TypeError,ValueError):return jsonify(error='invalid_source_id'),400
+    if source_id<=0:return jsonify(error='invalid_source_id'),400
+    if source_type=='SOCIAL':
+        if not post_visible_to(session['user_id'],source_id):return jsonify(error='not_found'),404
+    else:
+        from services.curated_feed import curated_item_visible_to
+        if not curated_item_visible_to(session['user_id'],source_id):return jsonify(error='not_found'),404
+    record_signal(session['user_id'],source_type,source_id,action)
+    return jsonify(ok=True,action=action)
 
 @child_bp.route('/notifications/')
 @child_required

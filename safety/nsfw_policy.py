@@ -4,18 +4,71 @@ Raw scores from NudeNet, FalconsAI and CLIP are not directly comparable. This
 module keeps model-specific review/block thresholds and converts their evidence
 into a consistent child-safety action. Raw scores remain available in
 ``model_signals`` for later benchmark calibration.
+
+TIGHTEN-ONLY DEPLOYMENT CONTRACT
+--------------------------------
+The built-in defaults below are the child-safety baseline. Deployment may only
+make blocking STRICTER through environment variables (lower review/block
+thresholds). Any of the following is a hard configuration error and raises
+``SafetyConfigError`` at import time (fail fast, fail closed):
+
+* an env value HIGHER than the built-in default (would loosen blocking),
+* an env value that is not a finite number (malformed/ambiguous config),
+* an env value outside [0, 1].
+
+There is no silent fallback to the default and no clamping of a loosening
+value: silently weakening the baseline is never acceptable. Set
+
+    LITTLENET_<MODEL>_REVIEW_THRESHOLD / LITTLENET_<MODEL>_BLOCK_THRESHOLD
+
+to a value *at or below* the default to tighten, or leave them unset.
+
+This mirrors the tighten-only pattern in ``safety/yolo_policy.py`` and
+``safety/face_service.py``.
 """
 from __future__ import annotations
 
+import math
 import os
 
 
-def _env_float(name: str, default: float) -> float:
+class SafetyConfigError(RuntimeError):
+    """Raised when safety configuration would weaken the built-in baseline."""
+
+
+def _tighten_only_env(name: str, default: float) -> float:
+    """Read a threshold env var that may only tighten the default.
+
+    Returns the default when the variable is unset/blank. Raises
+    ``SafetyConfigError`` when the value is malformed, non-finite, outside
+    [0, 1], or higher than ``default`` (i.e. it would loosen blocking).
+    """
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
     try:
-        value = float(os.getenv(name, str(default)))
-    except ValueError:
-        value = default
-    return max(0.0, min(1.0, value))
+        value = float(raw)
+    except (TypeError, ValueError):
+        raise SafetyConfigError(
+            f"{name}={raw!r} is not a valid number; refusing to run with "
+            f"ambiguous NSFW safety configuration"
+        )
+    if not math.isfinite(value):
+        raise SafetyConfigError(
+            f"{name}={raw!r} is not finite; refusing to run with ambiguous "
+            f"NSFW safety configuration"
+        )
+    if value < 0.0 or value > 1.0:
+        raise SafetyConfigError(
+            f"{name}={value} is outside [0, 1]; refusing to run with invalid "
+            f"NSFW safety configuration"
+        )
+    if value > default:
+        raise SafetyConfigError(
+            f"{name}={value} would loosen the built-in default {default}; "
+            f"NSFW thresholds are tighten-only"
+        )
+    return value
 
 
 _DEFAULTS = {
@@ -27,12 +80,24 @@ _DEFAULTS = {
 }
 
 
+def _resolve_thresholds() -> dict[str, tuple[float, float]]:
+    """Validate every model threshold once, at import time (fail fast)."""
+    resolved = {}
+    for model, (review_default, block_default) in _DEFAULTS.items():
+        key = model.upper().replace('-', '_')
+        review = _tighten_only_env(f'LITTLENET_{key}_REVIEW_THRESHOLD', review_default)
+        block = _tighten_only_env(f'LITTLENET_{key}_BLOCK_THRESHOLD', block_default)
+        resolved[model] = (review, max(review, block))
+    return resolved
+
+
+# Validated once at import so a loosening/malformed deployment config fails
+# fast instead of silently moderating with weakened thresholds.
+_THRESHOLDS = _resolve_thresholds()
+
+
 def thresholds(model: str) -> tuple[float, float]:
-    key = model.upper().replace('-', '_')
-    review_default, block_default = _DEFAULTS[model]
-    review = _env_float(f'LITTLENET_{key}_REVIEW_THRESHOLD', review_default)
-    block = _env_float(f'LITTLENET_{key}_BLOCK_THRESHOLD', block_default)
-    return review, max(review, block)
+    return _THRESHOLDS[model]
 
 
 def _walk(value):
