@@ -51,6 +51,45 @@ def _embedding(img_path):
     return timed_call('deepface',run,timeout_seconds('deepface',120))
 
 
+def _embedding_after_verified_liveness(img_path):
+    """Create a Facenet512 embedding after the caller has already passed liveness.
+
+    This avoids running DeepFace anti-spoof a second time during guardian signup.
+    """
+    try:
+        import tensorflow as tf
+        tf.config.set_visible_devices([], 'GPU')
+    except Exception:
+        pass
+    # pyrefly: ignore [missing-import]
+    from deepface import DeepFace  # type: ignore
+
+    def run():
+        reps=DeepFace.represent(
+            img_path=img_path,
+            model_name='Facenet512',
+            detector_backend='opencv',
+            enforce_detection=True,
+        )
+        if not isinstance(reps,list) or len(reps)!=1:
+            raise ValueError('single_face_required')
+        return _validated_embedding(reps[0].get('embedding'))
+
+    return timed_call('deepface_embedding',run,timeout_seconds('deepface',120))
+
+
+def store_embedding(child_id, embedding, model_name='Facenet512'):
+    """Persist a validated face embedding without re-running inference."""
+    if model_name != 'Facenet512':
+        raise ValueError('invalid_model_name')
+    emb=_validated_embedding(embedding)
+    execute('''INSERT INTO face_profiles(child_id,embedding,model_name,reference_path)
+               VALUES(%s,%s::jsonb,'Facenet512',%s)
+               ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding,model_name=EXCLUDED.model_name,reference_path=EXCLUDED.reference_path,updated_at=NOW()''',
+            (child_id,json.dumps(emb),None))
+    return True
+
+
 def has_face_profile(child_id: int) -> bool:
     """Check if child already has an active enrolled face profile."""
     row = fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s AND embedding IS NOT NULL", (int(child_id),))
@@ -67,12 +106,7 @@ def enroll(child_id, path, model_name='Facenet512'):
     if model_name != 'Facenet512':
         raise ValueError('invalid_model_name')
     emb = _embedding(path)
-    emb = _validated_embedding(emb)
-    execute('''INSERT INTO face_profiles(child_id,embedding,model_name,reference_path)
-               VALUES(%s,%s::jsonb,'Facenet512',%s)
-               ON CONFLICT(child_id) DO UPDATE SET embedding=EXCLUDED.embedding,model_name=EXCLUDED.model_name,reference_path=EXCLUDED.reference_path,updated_at=NOW()''',
-            (child_id, json.dumps(emb), None))
-    return True
+    return store_embedding(child_id, emb, model_name=model_name)
 
 
 def verify(child_id,path):
@@ -131,6 +165,11 @@ def verify_adult_face(img_path):
                 age=result.get('estimated_age')
                 if result.get('is_adult') is True and (isinstance(age,bool) or not isinstance(age,(int,float)) or float(age)<auto_approve_age):
                     return {'is_adult':False,'estimated_age':age,'method':result.get('method','REMOTE_AI'),'reason':'age_estimate_ambiguous','requires_manual_review':True}
+                if 'embedding' in result:
+                    try:
+                        result['embedding']=_validated_embedding(result['embedding'])
+                    except Exception:
+                        result.pop('embedding',None)
                 return result
             return {
                 'is_adult':False,'estimated_age':None,'method':'REMOTE_AI','reason':'adult_face_verification_invalid'
@@ -177,7 +216,13 @@ def verify_adult_face(img_path):
         if not math.isfinite(age_val) or age_val<=0:raise ValueError('age_invalid')
         age_display=int(round(age_val))
         if age_val>=auto_approve_age:
-            return {'is_adult': True, 'estimated_age': age_display, 'method': 'DEEPFACE'}
+            result={'is_adult': True, 'estimated_age': age_display, 'method': 'DEEPFACE'}
+            try:
+                result['embedding']=_embedding_after_verified_liveness(img_path)
+            except Exception:
+                # Adult activation may still proceed; Face ID can be enrolled later.
+                pass
+            return result
         if age_val>=18.0:
             return {'is_adult':False,'estimated_age':age_display,'method':'DEEPFACE','reason':'age_estimate_ambiguous','requires_manual_review':True}
         return {'is_adult': False, 'estimated_age': age_display, 'method': 'DEEPFACE', 'reason': 'under_age'}
