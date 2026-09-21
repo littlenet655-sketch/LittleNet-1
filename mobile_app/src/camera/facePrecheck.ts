@@ -223,8 +223,11 @@ export function evaluateLivenessFrame(
 
   // If eye classification is available from ML Kit:
   if (leftEye !== undefined && rightEye !== undefined) {
-    const eyesOpen = leftEye > 0.55 && rightEye > 0.55;
-    const eyesClosed = leftEye < 0.35 && rightEye < 0.35;
+    // ML Kit eye probabilities fluctuate slightly even when a user is looking
+    // straight at the camera. A lower open threshold removes unnecessary waiting
+    // while the closed threshold remains strict enough to require a real blink.
+    const eyesOpen = leftEye >= 0.45 && rightEye >= 0.45;
+    const eyesClosed = leftEye <= 0.35 && rightEye <= 0.35;
 
     let nextStage: LivenessStage = currentStage;
     if (currentStage === 'WAITING_FOR_OPEN' || currentStage === 'WAITING_FOR_TURN') {
