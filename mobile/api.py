@@ -1123,36 +1123,94 @@ def register_mobile_api(bp):
             except Exception as exc:
                 result = {"is_adult": False, "reason": "adult_face_service_unavailable", "error": str(exc)}
 
-            if result.get("reason") == "under_age":
-                return jsonify(error="adult_verification_failed", reason="under_age"), 403
-
             if not result.get("is_adult"):
-                reason = result.get("reason")
-                if reason in ("adult_face_service_unavailable", "liveness_unavailable", "adult_face_error"):
+                reason = str(result.get("reason") or "adult_face_required")
+                try:
+                    log(
+                        int(pending["uid"]),
+                        "PARENT_LIVENESS_FAILED",
+                        {"reason": reason, "method": result.get("method")},
+                    )
+                except Exception:
+                    # Verification must not fail just because audit telemetry is unavailable.
+                    pass
+
+                if reason == "under_age":
+                    return jsonify(
+                        error="adult_verification_failed",
+                        reason=reason,
+                        message="Adult age verification did not pass.",
+                    ), 403
+                if reason == "single_face_required":
+                    return jsonify(
+                        error="single_face_required",
+                        reason=reason,
+                        message="Keep exactly one face fully inside the frame and try again.",
+                    ), 422
+                if reason == "liveness_failed":
+                    return jsonify(
+                        error="liveness_failed",
+                        reason=reason,
+                        message="Live-face verification did not pass. Look straight at the camera and blink again.",
+                    ), 422
+                if reason == "age_estimate_ambiguous":
+                    return jsonify(
+                        error="age_estimate_ambiguous",
+                        reason=reason,
+                        message="Adult age could not be confirmed confidently from this photo. Retake it in clear, even lighting.",
+                    ), 422
+                if reason == "age_verification_unavailable":
+                    return jsonify(
+                        error="age_verification_unavailable",
+                        reason=reason,
+                        message="Adult age verification is temporarily unavailable. Please try again.",
+                    ), 503
+                if reason in (
+                    "adult_face_service_unavailable",
+                    "liveness_unavailable",
+                    "adult_face_error",
+                    "adult_face_verification_invalid",
+                    "adult_face_verification_empty",
+                ):
                     return jsonify(
                         error="adult_verification_unavailable",
+                        reason=reason,
                         message="Adult verification service is temporarily busy. Please try again.",
                     ), 503
-                return jsonify(error="adult_verification_failed", reason=reason or "adult_face_required"), 403
+                return jsonify(
+                    error="adult_verification_failed",
+                    reason=reason,
+                    message="Adult verification did not pass. Retake the live selfie and try again.",
+                ), 403
 
-            # Gracefully attempt Face ID enrollment, never fail parent activation if remote embedding throws
+            # Parent activation is independent of optional Face ID enrollment. Never
+            # create an empty/fake face profile when Facenet512 enrollment fails.
+            face_id_enrolled = False
             try:
                 enroll(int(pending["uid"]), path)
+                b_key = secrets.token_hex(32)
+                execute(
+                    """UPDATE face_profiles
+                       SET biometric_key=COALESCE(biometric_key, %s)
+                       WHERE child_id=%s AND model_name='Facenet512'""",
+                    (b_key, int(pending["uid"])),
+                )
+                face_id_enrolled = True
             except Exception:
-                pass
-
-            b_key = secrets.token_hex(32)
-            execute(
-                """INSERT INTO face_profiles(child_id, embedding, model_name, biometric_key)
-                   VALUES(%s, '[]'::jsonb, 'LocalBiometricV1', %s)
-                   ON CONFLICT (child_id) DO UPDATE SET biometric_key=COALESCE(face_profiles.biometric_key, EXCLUDED.biometric_key)""",
-                (int(pending["uid"]), b_key),
-            )
+                face_id_enrolled = False
 
             execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'", (int(pending["uid"]),))
             user = fetch_one("SELECT * FROM users WHERE user_id=%s", (int(pending["uid"]),))
             if not user or user.get("account_status") != "ACTIVE":
                 return jsonify(error="parent_activation_failed"), 500
+            try:
+                log(
+                    int(pending["uid"]),
+                    "PARENT_LIVENESS_VERIFIED",
+                    {"method": result.get("method"), "face_id_enrolled": face_id_enrolled},
+                )
+            except Exception:
+                pass
             return _mobile_login_response(user, "PARENT_LIVENESS")
         except Exception as exc:
             return jsonify(error="adult_liveness_failed", reason=str(exc)), 400
