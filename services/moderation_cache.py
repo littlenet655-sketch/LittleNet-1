@@ -21,7 +21,16 @@ DEFAULT_CACHE_VERSION = "2026-09-20-v1"
 
 
 def cache_version() -> str:
-    return (os.getenv("LITTLENET_MODERATION_CACHE_VERSION") or DEFAULT_CACHE_VERSION).strip()[:80]
+    base = (os.getenv("LITTLENET_MODERATION_CACHE_VERSION") or DEFAULT_CACHE_VERSION).strip() or DEFAULT_CACHE_VERSION
+    # Keep the current cache key byte-for-byte identical while the custom text
+    # model is off/shadow. Once enforce is selected, append its declared release
+    # so legacy text evidence can never be reused under a new model.
+    mode = (os.getenv("LITTLENET_TRAINED_TEXT_MODE") or "off").strip().lower()
+    release = (os.getenv("LITTLENET_TRAINED_TEXT_RELEASE") or "").strip()
+    if mode == "enforce":
+        suffix = release or "unversioned"
+        return f"{base}|text:{suffix}"[:80]
+    return base[:80]
 
 
 def _ttl_days() -> int:
