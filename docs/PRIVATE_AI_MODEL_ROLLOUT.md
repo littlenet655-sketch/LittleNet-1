@@ -12,31 +12,39 @@ Image checkpoints:
 - `/cache/models/littlenet_core_safety_v2.pth`
 - `/cache/models/littlenet_weapons_violence_v3.pth`
 
-Text bundle:
+Text bundle — current Final V2 artifact:
 
-- `/cache/models/littlenet_text_safety/config.json`
-- `/cache/models/littlenet_text_safety/model.safetensors` or `pytorch_model.bin`
-- normal Hugging Face tokenizer files
-- `/cache/models/littlenet_text_safety/littlenet_metadata.json`
+- `/cache/models/littlenet_text_safety/littlenet_text_model.pt`
+- `/cache/models/littlenet_text_safety/metadata.json`
+- `/cache/models/littlenet_text_safety/dual_threshold_policy.json` when present
+- `/cache/models/littlenet_text_safety/thresholds_validation.json` when present
+- tokenizer files in `/cache/models/littlenet_text_safety/`
+- saved encoder/config in `/cache/models/littlenet_text_safety/encoder/`
+
+The adapter matches the trained V2 architecture: multilingual DistilBERT AutoModel,
+first-token embedding, Dropout(0.20), Linear(hidden_size, 13), max length 128.
+
+Frozen V2 label order:
+
+`sexual, grooming, bullying, hate, violence, self_harm, drugs, alcohol, smoking, gambling, profanity, pii_request, contact_request`
+
+A standard Hugging Face sequence-classification bundle remains supported for future
+model versions.
 
 Never commit private trained checkpoints to Git.
 
-## Text metadata contract
+## Optional metadata contract for future HF bundles
 
 ```json
 {
   "format": "huggingface_sequence_classification",
-  "release": "text-v2-epoch3",
+  "release": "text-future-release",
   "labels": ["label_a", "label_b"],
-  "thresholds": {
-    "label_a": 0.50,
-    "label_b": 0.50
-  },
+  "review_thresholds": {"label_a": 0.50, "label_b": 0.50},
+  "block_thresholds": {"label_a": 0.80, "label_b": 0.80},
   "activation": "sigmoid",
   "max_length": 256,
-  "signal_map": {
-    "optional_label_name": "toxicity"
-  }
+  "signal_map": {"optional_label_name": "toxicity"}
 }
 ```
 
