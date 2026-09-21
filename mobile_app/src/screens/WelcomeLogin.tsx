@@ -114,7 +114,7 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
   return (
     <Screen>
       <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'padding'}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
         keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 30}
         style={{ flex: 1 }}
       >
@@ -165,6 +165,7 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
             placeholder={identifierPlaceholder}
             autoCapitalize="none"
             autoCorrect={false}
+            keyboardType={mode === 'kids' ? 'default' : 'email-address'}
             value={identifier}
             onChangeText={setIdentifier}
           />
@@ -230,7 +231,7 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
 
 const styles = StyleSheet.create({
   welcomeScroll: { flexGrow: 1, justifyContent: 'center', paddingBottom: spacing.xl },
-  scrollContent: { paddingBottom: 220 },
+  scrollContent: { paddingBottom: spacing.xl },
   welcomeHero: { paddingHorizontal: spacing.lg, paddingTop: spacing.xl, paddingBottom: spacing.lg, alignItems: 'center' },
   headerHero: { alignItems: 'center', paddingTop: spacing.lg, paddingBottom: spacing.md, paddingHorizontal: spacing.lg },
   heroLogoBadge: {

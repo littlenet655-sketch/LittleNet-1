@@ -16,8 +16,54 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
   const [dob, setDob] = useState('');
   const [guardianAgreed, setGuardianAgreed] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [submittedToken, setSubmittedToken] = useState<string | null>(null);
   const [error, setError] = useState('');
+  const [fieldErrors, setFieldErrors] = useState<{
+    fullName?: string;
+    username?: string;
+    email?: string;
+    password?: string;
+    dob?: string;
+  }>({});
   const [keyboardHeight, setKeyboardHeight] = useState(0);
+
+  const clearFieldError = (key: 'fullName' | 'username' | 'email' | 'password' | 'dob') =>
+    setFieldErrors((prev) => (prev[key] ? { ...prev, [key]: undefined } : prev));
+
+  /** Client-side validation before the register call; the server re-validates. */
+  function validateRegister(): typeof fieldErrors {
+    const errors: typeof fieldErrors = {};
+    if (fullName.trim().length < 2) errors.fullName = 'Enter your full name.';
+    if (!/^[A-Za-z0-9_.]{3,30}$/.test(username.trim()))
+      errors.username = 'Use 3–30 letters, numbers, _ or .';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()))
+      errors.email = 'Enter a valid email address.';
+    if (password.length < 8) errors.password = 'Password must be at least 8 characters.';
+    const dobMatch = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dob.trim());
+    if (!dobMatch) {
+      errors.dob = 'Use the format YYYY-MM-DD.';
+    } else {
+      const year = Number(dobMatch[1]);
+      const month = Number(dobMatch[2]);
+      const day = Number(dobMatch[3]);
+      const birth = new Date(year, month - 1, day);
+      const validDate =
+        birth.getFullYear() === year && birth.getMonth() === month - 1 && birth.getDate() === day;
+      if (!validDate) {
+        errors.dob = 'Enter a valid date.';
+      } else {
+        const today = new Date();
+        let age = today.getFullYear() - birth.getFullYear();
+        const hadBirthday =
+          today.getMonth() > birth.getMonth() ||
+          (today.getMonth() === birth.getMonth() && today.getDate() >= birth.getDate());
+        if (!hadBirthday) age -= 1;
+        if (age < 18) errors.dob = 'You must be at least 18 years old.';
+      }
+    }
+    return errors;
+  }
 
   const scrollRef = useRef<ScrollView>(null);
 
@@ -47,8 +93,15 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
   };
 
   async function submit() {
+    if (busy || submitted) return;
     if (!guardianAgreed) {
       setError('You must certify that you are the legal adult guardian.');
+      return;
+    }
+    const validation = validateRegister();
+    setFieldErrors(validation);
+    if (Object.keys(validation).length > 0) {
+      setError('Please fix the highlighted fields.');
       return;
     }
     setBusy(true);
@@ -61,6 +114,11 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
         password,
         dob: dob.trim(),
       });
+      // Registration succeeded: remember the pending token so going back from
+      // the OTP screen offers "Continue to Verification" instead of orphaning
+      // the first token with a second registration.
+      setSubmittedToken(response.pending_token);
+      setSubmitted(true);
       navigation.navigate('OtpVerify', {
         pendingToken: response.pending_token,
         emailSent: response.email_sent,
@@ -116,8 +174,9 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
               label="Full Name"
               placeholder="e.g. Dr. Ramesh Kumar"
               value={fullName}
-              onChangeText={setFullName}
+              onChangeText={(text) => { setFullName(text); clearFieldError('fullName'); }}
               onFocus={() => scrollToInput(20)}
+              error={fieldErrors.fullName}
             />
             <Field
               label="Parent Username"
@@ -126,8 +185,9 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
               autoCorrect={false}
               helper="3–30 letters, numbers, _ or ."
               value={username}
-              onChangeText={setUsername}
+              onChangeText={(text) => { setUsername(text); clearFieldError('username'); }}
               onFocus={() => scrollToInput(75)}
+              error={fieldErrors.username}
             />
             <Field
               label="Email Address"
@@ -136,24 +196,27 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
               autoCorrect={false}
               keyboardType="email-address"
               value={email}
-              onChangeText={setEmail}
+              onChangeText={(text) => { setEmail(text); clearFieldError('email'); }}
               onFocus={() => scrollToInput(135)}
+              error={fieldErrors.email}
             />
             <Field
               label="Date of Birth (YYYY-MM-DD)"
               placeholder="1990-05-14"
               helper="You must be at least 18 years old. Server validates age."
               value={dob}
-              onChangeText={setDob}
+              onChangeText={(text) => { setDob(text); clearFieldError('dob'); }}
               onFocus={() => scrollToInput(195)}
+              error={fieldErrors.dob}
             />
             <Field
               label="Password"
               placeholder="Minimum 8 characters"
               secureTextEntry={!showPassword}
               value={password}
-              onChangeText={setPassword}
+              onChangeText={(text) => { setPassword(text); clearFieldError('password'); }}
               onFocus={() => scrollToInput(265)}
+              error={fieldErrors.password}
               rightAction={
                 <Pressable onPress={() => setShowPassword((prev) => !prev)} hitSlop={8}>
                   <Text style={styles.pwdToggle}>{showPassword ? 'Hide' : 'Show'}</Text>
@@ -184,7 +247,18 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
 
             {error ? <Notice message={error} /> : null}
 
-            <Button label={busy ? 'Creating Account…' : 'Create Account →'} onPress={submit} loading={busy} disabled={busy} />
+            <Button
+              label={submitted ? 'Continue to Verification →' : busy ? 'Creating Account…' : 'Create Account →'}
+              onPress={() => {
+                if (submitted && submittedToken) {
+                  navigation.navigate('OtpVerify', { pendingToken: submittedToken });
+                  return;
+                }
+                void submit();
+              }}
+              loading={busy}
+              disabled={busy}
+            />
 
             <View style={styles.signupBox}>
               <Text style={styles.signupMuted}>Already registered?</Text>
@@ -276,6 +350,7 @@ export function OtpVerifyScreen({ route }: AuthScreenProps<'OtpVerify'>) {
   }
 
   async function resend() {
+    if (resending || busy) return;
     setResending(true);
     setError('');
     try {
@@ -371,8 +446,8 @@ export function OtpVerifyScreen({ route }: AuthScreenProps<'OtpVerify'>) {
             {error ? <Notice message={error} /> : null}
             {info ? <Notice tone="info" message={info} /> : null}
 
-            <Button label={busy ? 'Verifying…' : 'Verify Email →'} onPress={submit} loading={busy} disabled={busy} />
-            <Button label={resending ? 'Resending Code…' : 'Resend Verification Code'} variant="secondary" onPress={resend} disabled={resending} />
+            <Button label={busy ? 'Verifying…' : 'Verify Email →'} onPress={submit} loading={busy} disabled={busy || resending} />
+            <Button label={resending ? 'Resending Code…' : 'Resend Verification Code'} variant="secondary" onPress={resend} disabled={resending || busy} />
 
             <View style={styles.flowInfoBox}>
               <Feather name="shield" size={16} color="#0284C7" />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { answerQuiz, fetchQuiz } from '../api/auth';
@@ -43,6 +43,26 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
   const [gateMessage, setGateMessage] = useState('');
   const [correctCount, setCorrectCount] = useState(0);
   const [earnedXp, setEarnedXp] = useState(0);
+  /**
+   * Per-question submission guard. Stays engaged after answerQuiz resolves
+   * until the 1.1s feedback timeout fires, so a second tap during the
+   * feedback window cannot double-submit the same question (double XP,
+   * double correctCount, double index advance). The ref is the synchronous
+   * guard; the state drives the disabled UI on the option Pressables.
+   */
+  const submittedKeyRef = useRef<string | null>(null);
+  const [submittedKey, setSubmittedKey] = useState<string | null>(null);
+  const timeoutsRef = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  function clearPendingTimeouts() {
+    timeoutsRef.current.forEach(clearTimeout);
+    timeoutsRef.current = [];
+  }
+
+  function scheduleTimeout(cb: () => void, ms: number) {
+    const id = setTimeout(cb, ms);
+    timeoutsRef.current.push(id);
+  }
 
   const load = useCallback(async () => {
     if (!session) return;
@@ -76,6 +96,9 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
     void load();
   }, [load]);
 
+  // Fix 2: navigating away mid-feedback-window must not fire setState/completeQuiz.
+  useEffect(() => clearPendingTimeouts, []);
+
   /** Authoritative completion: refresh gates, proceed only when clear. */
   async function completeQuiz() {
     setBusy(true);
@@ -87,7 +110,7 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
         await load();
         return;
       }
-      const destination = (await loadPendingDestination(secureStoreBackend)) ?? 'KidsHome';
+      const destination = (await loadPendingDestination(secureStoreBackend)) ?? 'KidsTabs';
       await clearPendingDestination(secureStoreBackend);
       navigation.reset({ index: 0, routes: [{ name: destination as never }] });
     } catch (err) {
@@ -102,6 +125,10 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
     if (!session || busy || phase !== 'ready') return;
     const current = items[index];
     if (!current) return;
+    const key = `${index}:${current.quiz_id}`;
+    if (submittedKeyRef.current === key) return;
+    submittedKeyRef.current = key;
+    setSubmittedKey(key);
     setBusy(true);
     setSelectedOption(option);
     setFeedback('');
@@ -113,23 +140,30 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
       setFeedback(result.correct ? `🌟 Correct! +${result.xp} XP. ${result.explanation ?? ''}`.trim() : `💡 ${result.explanation ?? 'Keep trying!'}`.trim());
       const lastItem = index + 1 >= items.length;
       if (result.onboarding_complete || !result.required || lastItem) {
-        setTimeout(() => {
+        scheduleTimeout(() => {
+          submittedKeyRef.current = null;
+          setSubmittedKey(null);
           if (required) void completeQuiz();
           else setPhase('complete');
         }, 1100);
         return;
       }
-      setTimeout(() => {
+      scheduleTimeout(() => {
         setIndex((value) => value + 1);
         setSelectedOption(null);
         setLastCorrect(null);
         setFeedback('');
+        submittedKeyRef.current = null;
+        setSubmittedKey(null);
       }, 1100);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) return;
       setFeedback(err instanceof ApiError ? err.message : 'Could not check that answer. Try again.');
       setSelectedOption(null);
       setLastCorrect(null);
+      // Allow retry after a failure: the guard only blocks resubmission of an accepted answer.
+      submittedKeyRef.current = null;
+      setSubmittedKey(null);
     } finally {
       setBusy(false);
     }
@@ -355,7 +389,7 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
               return (
                 <Pressable
                   key={option}
-                  disabled={busy}
+                  disabled={busy || submittedKey !== null}
                   onPress={() => void submitAnswer(option)}
                   style={({ pressed }) => [
                     styles.optionCard,

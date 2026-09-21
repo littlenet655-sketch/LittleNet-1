@@ -7,7 +7,6 @@ import { DiscoverScreen } from './DiscoverScreen';
 import { CreateScreen } from './CreateScreen';
 import { ReelsScreen } from './ReelsScreen';
 import { OwnProfileScreen } from './OwnProfileScreen';
-import { Button, LoadingState, Screen } from '../../ui/components';
 
 export function KidsTabsHost(props: ChildScreenProps<'KidsTabs'>) {
   const { signOut } = useAuth();
@@ -29,10 +28,3 @@ export function KidsTabsHost(props: ChildScreenProps<'KidsTabs'>) {
     />
   );
 }
-
-export function KidsHomeRedirect(props: ChildScreenProps<'KidsHome'>) {
-  (props.navigation as unknown as { replace: (r: string, p: object) => void }).replace('KidsTabs', { tab: 'FeedTab' });
-  return <Screen><LoadingState message="Opening your feed…" /></Screen>;
-}
-
-void KidsTabsHost;

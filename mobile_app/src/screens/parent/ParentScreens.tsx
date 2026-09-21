@@ -223,7 +223,7 @@ function ChildCard({
           <View style={styles.quizScoreChip}>
             <Feather name="award" size={12} color="#2563EB" />
             <Text style={styles.quizScoreText}>
-              Quiz: {child.quiz_7d.accuracy}% ({child.quiz_7d.correct}/{child.quiz_7d.attempted})
+              Quiz: {child.quiz_7d?.accuracy ?? 0}% ({child.quiz_7d?.correct ?? 0}/{child.quiz_7d?.attempted ?? 0})
             </Text>
           </View>
           <View style={styles.behaviorChip}>
@@ -882,9 +882,9 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
             <View style={[styles.statIconBadge, { backgroundColor: '#F5F3FF' }]}>
               <Feather name="award" size={16} color="#7C3AED" />
             </View>
-            <Text style={styles.gridStatNumber}>{child.quiz_7d.accuracy}%</Text>
+            <Text style={styles.gridStatNumber}>{child.quiz_7d?.accuracy ?? 0}%</Text>
             <Text style={styles.gridStatLabel}>Quiz Mastery</Text>
-            <Text style={styles.gridStatSub}>{child.quiz_7d.correct} of {child.quiz_7d.attempted} correct</Text>
+            <Text style={styles.gridStatSub}>{child.quiz_7d?.correct ?? 0} of {child.quiz_7d?.attempted ?? 0} correct</Text>
           </View>
 
           {/* Behavior / Well-being Stat */}
@@ -1217,6 +1217,7 @@ export function ParentReviewScreen({ navigation, route }: ParentScreenProps<'Par
   });
 
   if (query.isPending) return <Screen><LoadingState message="Loading review details…" /></Screen>;
+  if (query.isError) return <Screen><ErrorState message={errorText(query.error)} onRetry={() => void query.refetch()} /></Screen>;
   if (!event) return <Screen><EmptyState title="Review unavailable" body="It may already be resolved or no longer belongs to your queue." /></Screen>;
 
   return (
@@ -1398,7 +1399,9 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
     );
   }
 
-  if (!child) return <Screen><LoadingState message="Loading screen time…" /></Screen>;
+  if (dashboard.isPending) return <Screen><LoadingState message="Loading screen time…" /></Screen>;
+  if (dashboard.isError) return <Screen><ErrorState message={errorText(dashboard.error)} onRetry={() => void dashboard.refetch()} /></Screen>;
+  if (!child) return <Screen><EmptyState title="Child not found" body="This child is no longer on your dashboard. Pick another child to manage screen time." /></Screen>;
 
   const valid = Number.isInteger(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 1440;
   const limit = Number(minutes);

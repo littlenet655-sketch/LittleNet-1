@@ -1,12 +1,18 @@
 import type { ReactNode } from 'react';
 import type { StyleProp, TextInputProps, ViewStyle } from 'react-native';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { ApiError } from '../api/client';
 import { colors, radius, spacing, type } from './tokens';
 
 export function Screen({ children }: { children: ReactNode }) {
-  return <View style={styles.screen}>{children}</View>;
+  const insets = useSafeAreaInsets();
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+      {children}
+    </View>
+  );
 }
 
 export function Card({ children, style }: { children: ReactNode; style?: StyleProp<ViewStyle> }) {
@@ -91,9 +97,9 @@ export function Field({ label, error, helper, rightAction, style, ...rest }: Fie
 
 export function StepIndicator({
   step,
-  total = 3,
+  total = 2,
   label,
-  steps = ['Guardian', 'Verify Email', 'Adult Check'],
+  steps = ['Guardian', 'Verify Email'],
 }: {
   step: number;
   total?: number;

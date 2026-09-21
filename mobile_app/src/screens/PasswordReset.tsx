@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ScrollView } from 'react-native';
+import { KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { requestPasswordReset, resetPassword } from '../api/auth';
 import { validateResetInput } from '../auth/resetValidation';
 import type { AuthScreenProps } from '../navigation/types';
@@ -20,6 +20,10 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'ForgotPass
     setError('');
     try {
       const response = await requestPasswordReset(identifier.trim());
+      if (!response.ok) {
+        setError(response.message || 'Could not send a reset code. Try again.');
+        return;
+      }
       navigation.navigate('ResetPassword', {
         userId: response.user_id,
         maskedEmail: response.masked_email,
@@ -36,14 +40,20 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'ForgotPass
 
   return (
     <Screen>
-      <ScrollView>
-        <BrandHeader title="Reset password" subtitle="Enter your username or email and we will send a 6-digit code (15 minutes)." />
-        <Card>
-          <Field label="Username or email" autoCapitalize="none" autoCorrect={false} value={identifier} onChangeText={setIdentifier} />
-          {error ? <Notice message={error} /> : null}
-          <Button label={busy ? 'Sending…' : 'Send reset code'} onPress={submit} loading={busy} disabled={busy} />
-        </Card>
-      </ScrollView>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 30}
+        style={{ flex: 1 }}
+      >
+        <ScrollView keyboardShouldPersistTaps="handled">
+          <BrandHeader title="Reset password" subtitle="Enter your username or email and we will send a 6-digit code (15 minutes)." />
+          <Card>
+            <Field label="Username or email" autoCapitalize="none" autoCorrect={false} value={identifier} onChangeText={setIdentifier} />
+            {error ? <Notice message={error} /> : null}
+            <Button label={busy ? 'Sending…' : 'Send reset code'} onPress={submit} loading={busy} disabled={busy} />
+          </Card>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }
@@ -78,22 +88,28 @@ export function ResetPasswordScreen({ navigation, route }: AuthScreenProps<'Rese
 
   return (
     <Screen>
-      <ScrollView>
-        <BrandHeader title="New password" subtitle={`Code sent to ${maskedEmail}.`} />
-        <Card>
-          {message ? <Notice tone="info" message={message} /> : null}
-          <Field label="6-digit code" keyboardType="number-pad" maxLength={6} value={code} onChangeText={setCode} />
-          <Field label="New password (min 8)" secureTextEntry value={password} onChangeText={setPassword} />
-          <Field label="Confirm new password" secureTextEntry value={confirm} onChangeText={setConfirm} />
-          {error ? <Notice message={error} /> : null}
-          {done ? <Notice tone="ok" message={done} /> : null}
-          {done ? (
-            <Button label="Back to login" onPress={() => navigation.navigate('Login')} />
-          ) : (
-            <Button label={busy ? 'Resetting…' : 'Reset password'} onPress={submit} loading={busy} disabled={busy} />
-          )}
-        </Card>
-      </ScrollView>
+      <KeyboardAvoidingView
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 64 : 30}
+        style={{ flex: 1 }}
+      >
+        <ScrollView keyboardShouldPersistTaps="handled">
+          <BrandHeader title="New password" subtitle={`Code sent to ${maskedEmail}.`} />
+          <Card>
+            {message ? <Notice tone="info" message={message} /> : null}
+            <Field label="6-digit code" keyboardType="number-pad" maxLength={6} value={code} onChangeText={setCode} />
+            <Field label="New password (min 8)" secureTextEntry value={password} onChangeText={setPassword} />
+            <Field label="Confirm new password" secureTextEntry value={confirm} onChangeText={setConfirm} />
+            {error ? <Notice message={error} /> : null}
+            {done ? <Notice tone="ok" message={done} /> : null}
+            {done ? (
+              <Button label="Back to login" onPress={() => navigation.navigate('Login')} />
+            ) : (
+              <Button label={busy ? 'Resetting…' : 'Reset password'} onPress={submit} loading={busy} disabled={busy} />
+            )}
+          </Card>
+        </ScrollView>
+      </KeyboardAvoidingView>
     </Screen>
   );
 }

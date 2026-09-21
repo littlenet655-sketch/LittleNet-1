@@ -3,7 +3,7 @@ import type { GateKind } from '../api/errors';
 import type { OnboardingState } from '../api/auth';
 
 export type ChildRoute =
-  | 'FaceEnroll' | 'Quiz' | 'KidsHome' | 'KidsTabs'
+  | 'FaceEnroll' | 'Quiz' | 'KidsTabs'
   | 'FeedTab' | 'DiscoverTab' | 'CreateTab' | 'ReelsTab' | 'ProfileTab'
   | 'Stories' | 'NotificationsTab' | 'Conversations' | 'Chat'
   | 'ChatDetails' | 'NewMessage' | 'SavedContent' | 'EditProfile' | 'Connections'
@@ -13,7 +13,7 @@ export type ChildRoute =
 export function childNextRoute(faceRequired: boolean, quizRequired: boolean): ChildRoute {
   if (faceRequired) return 'FaceEnroll';
   if (quizRequired) return 'Quiz';
-  return 'KidsHome';
+  return 'KidsTabs';
 }
 
 /** Map a backend gate to the screen that resolves it, if any. */
@@ -61,7 +61,7 @@ export function resetsDisplayState(resetsRemaining: number | null): ResetsDispla
 export function resolveChildRoute(
   onboarding: OnboardingState | null | undefined,
   _fallbackQuizRequired: boolean,
-  current: ChildRoute = 'KidsHome',
+  current: ChildRoute = 'KidsTabs',
 ): ChildRoute {
   if (!onboarding) return 'FaceEnroll';
   if (onboarding.face_required) return 'FaceEnroll';

@@ -13,7 +13,6 @@ export type AuthStackParamList = {
 export type ChildStackParamList = {
   FaceEnroll: undefined;
   Quiz: { returnTo?: string } | undefined;
-  KidsHome: undefined;
   KidsTabs: { tab?: string } | undefined;
   FeedTab: undefined;
   DiscoverTab: undefined;

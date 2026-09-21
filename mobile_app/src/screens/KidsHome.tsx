@@ -1,7 +1,6 @@
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useAuth } from '../auth/AuthProvider';
-import type { ChildScreenProps } from '../navigation/types';
 import { Button, Screen } from '../ui/components';
 import { colors, radius, spacing } from '../ui/tokens';
 
@@ -50,10 +49,18 @@ function HubCard({ icon, title, subtitle, badge, accentColor, onPress }: HubCard
  * Gives kids an inspiring starting point to launch their feed, explore content,
  * take quizzes, and see their safety status.
  */
-export function KidsHomeScreen({ navigation }: ChildScreenProps<'KidsHome'>) {
+export function KidsHomeScreen({ navigation }: {
+  navigation: {
+    navigate: (route: 'Quiz') => void;
+    replace: (route: 'KidsTabs', params: { tab: string }) => void;
+  };
+}) {
   const { session, signOut } = useAuth();
-  const rawName = session?.user.full_name || session?.user.username || 'Friend';
-  const firstName = rawName.split(' ')[0] ?? 'Friend';
+  const rawName = (session?.user.full_name || session?.user.username || 'Friend').trim();
+  const firstName = rawName.split(' ')[0] || 'Friend';
+  /** True only when the server gates report face enrollment as complete/not required. */
+  const faceKeySet = session?.onboarding?.face_required === false;
+  const loginLabel = session?.user.username ? `Logged in as @${session.user.username}` : 'Logged in';
 
   function openTab(tab: 'FeedTab' | 'DiscoverTab' | 'CreateTab' | 'ReelsTab' | 'ProfileTab') {
     (navigation as unknown as { replace: (r: string, p: object) => void }).replace('KidsTabs', { tab });
@@ -82,20 +89,18 @@ export function KidsHomeScreen({ navigation }: ChildScreenProps<'KidsHome'>) {
         </View>
 
         {/* Safety & Status Highlights */}
-        <View style={styles.safetyRow}>
-          <View style={styles.safetyBadge}>
-            <Feather name="check-circle" size={14} color="#10B981" />
-            <Text style={styles.safetyBadgeText}>Face Key Set</Text>
+        {/* Rendered only from authoritative onboarding gates. No badge is shown
+            for safety claims (AI guard, parent supervision) that have no data
+            source on the session, and the face badge appears only when
+            face_required is false (enrolled / not required). */}
+        {faceKeySet ? (
+          <View style={styles.safetyRow}>
+            <View style={styles.safetyBadge}>
+              <Feather name="check-circle" size={14} color="#10B981" />
+              <Text style={styles.safetyBadgeText}>Face Key Set</Text>
+            </View>
           </View>
-          <View style={styles.safetyBadge}>
-            <Feather name="cpu" size={14} color="#0095F6" />
-            <Text style={styles.safetyBadgeText}>AI Guard Active</Text>
-          </View>
-          <View style={styles.safetyBadge}>
-            <Feather name="lock" size={14} color="#8B5CF6" />
-            <Text style={styles.safetyBadgeText}>Parent Supervised</Text>
-          </View>
-        </View>
+        ) : null}
 
         {/* Primary Call to Action */}
         <View style={styles.primaryActionWrap}>
@@ -174,7 +179,7 @@ export function KidsHomeScreen({ navigation }: ChildScreenProps<'KidsHome'>) {
 
         {/* Footer Account & Logout */}
         <View style={styles.footerSection}>
-          <Text style={styles.footerUserText}>Logged in as @{session?.user.username}</Text>
+          <Text style={styles.footerUserText}>{loginLabel}</Text>
           <Button
             label="Log out of LittleNet"
             variant="secondary"

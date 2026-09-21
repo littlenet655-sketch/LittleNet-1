@@ -9,7 +9,7 @@ describe('reactive child gate routing (face -> quiz -> home)', () => {
   it('orders gates face first, then quiz, then home', () => {
     assert.equal(childNextRoute(true, true), 'FaceEnroll');
     assert.equal(childNextRoute(false, true), 'Quiz');
-    assert.equal(childNextRoute(false, false), 'KidsHome');
+    assert.equal(childNextRoute(false, false), 'KidsTabs');
   });
 
   it('cold restore with face_required stays on FaceEnroll', () => {

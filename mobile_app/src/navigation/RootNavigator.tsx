@@ -4,7 +4,6 @@ import type { NavigationProp } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { useAuth } from '../auth/AuthProvider';
 import { FaceEnrollScreen, FaceLoginScreen } from '../screens/ChildFace';
-import { KidsHomeScreen } from '../screens/KidsHome';
 import { KidsTabsHost } from '../screens/kids/KidsTabsHost';
 import { FeedScreen } from '../screens/kids/FeedScreen';
 import { StoriesScreen } from '../screens/kids/StoriesScreen';
@@ -138,7 +137,6 @@ function ChildNavigator() {
     <ChildStack.Navigator initialRouteName={initialRoute} screenOptions={cleanStackOptions}>
       <ChildStack.Screen name="FaceEnroll" component={withGateSync(FaceEnrollScreen)} options={{ title: 'Face setup' }} />
       <ChildStack.Screen name="Quiz" component={withGateSync(QuizScreen)} options={{ title: 'Safety quiz' }} />
-      <ChildStack.Screen name="KidsHome" component={withGateSync(KidsHomeScreen)} options={{ title: 'Home' }} />
       <ChildStack.Screen name="KidsTabs" component={withGateSync(KidsTabsHost)} options={{ headerShown: false }} />
       <ChildStack.Screen name="FeedTab" component={withGateSync(FeedScreen)} options={{ title: 'Home' }} />
       <ChildStack.Screen name="DiscoverTab" component={withGateSync(DiscoverScreen)} options={{ title: 'Discover' }} />

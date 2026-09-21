@@ -7,7 +7,7 @@ describe('onboarding navigation', () => {
   it('orders child gates face -> quiz -> home', () => {
     assert.equal(childNextRoute(true, true), 'FaceEnroll');
     assert.equal(childNextRoute(false, true), 'Quiz');
-    assert.equal(childNextRoute(false, false), 'KidsHome');
+    assert.equal(childNextRoute(false, false), 'KidsTabs');
   });
 
   it('routes backend gates to their resolving screens', () => {
