@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { searchDiscover, type KidSummary } from '../../api/kidsProfiles';
@@ -125,8 +125,13 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         </View>
       ) : null}
 
-      {/* Filter Tabs */}
-      <View style={styles.filterTabs}>
+      {/* Category chips — horizontal pill strip */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        style={styles.chipsStrip}
+        contentContainerStyle={styles.chipsRow}
+      >
         {(['People', 'Posts', 'Reels', 'Learn'] as const).map((item) => {
           const active = kind === item;
           const icon = item === 'People' ? 'users' : item === 'Posts' ? 'grid' : item === 'Reels' ? 'film' : 'book-open';
@@ -141,7 +146,7 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       {error ? <GateNotice error={error} /> : null}
       {pii ? (
@@ -149,8 +154,10 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
       ) : null}
 
       {loading && !kids.length && !posts.length ? (
-        <View style={styles.loadingCenter}>
-          <ActivityIndicator size="large" color={colors.brand} />
+        <View style={styles.skeletonGrid} accessibilityRole="progressbar">
+          {Array.from({ length: 9 }).map((_, i) => (
+            <View key={i} style={styles.skeletonCell} />
+          ))}
         </View>
       ) : null}
 
@@ -241,12 +248,12 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         </View>
       ) : null}
 
-      {/* Posts / Reels / Learn Mode: 2-column visual grid */}
+      {/* Posts / Reels / Learn Mode: Instagram Explore 3-column grid */}
       {kind !== 'People' && filteredPosts.length > 0 ? (
         <FlatList
           data={filteredPosts}
           keyExtractor={(p) => `post:${p.post_id}`}
-          numColumns={2}
+          numColumns={3}
           contentContainerStyle={styles.gridContainer}
           columnWrapperStyle={styles.gridRow}
           showsVerticalScrollIndicator={false}
@@ -270,11 +277,6 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
                     <Feather name="play" size={11} color="#FFFFFF" />
                   </View>
                 ) : null}
-                <View style={styles.gridCaptionWrap}>
-                  <Text style={styles.gridCaption} numberOfLines={2}>
-                    {p.caption || `Post #${p.post_id}`}
-                  </Text>
-                </View>
               </Pressable>
             );
           }}
@@ -299,10 +301,10 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     gap: 8,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 12,
+    backgroundColor: '#EFEFEF',
+    borderRadius: 10,
     paddingHorizontal: 12,
-    height: 40,
+    height: 36,
   },
   searchInput: {
     flex: 1,
@@ -343,14 +345,16 @@ const styles = StyleSheet.create({
     color: '#475569',
     fontWeight: '600',
   },
-  filterTabs: {
-    flexDirection: 'row',
-    paddingHorizontal: 16,
-    paddingVertical: 10,
+  chipsStrip: {
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
     borderBottomColor: '#F0F0F0',
+  },
+  chipsRow: {
+    paddingHorizontal: 16,
+    paddingVertical: 10,
     gap: 8,
+    alignItems: 'center',
   },
   filterBtn: {
     flexDirection: 'row',
@@ -457,29 +461,26 @@ const styles = StyleSheet.create({
     color: '#64748B',
   },
   gridContainer: {
-    padding: 12,
-    gap: 10,
+    padding: 2,
   },
   gridRow: {
-    gap: 10,
+    gap: 2,
+    paddingBottom: 2,
   },
   gridItem: {
     flex: 1,
-    backgroundColor: colors.surface,
-    borderRadius: 14,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
+    aspectRatio: 1,
+    backgroundColor: '#EFEFEF',
   },
   gridThumb: {
     width: '100%',
-    height: 140,
-    backgroundColor: '#F1F5F9',
+    aspectRatio: 1,
+    backgroundColor: '#EFEFEF',
   },
   gridPlaceholder: {
     width: '100%',
-    height: 140,
-    backgroundColor: '#F1F5F9',
+    aspectRatio: 1,
+    backgroundColor: '#EFEFEF',
     justifyContent: 'center',
     alignItems: 'center',
   },
@@ -494,18 +495,16 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     alignItems: 'center',
   },
-  gridCaptionWrap: {
-    padding: 10,
+  skeletonGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    padding: 2,
   },
-  gridCaption: {
-    fontSize: 12,
-    color: colors.ink,
-    fontWeight: '600',
-    lineHeight: 16,
-  },
-  loadingCenter: {
-    paddingVertical: 50,
-    alignItems: 'center',
-    justifyContent: 'center',
+  skeletonCell: {
+    width: '33.333%',
+    aspectRatio: 1,
+    backgroundColor: '#EFEFEF',
+    borderWidth: 1,
+    borderColor: colors.background,
   },
 });

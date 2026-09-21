@@ -1,12 +1,70 @@
 import { Image, StyleSheet, Text, View } from 'react-native';
-import { colors, radius, spacing, type } from './tokens';
+import Svg, { Circle, Defs, LinearGradient, Stop } from 'react-native-svg';
+import { colors, radius, spacing, storyGradient, storySeen, type } from './tokens';
 
 export function Avatar({ uri, name, size = 36 }: { uri?: string | null; name?: string | null; size?: number }) {
   if (uri) return <Image source={{ uri }} style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]} />;
   const initial = (name ?? 'L').trim().charAt(0).toUpperCase() || 'L';
   return (
     <View style={[styles.fallback, { width: size, height: size, borderRadius: size / 2 }]}>
-      <Text style={styles.initial}>{initial}</Text>
+      <Text style={[styles.initial, { fontSize: Math.max(12, size * 0.38) }]}>{initial}</Text>
+    </View>
+  );
+}
+
+/**
+ * Instagram-style story ring: gradient stroke for unviewed stories, grey for
+ * viewed. Wrap an <Avatar> inside; the white gap is handled here.
+ */
+export function StoryRing({
+  size = 68,
+  seen = false,
+  children,
+}: {
+  size?: number;
+  seen?: boolean;
+  children: React.ReactNode;
+}) {
+  const stroke = 3;
+  const center = size / 2;
+  const r = center - stroke / 2;
+  const inner = size - stroke * 2 - 5;
+  return (
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={size} height={size} style={StyleSheet.absoluteFill}>
+        <Defs>
+          <LinearGradient id="littlenetStoryGrad" x1="0" y1="1" x2="1" y2="0">
+            {storyGradient.map((stopColor, i) => (
+              <Stop
+                key={stopColor}
+                offset={String(i / (storyGradient.length - 1))}
+                stopColor={stopColor}
+              />
+            ))}
+          </LinearGradient>
+        </Defs>
+        <Circle
+          cx={center}
+          cy={center}
+          r={r}
+          stroke={seen ? storySeen : 'url(#littlenetStoryGrad)'}
+          strokeWidth={stroke}
+          fill="none"
+        />
+      </Svg>
+      <View
+        style={{
+          width: inner,
+          height: inner,
+          borderRadius: inner / 2,
+          backgroundColor: colors.surface,
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+        }}
+      >
+        {children}
+      </View>
     </View>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useVideoPlayer } from 'expo-video';
 import { completeUpload, formatBytes, requestUploadSession, type UploadSession, type UploadStage } from '../../api/kidsUpload';
@@ -7,9 +7,9 @@ import { useAuth } from '../../auth/AuthProvider';
 import { isUploadCancelled, putFileToSignedUrl } from '../../kids/directUpload';
 import { capturePostMedia, localMediaSize, pickGalleryMedia, validateMediaIdentity, type PickedMedia } from '../../kids/postMedia';
 import type { ChildScreenProps } from '../../navigation/types';
-import { Card, Field, GateNotice, Notice } from '../../ui/components';
+import { Card, Field, GateNotice, Notice, StepIndicator } from '../../ui/components';
 import { NativeVideoView } from '../../ui/nativeViews';
-import { colors, spacing } from '../../ui/tokens';
+import { colors, shadow, spacing } from '../../ui/tokens';
 import { clampAspectRatio } from '../../video/types';
 
 type Kind = 'post' | 'reel' | 'story';
@@ -202,11 +202,26 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 
   const isVideo = kind === 'reel';
   const pickedIsVideo = (media?.mimeType ?? '').startsWith('video/');
+  // Visual step tracker: 1 = pick media, 2 = caption/details, 3 = sharing.
+  const flowStep = !media ? 1 : busy ? 3 : 2;
+  const flowLabels = ['Pick media', 'Add caption', 'Sharing'] as const;
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
-      {/* Mode Switcher */}
-      <View style={styles.kindSelector}>
+      {/* Creation flow steps (visual only) */}
+      <StepIndicator
+        step={flowStep}
+        total={3}
+        label={flowLabels[flowStep - 1]}
+        steps={['Pick media', 'Add caption', 'Sharing']}
+      />
+
+      {/* Mode Switcher — pill chips */}
+      <ScrollView
+        horizontal
+        showsHorizontalScrollIndicator={false}
+        contentContainerStyle={styles.kindChips}
+      >
         {(['post', 'reel', 'story'] as Kind[]).map((k) => {
           const active = kind === k;
           const label = k === 'post' ? 'Photo Post' : k === 'reel' ? 'Short Reel' : 'Daily Story';
@@ -229,7 +244,7 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
             </Pressable>
           );
         })}
-      </View>
+      </ScrollView>
 
       {error ? <GateNotice error={error} /> : null}
       {status ? <Notice tone="info" message={status} /> : null}
@@ -340,13 +355,20 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 
       {/* Post Details */}
       <Card>
-        <Field
-          label="Caption"
-          value={caption}
-          onChangeText={setCaption}
-          multiline
-          placeholder="Write a kind caption, joke, or fact…"
-        />
+        {/* Instagram-style borderless caption composer */}
+        <View style={styles.captionWrap}>
+          <Text style={styles.captionLabel}>CAPTION</Text>
+          <TextInput
+            style={styles.captionInput}
+            value={caption}
+            onChangeText={setCaption}
+            multiline
+            numberOfLines={3}
+            textAlignVertical="top"
+            placeholder="Write a kind caption…"
+            placeholderTextColor="#94A3B8"
+          />
+        </View>
 
         {/* Suggested Quick Tags */}
         <View style={styles.tagSection}>
@@ -411,24 +433,23 @@ const styles = StyleSheet.create({
     padding: 16,
     paddingBottom: 40,
   },
-  kindSelector: {
+  // Mode chips (pill selectors)
+  kindChips: {
     flexDirection: 'row',
-    backgroundColor: colors.surface,
-    padding: 4,
-    borderRadius: 14,
-    marginBottom: 14,
-    gap: 6,
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
-  },
-  kindBtn: {
-    flex: 1,
+    gap: 8,
+    paddingBottom: 14,
+    paddingRight: 4,
+  },  kindBtn: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     gap: 6,
     paddingVertical: 9,
-    borderRadius: 10,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    backgroundColor: '#F1F5F9',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   kindBtnActive: {
     backgroundColor: colors.brand,
@@ -532,16 +553,22 @@ const styles = StyleSheet.create({
     padding: 0,
     overflow: 'hidden',
     marginBottom: 14,
-    borderRadius: 16,
+    borderRadius: 12,
+    ...shadow.card,
   },
   previewImg: {
     width: '100%',
     height: 240,
     backgroundColor: '#F1F5F9',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
   },
   previewVideo: {
     width: '100%',
     backgroundColor: '#0F172A',
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
+    overflow: 'hidden',
   },
   previewVideoLoading: {
     ...StyleSheet.absoluteFill,
@@ -595,6 +622,22 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     color: colors.brand,
   },
+  captionWrap: {
+    marginBottom: 4,
+  },
+  captionLabel: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: '#94A3B8',
+    letterSpacing: 0.8,
+    marginBottom: 6,
+  },
+  captionInput: {
+    fontSize: 14,
+    color: colors.ink,
+    minHeight: 72,
+    paddingVertical: 4,
+  },
   tagSection: {
     marginTop: 10,
   },
@@ -641,8 +684,9 @@ const styles = StyleSheet.create({
   },
   publishBtn: {
     backgroundColor: colors.brand,
-    borderRadius: 14,
-    paddingVertical: 14,
+    borderRadius: 999,
+    minHeight: 44,
+    paddingVertical: 12,
     flexDirection: 'row',
     justifyContent: 'center',
     alignItems: 'center',

@@ -57,7 +57,7 @@ export function KidsTabsShell({ navigation, route, render }: ChildScreenProps<'K
                 hitSlop={10}
                 style={styles.utilityBtn}
               >
-                <Feather name="heart" size={22} color={colors.ink} />
+                <Feather name="camera" size={22} color={colors.ink} />
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -105,8 +105,8 @@ export function KidsTabsShell({ navigation, route, render }: ChildScreenProps<'K
               ? '#FFFFFF'
               : '#94A3B8'
             : isOn
-              ? colors.brand
-              : '#64748B';
+              ? colors.ink
+              : '#8E8E8E';
 
           return (
             <Pressable
@@ -123,14 +123,11 @@ export function KidsTabsShell({ navigation, route, render }: ChildScreenProps<'K
                   <Feather name="plus" size={18} color={isReels ? '#000000' : '#FFFFFF'} />
                 </View>
               ) : (
-                <View style={styles.tabIconWrap}>
-                  <Feather
-                    name={t.icon}
-                    size={22}
-                    color={iconColor}
-                  />
-                  {isOn && !isReels && <View style={styles.activeDot} />}
-                </View>
+                <Feather
+                  name={t.icon}
+                  size={isOn ? 24 : 23}
+                  color={iconColor}
+                />
               )}
             </Pressable>
           );
@@ -221,18 +218,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     height: '100%',
-  },
-  tabIconWrap: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    height: 32,
-  },
-  activeDot: {
-    width: 4,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: colors.brand,
-    marginTop: 3,
   },
   createIconBox: {
     width: 32,

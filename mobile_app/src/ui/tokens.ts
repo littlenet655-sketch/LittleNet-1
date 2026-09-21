@@ -22,6 +22,30 @@ export const radius = {
   pill: 999,
 } as const;
 
+/** Instagram story ring gradient stops (unviewed). */
+export const storyGradient = ['#FEDA75', '#FA7E1E', '#D62976', '#962FBF', '#4F5BD5'] as const;
+
+/** Viewed-story ring color. */
+export const storySeen = '#D9D9D9';
+
+/** Shared shadow/elevation presets — use instead of ad-hoc shadows. */
+export const shadow = {
+  card: {
+    shadowColor: '#000000',
+    shadowOpacity: 0.08,
+    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 2 },
+    elevation: 2,
+  },
+  pop: {
+    shadowColor: '#000000',
+    shadowOpacity: 0.16,
+    shadowRadius: 16,
+    shadowOffset: { width: 0, height: 6 },
+    elevation: 6,
+  },
+} as const;
+
 export const spacing = {
   xs: 4,
   sm: 8,

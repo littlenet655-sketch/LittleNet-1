@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { ActivityIndicator, Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
 import { fetchOwnProfile, updateOwnProfile } from '../../api/kidsProfiles';
 import { fetchSaved } from '../../api/kidsSocial';
@@ -7,11 +8,23 @@ import { useAuth } from '../../auth/AuthProvider';
 import type { ChildScreenProps } from '../../navigation/types';
 import { queryClient } from '../../query/client';
 import { invalidateSocialCaches, kidsKeys } from '../../query/keys';
-import { Avatar } from '../../ui/social';
-import { BrandHeader, Button, Card, EmptyState, ErrorState, Field, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
-import { colors, type } from '../../ui/tokens';
+import { Avatar, StoryRing } from '../../ui/social';
+import { Button, Card, EmptyState, ErrorState, Field, GateNotice, Notice, Screen } from '../../ui/components';
+import { colors, radius, spacing } from '../../ui/tokens';
 
 type Tab = 'posts' | 'saved' | 'edit';
+
+const AVATAR = 80;
+const STORY_RING = AVATAR + 12;
+const GAP = 1.5;
+const GRID_COLS = 3;
+const cellSize = (Dimensions.get('window').width - GAP * (GRID_COLS - 1)) / GRID_COLS;
+
+/** Defensively read story highlights from the profile record when present. */
+function readStories(profile: Record<string, unknown> | null): Array<Record<string, unknown>> {
+  const raw = profile?.['stories'];
+  return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+}
 
 export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const { session, signOut } = useAuth();
@@ -38,6 +51,14 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const saved = [...(savedQuery.data?.posts ?? []), ...(savedQuery.data?.reels ?? [])];
   const error = profileQuery.error ?? savedQuery.error ?? saveError;
 
+  // Visual-only aggregates from already-fetched data.
+  const totalLikes = useMemo(
+    () => posts.reduce((sum, p) => sum + (typeof p.likes === 'number' ? p.likes : 0), 0),
+    [posts],
+  );
+  const stories = readStories(profile);
+  const hasUnviewedStories = stories.some((s) => !(s.viewed === true || s.seen === true));
+
   useEffect(() => {
     if (!profile) return;
     setBio(String(profile.bio ?? ''));
@@ -55,19 +76,27 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 
   const list = tab === 'saved' ? saved : posts;
 
+  const avatar = (
+    <Avatar
+      uri={typeof profile?.avatar_url === 'string' ? profile.avatar_url : null}
+      name={String(profile?.full_name ?? 'Kid')}
+      size={AVATAR}
+    />
+  );
+
   return (
     <View style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         {error ? <GateNotice error={error} /> : null}
 
-        {/* Instagram-style Profile Header */}
-        <View style={styles.profileCard}>
+        {/* Instagram-style profile header */}
+        <View style={styles.header}>
           <View style={styles.headRow}>
-            <Avatar
-              uri={typeof profile?.avatar_url === 'string' ? profile.avatar_url : null}
-              name={String(profile?.full_name ?? 'Kid')}
-              size={72}
-            />
+            {hasUnviewedStories ? (
+              <StoryRing size={STORY_RING}>{avatar}</StoryRing>
+            ) : (
+              avatar
+            )}
             <View style={styles.statsRow}>
               <View style={styles.statItem}>
                 <Text style={styles.statNum}>{posts.length}</Text>
@@ -81,13 +110,12 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
                 <Text style={styles.statLabel}>Friends</Text>
               </Pressable>
               <View style={styles.statItem}>
-                <Text style={styles.statNum}>{saved.length}</Text>
-                <Text style={styles.statLabel}>Saved</Text>
+                <Text style={styles.statNum}>{totalLikes}</Text>
+                <Text style={styles.statLabel}>Likes</Text>
               </View>
             </View>
           </View>
 
-          {/* User Name & Bio */}
           <View style={styles.bioSection}>
             <Text style={styles.profileName}>{String(profile?.full_name || 'LittleNet Explorer')}</Text>
             {typeof profile?.bio === 'string' && profile.bio ? (
@@ -97,47 +125,67 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
             )}
           </View>
 
-          {/* Action Pills Row */}
+          {/* Story highlights */}
+          {stories.length > 0 ? (
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.highlights}>
+              {stories.map((s, i) => (
+                <View key={String(s.post_id ?? s.id ?? i)} style={styles.highlight}>
+                  <StoryRing size={64} seen={s.viewed === true || s.seen === true}>
+                    <Avatar
+                      uri={typeof s.poster_url === 'string' ? s.poster_url : (typeof s.media_url === 'string' ? s.media_url : null)}
+                      name={typeof s.caption === 'string' ? s.caption : ''}
+                      size={52}
+                    />
+                  </StoryRing>
+                </View>
+              ))}
+            </ScrollView>
+          ) : null}
+
+          {/* Action buttons */}
           <View style={styles.actionsRow}>
             <Pressable
-              style={styles.actionPill}
+              style={styles.greyBtn}
               onPress={() => setTab(tab === 'edit' ? 'posts' : 'edit')}
             >
-              <Text style={styles.actionPillText}>{tab === 'edit' ? 'Close Edit' : 'Edit Profile'}</Text>
+              <Text style={styles.greyBtnText}>{tab === 'edit' ? 'Close Edit' : 'Edit Profile'}</Text>
             </Pressable>
             <Pressable
-              style={styles.actionPill}
+              style={styles.greyBtn}
               onPress={() => nav.navigate('SavedContent', {})}
             >
-              <Text style={styles.actionPillText}>Saved</Text>
+              <Text style={styles.greyBtnText}>Saved</Text>
             </Pressable>
             <Pressable
-              style={[styles.actionPill, styles.actionPillDanger]}
+              style={[styles.greyBtn, styles.logOutBtn]}
               onPress={() => void signOut()}
             >
-              <Text style={[styles.actionPillText, styles.actionPillTextDanger]}>Log Out</Text>
+              <Text style={[styles.greyBtnText, styles.logOutText]}>Log Out</Text>
             </Pressable>
           </View>
         </View>
 
-        {/* Tab Switcher */}
+        {/* Tab switcher: icon tabs, 1px active underline */}
         <View style={styles.tabBar}>
-          {(['posts', 'saved', 'edit'] as Tab[]).map((t) => {
+          {(['posts', 'saved'] as const).map((t) => {
             const active = tab === t;
-            const label = t === 'posts' ? 'POSTS' : t === 'saved' ? 'SAVED' : 'EDIT BIO';
             return (
               <Pressable
                 key={t}
                 onPress={() => setTab(t)}
                 style={[styles.tabItem, active && styles.tabItemActive]}
               >
-                <Text style={[styles.tabLabel, active && styles.tabLabelActive]}>{label}</Text>
+                <Feather
+                  name={t === 'posts' ? 'grid' : 'bookmark'}
+                  size={22}
+                  color={active ? colors.ink : colors.muted}
+                />
               </Pressable>
             );
           })}
         </View>
 
-        {/* Edit Form */}
+        {/* Edit form */}
         {tab === 'edit' ? (
           <Card style={styles.editCard}>
             <Field label="Full name" value={name} onChangeText={setName} />
@@ -163,7 +211,7 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           </Card>
         ) : null}
 
-        {/* Empty State */}
+        {/* Empty state */}
         {tab !== 'edit' && !list.length ? (
           <EmptyState
             icon={tab === 'saved' ? 'bookmark' : 'image'}
@@ -172,7 +220,7 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           />
         ) : null}
 
-        {/* 2-Column Media Grid */}
+        {/* 3-column square media grid */}
         {tab !== 'edit' && list.length > 0 ? (
           <View style={styles.grid}>
             {list.map((post) => {
@@ -181,21 +229,19 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
               return (
                 <Pressable
                   key={post.post_id}
-                  style={styles.gridCard}
+                  style={styles.gridCell}
                   onPress={() => nav.navigate('PostDetail', { postId: post.post_id })}
                 >
                   {imgUrl ? (
                     <Image source={{ uri: imgUrl }} style={styles.gridThumb} resizeMode="cover" />
                   ) : (
                     <View style={styles.gridPlaceholder}>
-                      <Text style={styles.placeholderIcon}>{isVid ? '🎬' : '🖼️'}</Text>
+                      <Feather name={isVid ? 'play' : 'image'} size={22} color={colors.muted} />
                     </View>
                   )}
-                  {post.caption ? (
-                    <View style={styles.captionWrap}>
-                      <Text style={styles.gridCaption} numberOfLines={2}>
-                        {post.caption}
-                      </Text>
+                  {isVid ? (
+                    <View style={styles.videoBadge}>
+                      <Feather name="play" size={11} color="#FFFFFF" />
                     </View>
                   ) : null}
                 </Pressable>
@@ -211,27 +257,26 @@ export function OwnProfileScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
   },
   centerLoading: {
     flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.background,
+    backgroundColor: colors.surface,
   },
   scrollContent: {
     paddingBottom: 40,
   },
-  profileCard: {
+  header: {
     backgroundColor: colors.surface,
-    padding: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
   },
   headRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     gap: 20,
   },
   statsRow: {
@@ -242,85 +287,83 @@ const styles = StyleSheet.create({
   },
   statItem: {
     alignItems: 'center',
+    minWidth: 64,
   },
   statNum: {
-    fontSize: 18,
-    fontWeight: '800',
+    fontSize: 17,
+    fontWeight: '700',
     color: colors.ink,
   },
   statLabel: {
-    fontSize: 12,
+    fontSize: 13,
     color: colors.muted,
     marginTop: 2,
   },
   bioSection: {
-    marginTop: 12,
+    marginTop: 10,
   },
   profileName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '800',
     color: colors.ink,
   },
   bioText: {
-    fontSize: 13,
+    fontSize: 14,
     color: colors.ink,
-    marginTop: 4,
-    lineHeight: 18,
+    marginTop: 3,
+    lineHeight: 19,
   },
   bioPlaceholder: {
-    fontSize: 12,
+    fontSize: 14,
     color: colors.muted,
     fontStyle: 'italic',
     marginTop: 3,
   },
+  highlights: {
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  highlight: {
+    alignItems: 'center',
+  },
   actionsRow: {
     flexDirection: 'row',
     gap: 8,
-    marginTop: 14,
+    marginTop: 12,
   },
-  actionPill: {
+  greyBtn: {
     flex: 1,
-    backgroundColor: '#F1F5F9',
-    borderRadius: 10,
-    paddingVertical: 8,
+    backgroundColor: '#EFEFEF',
+    borderRadius: radius.sm,
+    minHeight: 44,
     alignItems: 'center',
     justifyContent: 'center',
+    paddingHorizontal: 8,
   },
-  actionPillDanger: {
-    backgroundColor: '#FEF2F2',
-  },
-  actionPillText: {
-    fontSize: 13,
+  greyBtnText: {
+    fontSize: 14,
     fontWeight: '700',
     color: colors.ink,
   },
-  actionPillTextDanger: {
-    color: '#DC2626',
+  logOutBtn: {},
+  logOutText: {
+    color: colors.danger,
   },
   tabBar: {
     flexDirection: 'row',
     backgroundColor: colors.surface,
     borderBottomWidth: 1,
-    borderBottomColor: '#F0F0F0',
+    borderBottomColor: colors.line,
   },
   tabItem: {
     flex: 1,
-    paddingVertical: 12,
+    paddingVertical: 10,
     alignItems: 'center',
-    borderBottomWidth: 2,
+    borderBottomWidth: 1,
     borderBottomColor: 'transparent',
   },
   tabItemActive: {
-    borderBottomColor: colors.brand,
-  },
-  tabLabel: {
-    fontSize: 12,
-    fontWeight: '700',
-    color: colors.muted,
-    letterSpacing: 0.5,
-  },
-  tabLabelActive: {
-    color: colors.brand,
+    borderBottomColor: colors.ink,
   },
   editCard: {
     margin: 16,
@@ -328,39 +371,33 @@ const styles = StyleSheet.create({
   grid: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    padding: 10,
-    gap: 10,
+    gap: GAP,
   },
-  gridCard: {
-    width: '48%',
-    backgroundColor: colors.surface,
-    borderRadius: 14,
+  gridCell: {
+    width: cellSize,
+    height: cellSize,
+    backgroundColor: '#F5F5F5',
     overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#F0F0F0',
   },
   gridThumb: {
     width: '100%',
-    height: 140,
-    backgroundColor: '#F1F5F9',
+    height: '100%',
   },
   gridPlaceholder: {
     width: '100%',
-    height: 140,
-    backgroundColor: '#F1F5F9',
+    height: '100%',
     justifyContent: 'center',
     alignItems: 'center',
   },
-  placeholderIcon: {
-    fontSize: 32,
-  },
-  captionWrap: {
-    padding: 8,
-  },
-  gridCaption: {
-    fontSize: 11,
-    fontWeight: '600',
-    color: colors.ink,
-    lineHeight: 15,
+  videoBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: radius.pill,
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 });

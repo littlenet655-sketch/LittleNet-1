@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Feather } from '@expo/vector-icons';
+import { Feather, FontAwesome } from '@expo/vector-icons';
 import type { InfiniteData } from '@tanstack/react-query';
 import type { FeedItem, FeedPage } from '../api/kidsFeed';
 import { useAuth } from '../auth/AuthProvider';
@@ -176,7 +176,7 @@ export function PostCard({
     <View style={styles.card}>
       <View style={styles.row}>
         <Pressable onPress={onProfile} disabled={!onProfile} style={styles.profileRow}>
-          <Avatar uri={item.avatar_url} name={item.full_name} />
+          <Avatar uri={item.avatar_url} name={item.full_name} size={40} />
           <View style={styles.meta}>
             <Text style={styles.name}>{item.full_name ?? 'Friend'}</Text>
             <TimeAgo value={item.created_at} />
@@ -228,52 +228,60 @@ export function PostCard({
         </Pressable>
       ) : null}
       {socialTarget ? (
-        <View style={styles.actions}>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={item.viewer_liked ? 'Unlike post' : 'Like post'}
-            onPress={() => void onLike()}
-            style={styles.action}
-            hitSlop={6}
-          >
-            <Feather
-              name="heart"
-              size={21}
-              color={item.viewer_liked ? colors.danger : colors.ink}
-            />
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel={item.viewer_saved ? 'Unsave post' : 'Save post'}
-            onPress={() => void onSave()}
-            style={styles.action}
-            hitSlop={6}
-          >
-            <Feather
-              name="bookmark"
-              size={21}
-              color={item.viewer_saved ? colors.brand : colors.ink}
-            />
-          </Pressable>
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Comments"
-            onPress={onOpen}
-            style={styles.action}
-            hitSlop={6}
-          >
-            <Feather name="message-circle" size={20} color={colors.ink} />
-          </Pressable>
+        <View>
+          <View style={styles.actions}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={item.viewer_liked ? 'Unlike post' : 'Like post'}
+              onPress={() => void onLike()}
+              style={styles.action}
+              hitSlop={6}
+            >
+              {item.viewer_liked ? (
+                <FontAwesome name="heart" size={24} color={colors.danger} />
+              ) : (
+                <Feather name="heart" size={24} color={colors.ink} />
+              )}
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Comments"
+              onPress={onOpen}
+              style={styles.action}
+              hitSlop={6}
+            >
+              <Feather name="message-circle" size={24} color={colors.ink} />
+            </Pressable>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Share post"
+              onPress={onOpen}
+              style={styles.action}
+              hitSlop={6}
+            >
+              <Feather name="send" size={24} color={colors.ink} />
+            </Pressable>
+            <View style={styles.flex} />
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={item.viewer_saved ? 'Unsave post' : 'Save post'}
+              onPress={() => void onSave()}
+              style={styles.action}
+              hitSlop={6}
+            >
+              {item.viewer_saved ? (
+                <FontAwesome name="bookmark" size={24} color={colors.brand} />
+              ) : (
+                <Feather name="bookmark" size={24} color={colors.ink} />
+              )}
+            </Pressable>
+          </View>
           <Text style={styles.likeCount}>{item.likes ?? 0} likes</Text>
-          <View style={styles.flex} />
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Share post"
-            onPress={onOpen}
-            hitSlop={6}
-          >
-            <Feather name="send" size={19} color={colors.ink} />
-          </Pressable>
+          {typeof item.comments_count === 'number' && item.comments_count > 0 ? (
+            <Pressable onPress={onOpen} accessibilityRole="button" accessibilityLabel={`View ${item.comments_count} comments`}>
+              <Text style={styles.commentCount}>View all {item.comments_count} comments</Text>
+            </Pressable>
+          ) : null}
         </View>
       ) : null}
     </View>
@@ -285,9 +293,9 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   profileRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 10 },
   meta: { flex: 1 },
-  name: { fontWeight: '800', color: colors.ink },
+  name: { fontWeight: '800', color: colors.ink, fontSize: type.body },
   title: { marginTop: 8, color: colors.ink, fontSize: type.body, fontWeight: '800' },
-  caption: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 22 },
+  caption: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 20 },
   mediaBox: { marginTop: 10, width: '100%', backgroundColor: colors.line, overflow: 'hidden' },
   mediaPlaceholder: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
   mediaFallback: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: 8, padding: spacing.md },
@@ -301,7 +309,8 @@ const styles = StyleSheet.create({
   actions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 8, paddingHorizontal: spacing.md },
   action: { paddingVertical: 5 },
   actionText: { color: colors.brandDark, fontWeight: '700' },
-  likeCount: { color: colors.ink, fontSize: type.caption, fontWeight: '700' },
+  likeCount: { color: colors.ink, fontSize: type.body, fontWeight: '700', paddingHorizontal: spacing.md, marginTop: 8 },
+  commentCount: { color: colors.muted, fontSize: type.body, fontWeight: '700', paddingHorizontal: spacing.md, marginTop: 4, paddingVertical: 4 },
   flex: { flex: 1 },
   dismiss: { padding: 6 },
   icon: { color: colors.ink, fontSize: 24, lineHeight: 24 },

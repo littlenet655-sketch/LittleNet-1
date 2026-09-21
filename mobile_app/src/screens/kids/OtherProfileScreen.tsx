@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useMemo, useState } from 'react';
+import { Dimensions, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { ApiError } from '../../api/client';
 import { fetchOtherProfile } from '../../api/kidsProfiles';
 import { blockUser, muteUser, submitReport, toggleFollow, type PostDetail } from '../../api/kidsSocial';
@@ -7,15 +8,28 @@ import { useAuth } from '../../auth/AuthProvider';
 import { canMessageRelationship } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { invalidateSocialCaches } from '../../query/keys';
-import { Avatar } from '../../ui/social';
-import { BrandHeader, Button, Card, EmptyState, ErrorState, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
-import { colors, type } from '../../ui/tokens';
+import { Avatar, StoryRing } from '../../ui/social';
+import { Button, Card, EmptyState, ErrorState, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
+import { colors, radius, spacing } from '../../ui/tokens';
+
+const AVATAR = 80;
+const STORY_RING = AVATAR + 12;
+const GAP = 1.5;
+const GRID_COLS = 3;
+const cellSize = (Dimensions.get('window').width - GAP * (GRID_COLS - 1)) / GRID_COLS;
+
+/** Defensively read story highlights from the profile record when present. */
+function readStories(profile: Record<string, unknown> | null): Array<Record<string, unknown>> {
+  const raw = profile?.['stories'];
+  return Array.isArray(raw) ? (raw as Array<Record<string, unknown>>) : [];
+}
 
 export function OtherProfileScreen({ route, navigation }: ChildScreenProps<'OtherProfile'>) {
   const { session } = useAuth();
   const targetId = Number((route.params as { targetId?: number } | undefined)?.targetId ?? 0);
   const [profile, setProfile] = useState<Record<string, unknown> | null>(null);
   const [posts, setPosts] = useState<PostDetail[]>([]);
+  const [counts, setCounts] = useState<Record<string, unknown>>({});
   const [rel, setRel] = useState({ connected: false, pending: false, can_message: false });
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
@@ -26,12 +40,21 @@ export function OtherProfileScreen({ route, navigation }: ChildScreenProps<'Othe
   const [muted, setMuted] = useState(false);
   const nav = navigation as unknown as { navigate: (r: string, p: object) => void; goBack: () => void };
 
+  // Visual-only aggregates from already-fetched data.
+  const totalLikes = useMemo(
+    () => posts.reduce((sum, p) => sum + (typeof p.likes === 'number' ? p.likes : 0), 0),
+    [posts],
+  );
+  const stories = readStories(profile);
+  const hasUnviewedStories = stories.some((s) => !(s.viewed === true || s.seen === true));
+
   async function load() {
     if (!session || !targetId) return;
     try {
       const res = await fetchOtherProfile(session.token, targetId);
       setProfile(res.profile);
       setPosts(res.posts ?? []);
+      setCounts(res.counts ?? {});
       if (res.relationship) setRel(res.relationship);
       setError(null);
     } catch (err) {
@@ -101,12 +124,16 @@ export function OtherProfileScreen({ route, navigation }: ChildScreenProps<'Othe
     return (
       <Screen>
         <ScrollView>
-          <BrandHeader title="Friend profile" subtitle="Blocked" />
           <Card>
+            <Text style={styles.blockedTitle}>Blocked</Text>
             <Text style={styles.bio}>You blocked this account. Their posts, profile and messages are hidden.</Text>
-            <View style={styles.btns}>
-              <Button label={busy ? 'Working…' : 'Unblock'} disabled={busy} onPress={() => void onBlockToggle()} />
-              <Button label="Back" variant="secondary" onPress={() => nav.goBack()} />
+            <View style={styles.safetyBtns}>
+              <Pressable style={[styles.primaryBtn, busy && styles.btnDisabled]} disabled={busy} onPress={() => void onBlockToggle()}>
+                <Text style={styles.primaryBtnText}>{busy ? 'Working…' : 'Unblock'}</Text>
+              </Pressable>
+              <Pressable style={styles.greyBtn} onPress={() => nav.goBack()}>
+                <Text style={styles.greyBtnText}>Back</Text>
+              </Pressable>
             </View>
             {info ? <Notice tone="info" message={info} /> : null}
             {error ? <GateNotice error={error} /> : null}
@@ -130,46 +157,336 @@ export function OtherProfileScreen({ route, navigation }: ChildScreenProps<'Othe
   if (error && !profile) return <Screen><GateNotice error={error} /><ErrorState message="Could not load this profile." onRetry={() => void load()} /></Screen>;
   if (!profile) return <Screen><LoadingState message="Loading profile…" /></Screen>;
 
+  const avatar = (
+    <Avatar
+      uri={typeof profile.avatar_url === 'string' ? profile.avatar_url : null}
+      name={String(profile.full_name ?? 'F')}
+      size={AVATAR}
+    />
+  );
+
   return (
-    <Screen>
-      <ScrollView>
-        <BrandHeader title={String(profile.full_name ?? 'Friend')} subtitle="Friend profile" />
-        {error ? <GateNotice error={error} /> : null}
-        {info ? <Notice tone="info" message={info} /> : null}
-        <Card>
-          <Avatar uri={typeof profile.avatar_url === 'string' ? profile.avatar_url : null} name={String(profile.full_name ?? 'F')} size={64} />
-          {typeof profile.bio === 'string' && profile.bio ? <Text style={styles.bio}>{profile.bio}</Text> : null}
-          <Text style={styles.rel}>{rel.connected ? 'Connected' : rel.pending ? 'Request pending — needs parent approval' : 'Not connected'}</Text>
-          <View style={styles.btns}>
-            <Button
-              label={rel.connected || rel.pending ? 'Unfollow' : 'Follow'}
-              disabled={busy}
-              onPress={() => void act(
-                (t) => toggleFollow(t, targetId),
-                rel.connected || rel.pending ? 'Removed.' : 'Request sent! A parent needs to approve it.',
-              )}
-            />
-            <Button label="Message" variant="secondary" disabled={!canMessageRelationship(rel)} onPress={() => nav.navigate('Chat', { peerId: targetId })} />
+    <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+      {error ? <GateNotice error={error} /> : null}
+      {info ? <Notice tone="info" message={info} /> : null}
+
+      {/* Instagram-style profile header */}
+      <View style={styles.header}>
+        <View style={styles.headRow}>
+          {hasUnviewedStories ? (
+            <StoryRing size={STORY_RING}>{avatar}</StoryRing>
+          ) : (
+            avatar
+          )}
+          <View style={styles.statsRow}>
+            <View style={styles.statItem}>
+              <Text style={styles.statNum}>{posts.length}</Text>
+              <Text style={styles.statLabel}>Posts</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statNum}>{Number(counts.followers ?? 0)}</Text>
+              <Text style={styles.statLabel}>Friends</Text>
+            </View>
+            <View style={styles.statItem}>
+              <Text style={styles.statNum}>{totalLikes}</Text>
+              <Text style={styles.statLabel}>Likes</Text>
+            </View>
           </View>
-          {!canMessageRelationship(rel) ? <Text style={styles.rel}>Messaging is available after the friendship is approved.</Text> : null}
-          <View style={styles.btns}>
-            <Button label={muted ? 'Unmute' : 'Mute'} variant="secondary" disabled={busy} onPress={() => void onMuteToggle()} />
-            <Button label="Block" variant="secondary" disabled={busy} onPress={() => void onBlockToggle()} />
-          </View>
-          <Button label="Report" variant="secondary" disabled={busy} onPress={() => void act((t) => submitReport(t, 'USER', targetId, 'Unsafe behavior'), 'Report sent for safety review.')} />
-        </Card>
-        {posts.map((p) => (
-          <Pressable key={p.post_id} onPress={() => nav.navigate('PostDetail', { postId: p.post_id })}>
-            <Card><Text style={styles.bio}>{p.caption || `Post ${p.post_id}`}</Text></Card>
+        </View>
+
+        <View style={styles.bioSection}>
+          <Text style={styles.profileName}>{String(profile.full_name ?? 'Friend')}</Text>
+          {typeof profile.bio === 'string' && profile.bio ? (
+            <Text style={styles.bio}>{profile.bio}</Text>
+          ) : null}
+          <Text style={styles.rel}>
+            {rel.connected ? 'Friends' : rel.pending ? 'Friend request sent — needs parent approval' : 'Not connected yet'}
+          </Text>
+        </View>
+
+        {/* Story highlights */}
+        {stories.length > 0 ? (
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.highlights}>
+            {stories.map((s, i) => (
+              <View key={String(s.post_id ?? s.id ?? i)} style={styles.highlight}>
+                <StoryRing size={64} seen={s.viewed === true || s.seen === true}>
+                  <Avatar
+                    uri={typeof s.poster_url === 'string' ? s.poster_url : (typeof s.media_url === 'string' ? s.media_url : null)}
+                    name={typeof s.caption === 'string' ? s.caption : ''}
+                    size={52}
+                  />
+                </StoryRing>
+              </View>
+            ))}
+          </ScrollView>
+        ) : null}
+
+        {/* Action buttons: primary brand-blue + grey secondary */}
+        <View style={styles.actionsRow}>
+          <Pressable
+            style={[styles.primaryBtn, !canMessageRelationship(rel) && styles.btnDisabled]}
+            disabled={!canMessageRelationship(rel)}
+            onPress={() => nav.navigate('Chat', { peerId: targetId })}
+          >
+            <Text style={styles.primaryBtnText}>Message</Text>
           </Pressable>
-        ))}
-      </ScrollView>
-    </Screen>
+          <Pressable
+            style={[styles.greyBtn, busy && styles.btnDisabled]}
+            disabled={busy}
+            onPress={() => void act(
+              (t) => toggleFollow(t, targetId),
+              rel.connected || rel.pending ? 'Removed.' : 'Request sent! A parent needs to approve it.',
+            )}
+          >
+            <Text style={styles.greyBtnText}>
+              {rel.connected ? 'Friends' : rel.pending ? 'Requested' : 'Add Friend'}
+            </Text>
+          </Pressable>
+        </View>
+        {!canMessageRelationship(rel) ? (
+          <Text style={styles.rel}>Messaging is available after the friendship is approved.</Text>
+        ) : null}
+
+        {/* Safety actions */}
+        <View style={styles.safetyBtns}>
+          <Pressable style={[styles.smallGreyBtn, busy && styles.btnDisabled]} disabled={busy} onPress={() => void onMuteToggle()}>
+            <Text style={styles.smallGreyBtnText}>{muted ? 'Unmute' : 'Mute'}</Text>
+          </Pressable>
+          <Pressable style={[styles.smallGreyBtn, busy && styles.btnDisabled]} disabled={busy} onPress={() => void onBlockToggle()}>
+            <Text style={styles.smallGreyBtnText}>Block</Text>
+          </Pressable>
+          <Pressable
+            style={[styles.smallGreyBtn, busy && styles.btnDisabled]}
+            disabled={busy}
+            onPress={() => void act((t) => submitReport(t, 'USER', targetId, 'Unsafe behavior'), 'Report sent for safety review.')}
+          >
+            <Text style={[styles.smallGreyBtnText, styles.reportText]}>Report</Text>
+          </Pressable>
+        </View>
+      </View>
+
+      {/* Tab switcher: single grid tab */}
+      <View style={styles.tabBar}>
+        <View style={[styles.tabItem, styles.tabItemActive]}>
+          <Feather name="grid" size={22} color={colors.ink} />
+        </View>
+      </View>
+
+      {/* 3-column square media grid */}
+      {posts.length > 0 ? (
+        <View style={styles.grid}>
+          {posts.map((p) => {
+            const isVid = String(p.media_type ?? '').toUpperCase() === 'VIDEO';
+            const imgUrl = isVid ? p.poster_url || p.media_url : p.media_url;
+            return (
+              <Pressable
+                key={p.post_id}
+                style={styles.gridCell}
+                onPress={() => nav.navigate('PostDetail', { postId: p.post_id })}
+              >
+                {imgUrl ? (
+                  <Image source={{ uri: imgUrl }} style={styles.gridThumb} resizeMode="cover" />
+                ) : (
+                  <View style={styles.gridPlaceholder}>
+                    <Feather name={isVid ? 'play' : 'image'} size={22} color={colors.muted} />
+                  </View>
+                )}
+                {isVid ? (
+                  <View style={styles.videoBadge}>
+                    <Feather name="play" size={11} color="#FFFFFF" />
+                  </View>
+                ) : null}
+              </Pressable>
+            );
+          })}
+        </View>
+      ) : (
+        <View style={styles.noPosts}>
+          <Text style={styles.rel}>No posts yet</Text>
+        </View>
+      )}
+    </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
-  bio: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 20 },
-  rel: { marginTop: 6, color: colors.muted, fontSize: 12 },
-  btns: { flexDirection: 'row', gap: 8, marginTop: 8, flex: 1 },
+  container: {
+    flex: 1,
+    backgroundColor: colors.surface,
+  },
+  scrollContent: {
+    paddingBottom: 40,
+  },
+  header: {
+    backgroundColor: colors.surface,
+    paddingHorizontal: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+  },
+  headRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 20,
+  },
+  statsRow: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    alignItems: 'center',
+  },
+  statItem: {
+    alignItems: 'center',
+    minWidth: 64,
+  },
+  statNum: {
+    fontSize: 17,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  statLabel: {
+    fontSize: 13,
+    color: colors.muted,
+    marginTop: 2,
+  },
+  bioSection: {
+    marginTop: 10,
+  },
+  profileName: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.ink,
+  },
+  bio: {
+    fontSize: 14,
+    color: colors.ink,
+    marginTop: 3,
+    lineHeight: 19,
+  },
+  rel: {
+    marginTop: 4,
+    color: colors.muted,
+    fontSize: 13,
+  },
+  highlights: {
+    gap: spacing.md,
+    paddingVertical: spacing.md,
+  },
+  highlight: {
+    alignItems: 'center',
+  },
+  actionsRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 12,
+  },
+  primaryBtn: {
+    flex: 1,
+    backgroundColor: colors.brand,
+    borderRadius: radius.sm,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  primaryBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  greyBtn: {
+    flex: 1,
+    backgroundColor: '#EFEFEF',
+    borderRadius: radius.sm,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  greyBtnText: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
+  safetyBtns: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 10,
+  },
+  smallGreyBtn: {
+    flex: 1,
+    backgroundColor: '#EFEFEF',
+    borderRadius: radius.sm,
+    minHeight: 36,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 8,
+  },
+  smallGreyBtnText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  reportText: {
+    color: colors.danger,
+  },
+  tabBar: {
+    flexDirection: 'row',
+    backgroundColor: colors.surface,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.line,
+  },
+  tabItem: {
+    flex: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+    borderBottomWidth: 1,
+    borderBottomColor: 'transparent',
+  },
+  tabItemActive: {
+    borderBottomColor: colors.ink,
+  },
+  grid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: GAP,
+  },
+  gridCell: {
+    width: cellSize,
+    height: cellSize,
+    backgroundColor: '#F5F5F5',
+    overflow: 'hidden',
+  },
+  gridThumb: {
+    width: '100%',
+    height: '100%',
+  },
+  gridPlaceholder: {
+    width: '100%',
+    height: '100%',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  videoBadge: {
+    position: 'absolute',
+    top: 6,
+    right: 6,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    borderRadius: radius.pill,
+    width: 22,
+    height: 22,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  noPosts: {
+    paddingVertical: 32,
+    alignItems: 'center',
+  },
+  blockedTitle: {
+    fontSize: 17,
+    fontWeight: '800',
+    color: colors.ink,
+  },
 });

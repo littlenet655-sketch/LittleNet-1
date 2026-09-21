@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { StyleProp, TextInputProps, ViewStyle } from 'react-native';
-import { ActivityIndicator, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Animated, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Feather } from '@expo/vector-icons';
 import { ApiError } from '../api/client';
@@ -63,7 +63,12 @@ export function Button({ label, onPress, disabled, loading, variant = 'primary' 
       accessibilityRole="button"
       onPress={onPress}
       disabled={isDisabled}
-      style={[styles.button, variant === 'secondary' && styles.buttonSecondary, isDisabled && styles.buttonDisabled]}
+      style={({ pressed }) => [
+        styles.button,
+        variant === 'secondary' && styles.buttonSecondary,
+        isDisabled && styles.buttonDisabled,
+        pressed && !isDisabled && styles.buttonPressed,
+      ]}
     >
       {loading ? <ActivityIndicator color={variant === 'secondary' ? colors.ink : '#fff'} /> : <Text style={[styles.buttonText, variant === 'secondary' && styles.buttonTextSecondary]}>{label}</Text>}
     </Pressable>
@@ -288,6 +293,9 @@ export function EmptyState({
 export function ErrorState({ message, onRetry }: { message: string; onRetry?: () => void }) {
   return (
     <View style={styles.center}>
+      <View style={styles.errorIconBox}>
+        <Feather name="alert-circle" size={28} color={colors.muted} />
+      </View>
       <Text style={styles.emptyTitle}>Something needs attention</Text>
       <Text style={styles.centerText}>{message}</Text>
       {onRetry ? <Button label="Try again" onPress={onRetry} variant="secondary" /> : null}
@@ -315,10 +323,22 @@ export function DisabledFeature({ feature }: { feature: string }) {
 }
 
 export function Skeleton({ lines = 3 }: { lines?: number }) {
+  const shimmer = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    const loop = Animated.loop(
+      Animated.sequence([
+        Animated.timing(shimmer, { toValue: 1, duration: 900, useNativeDriver: true }),
+        Animated.timing(shimmer, { toValue: 0, duration: 900, useNativeDriver: true }),
+      ]),
+    );
+    loop.start();
+    return () => loop.stop();
+  }, [shimmer]);
+  const opacity = shimmer.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
   return (
     <View style={styles.skeletonWrap}>
       {Array.from({ length: lines }).map((_, index) => (
-        <View key={index} style={styles.skeletonLine} />
+        <Animated.View key={index} style={[styles.skeletonLine, { opacity }]} />
       ))}
     </View>
   );
@@ -368,6 +388,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0,
     elevation: 0,
   },
+  buttonPressed: { opacity: 0.85, transform: [{ scale: 0.98 }] },
   buttonDisabled: { opacity: 0.55 },
   buttonText: { color: '#fff', fontWeight: '700', fontSize: type.body },
   buttonTextSecondary: { color: colors.ink },
@@ -461,18 +482,29 @@ const styles = StyleSheet.create({
     minHeight: 200,
   },
   emptyIconBox: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
+    width: 68,
+    height: 68,
+    borderRadius: 34,
     backgroundColor: '#EFF6FF',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 6,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#DBEAFE',
+  },
+  errorIconBox: {
+    width: 60,
+    height: 60,
+    borderRadius: 30,
+    backgroundColor: '#F3F4F6',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 4,
   },
   centerText: { color: colors.muted, fontSize: type.body, textAlign: 'center', lineHeight: 22 },
   emptyTitle: { fontSize: type.title, fontWeight: '800', color: colors.ink, textAlign: 'center' },
-  offline: { backgroundColor: colors.ink, borderRadius: 12, padding: spacing.sm, marginBottom: spacing.sm },
-  offlineText: { color: '#fff', textAlign: 'center', fontSize: type.caption },
+  offline: { backgroundColor: colors.ink, paddingVertical: 8, paddingHorizontal: spacing.md },
+  offlineText: { color: '#fff', textAlign: 'center', fontSize: type.caption, fontWeight: '600' },
   skeletonWrap: { gap: 8, marginTop: spacing.sm },
   skeletonLine: { height: 16, borderRadius: 8, backgroundColor: colors.line },
 });

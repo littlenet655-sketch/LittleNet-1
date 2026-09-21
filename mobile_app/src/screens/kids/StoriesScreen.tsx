@@ -8,7 +8,7 @@ import { useAuth } from '../../auth/AuthProvider';
 import { VideoMedia } from '../../kids/VideoMedia';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
-import { Avatar, TimeAgo } from '../../ui/social';
+import { Avatar, StoryRing, TimeAgo, shortAgo } from '../../ui/social';
 import { Button, EmptyState, ErrorState, LoadingState, Screen } from '../../ui/components';
 import { colors, spacing } from '../../ui/tokens';
 
@@ -226,9 +226,16 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
             ))}
           </View>
           <View style={styles.identity}>
-            <Avatar uri={current.avatar_url} name={current.full_name ?? 'Friend'} size={34} />
+            <StoryRing size={44} seen={false}>
+              <Avatar uri={current.avatar_url} name={current.full_name ?? 'Friend'} size={32} />
+            </StoryRing>
             <View style={styles.identityMeta}>
-              <Text style={styles.name}>{current.full_name ?? 'Friend'}</Text>
+              <View style={styles.nameRow}>
+                <Text style={styles.name}>{current.full_name ?? 'Friend'}</Text>
+                {current.created_at && !Number.isNaN(Date.parse(current.created_at)) ? (
+                  <Text style={styles.timestamp}> · {shortAgo(Date.now() - Date.parse(current.created_at))}</Text>
+                ) : null}
+              </View>
               {expiryLabel ? <Text style={styles.expiry}>{expiryLabel}</Text> : null}
             </View>
             {isOwnStory && viewers ? (
@@ -282,12 +289,17 @@ export function StoriesScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           <Pressable accessibilityLabel={paused ? 'Resume story' : 'Pause story'} onPress={() => setPaused((value) => !value)} style={styles.centerTap} />
           <Pressable accessibilityLabel="Next story" onPress={next} style={styles.rightTap} />
           {paused ? <View pointerEvents="none" style={styles.pause}><Text style={styles.pauseText}>Ⅱ</Text><Text style={styles.pauseLabel}>Paused</Text></View> : null}
-          {current.caption ? <Text style={styles.caption}>{current.caption}</Text> : null}
+          {current.caption ? (
+            <View style={styles.captionOverlay} pointerEvents="none">
+              <Text style={styles.caption}>{current.caption}</Text>
+            </View>
+          ) : null}
         </View>
 
         {/* Viewer list sheet (own stories only) */}
         {viewersOpen && viewers ? (
           <View style={styles.viewerSheet}>
+            <View style={styles.dragHandle} />
             <View style={styles.viewerSheetHeader}>
               <Text style={styles.viewerSheetTitle}>
                 Viewed by {viewers.length}
@@ -330,17 +342,19 @@ const styles = StyleSheet.create({
   viewer: { backgroundColor: colors.ink },
   top: { position: 'absolute', zIndex: 3, top: spacing.md, left: spacing.md, right: spacing.md },
   progressRow: { flexDirection: 'row', gap: 4 },
-  progressTrack: { flex: 1, height: 3, backgroundColor: 'rgba(255,255,255,0.35)', overflow: 'hidden' },
-  progress: { height: '100%', backgroundColor: colors.surface },
+  progressTrack: { flex: 1, height: 3, backgroundColor: 'rgba(255,255,255,0.35)', overflow: 'hidden', borderRadius: 2 },
+  progress: { height: '100%', backgroundColor: colors.surface, borderRadius: 2 },
   complete: { width: '100%' },
   identity: { flexDirection: 'row', alignItems: 'center', gap: 9, marginTop: spacing.sm },
   identityMeta: { flex: 1, justifyContent: 'center' },
-  name: { color: colors.surface, fontWeight: '800' },
+  nameRow: { flexDirection: 'row', alignItems: 'baseline' },
+  name: { color: colors.surface, fontWeight: '800', fontSize: 14 },
+  timestamp: { color: 'rgba(255,255,255,0.65)', fontSize: 12, fontWeight: '600' },
   expiry: { color: 'rgba(255,255,255,0.65)', fontSize: 11, fontWeight: '600', marginTop: 1 },
   viewersBtn: { flexDirection: 'row', alignItems: 'center', gap: 5, backgroundColor: 'rgba(255,255,255,0.18)', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 },
   viewersText: { color: '#FFFFFF', fontSize: 12, fontWeight: '800' },
-  create: { padding: 7 },
-  createText: { color: colors.surface, fontWeight: '800' },
+  create: { borderWidth: 1, borderColor: 'rgba(255,255,255,0.7)', borderRadius: 999, paddingHorizontal: 12, paddingVertical: 6 },
+  createText: { color: colors.surface, fontWeight: '800', fontSize: 13 },
   media: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   image: { width: '100%', height: '100%' },
   missing: { color: colors.surface, fontWeight: '700' },
@@ -354,7 +368,17 @@ const styles = StyleSheet.create({
   pause: { position: 'absolute', alignItems: 'center' },
   pauseText: { color: colors.surface, fontSize: 42, fontWeight: '800' },
   pauseLabel: { color: colors.surface, fontWeight: '800' },
-  caption: { position: 'absolute', bottom: spacing.lg + 50, left: spacing.md, right: spacing.md, color: colors.surface, fontSize: 16, fontWeight: '700' },
+  captionOverlay: {
+    position: 'absolute',
+    bottom: 96,
+    left: spacing.md,
+    right: spacing.md,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    borderRadius: 12,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+  },
+  caption: { color: colors.surface, fontSize: 15, fontWeight: '700', lineHeight: 21 },
   viewerSheet: {
     position: 'absolute',
     left: 0,
@@ -362,11 +386,13 @@ const styles = StyleSheet.create({
     bottom: 0,
     maxHeight: '45%',
     backgroundColor: 'rgba(15,23,42,0.97)',
-    borderTopLeftRadius: 18,
-    borderTopRightRadius: 18,
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
     padding: spacing.md,
+    paddingTop: spacing.sm,
     zIndex: 5,
   },
+  dragHandle: { width: 40, height: 4, borderRadius: 2, backgroundColor: 'rgba(255,255,255,0.35)', alignSelf: 'center', marginBottom: spacing.sm },
   viewerSheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: spacing.sm },
   viewerSheetTitle: { color: '#FFFFFF', fontWeight: '800', fontSize: 15 },
   viewerList: { maxHeight: 220 },

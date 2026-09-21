@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FlatList, Pressable, RefreshControl, StyleSheet, Text } from 'react-native';
+import { FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { fetchConversations, type ConversationItem } from '../../api/kidsChat';
 import { useAuth } from '../../auth/AuthProvider';
@@ -56,13 +56,28 @@ export function ConversationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
         ListEmptyComponent={<EmptyState title="No conversations" body="Make an approved friend to start chatting." />}
         renderItem={({ item }) => {
           const unread = isConversationUnread(item);
-          return <Pressable style={styles.row} onPress={() => nav.navigate('Chat', { peerId: item.peer_id })}>
-            <Avatar uri={item.peer_avatar_url} name={item.peer_name} size={48} />
-            <Text style={[styles.name, unread && styles.unread]}>{item.peer_name ?? 'Friend'}</Text>
-            <Text style={[styles.last, unread && styles.unread]}>{item.last_message?.message_text ?? ''}</Text>
-            {unread ? <Text style={styles.dot}>●</Text> : null}
-            <TimeAgo value={item.last_message?.sent_at} />
-          </Pressable>;
+          return (
+            <Pressable
+              style={({ pressed }) => [styles.row, pressed && styles.rowPressed]}
+              onPress={() => nav.navigate('Chat', { peerId: item.peer_id })}
+            >
+              <Avatar uri={item.peer_avatar_url} name={item.peer_name} size={56} />
+              <View style={styles.textCol}>
+                <View style={styles.topRow}>
+                  <Text style={[styles.name, unread && styles.nameUnread]} numberOfLines={1}>
+                    {item.peer_name ?? 'Friend'}
+                  </Text>
+                  <TimeAgo value={item.last_message?.sent_at} />
+                </View>
+                <View style={styles.bottomRow}>
+                  <Text style={[styles.preview, unread && styles.previewUnread]} numberOfLines={1}>
+                    {item.last_message?.message_text ?? ''}
+                  </Text>
+                  {unread ? <View style={styles.unreadDot} /> : null}
+                </View>
+              </View>
+            </Pressable>
+          );
         }}
       />
     </Screen>
@@ -70,9 +85,54 @@ export function ConversationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
 }
 
 const styles = StyleSheet.create({
-  row: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingHorizontal: 12, paddingVertical: 14, borderBottomWidth: 1, borderBottomColor: colors.line, backgroundColor: colors.surface },
-  name: { fontWeight: '800', color: colors.ink },
-  last: { flex: 1, color: colors.muted },
-  unread: { color: colors.ink, fontWeight: '800' },
-  dot: { color: colors.brand, fontSize: 12, marginLeft: 4 },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingHorizontal: 12,
+    height: 76,
+    backgroundColor: colors.surface,
+  },
+  rowPressed: {
+    backgroundColor: '#F5F5F5',
+  },
+  textCol: {
+    flex: 1,
+    justifyContent: 'center',
+  },
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  name: {
+    flex: 1,
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  nameUnread: {
+    fontWeight: '800',
+  },
+  preview: {
+    flex: 1,
+    fontSize: 14,
+    color: colors.muted,
+  },
+  previewUnread: {
+    color: colors.ink,
+    fontWeight: '700',
+  },
+  bottomRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 3,
+  },
+  unreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: colors.brand,
+  },
 });

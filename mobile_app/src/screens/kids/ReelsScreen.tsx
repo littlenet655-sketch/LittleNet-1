@@ -27,7 +27,7 @@ import { invalidateSocialCaches, kidsKeys } from '../../query/keys';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { DisabledFeature, ErrorState, GateNotice } from '../../ui/components';
 import { Avatar } from '../../ui/social';
-import { colors, radius, spacing } from '../../ui/tokens';
+import { colors, shadow } from '../../ui/tokens';
 import { ReelPlayer } from '../../video/ReelPlayer';
 import type { ImpressionEventPayload } from '../../video/types';
 
@@ -42,6 +42,8 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const foreground = useIsForeground();
   const [activeIndex, setActiveIndex] = useState(0);
   const [paused, setPaused] = useState(false);
+  // Instagram-style bottom action sheet (visual restyle of the old Alert menu).
+  const [sheetItem, setSheetItem] = useState<FeedItem | null>(null);
   const flatListRef = useRef<FlatList<FeedItem>>(null);
   const impressionBatchRef = useRef<ImpressionEventPayload[]>([]);
   const badgeAnim = useRef(new Animated.Value(1)).current;
@@ -196,32 +198,31 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
     }
   }
 
-  function handleMoreOptions(item: FeedItem) {
+  /** Same report action the old Alert menu ran — now invoked from the action sheet. */
+  function performReport(item: FeedItem) {
     if (!session) return;
     const post = socialPostTarget(item);
     if (!post) return;
+    void submitReport(session.token, 'post', post.postId, 'inappropriate');
+    Alert.alert('Reported', 'Thank you. Our safety team will review this video promptly.');
+  }
 
-    Alert.alert('Reel Options', 'Choose an action for this video:', [
-      {
-        text: 'Report to Safety Review',
-        style: 'destructive',
-        onPress: () => {
-          void submitReport(session.token, 'post', post.postId, 'inappropriate');
-          Alert.alert('Reported', 'Thank you. Our safety team will review this video promptly.');
-        },
-      },
-      {
-        text: 'Not Interested',
-        onPress: () => {
-          void submitRecommendationAction(session.token, {
-            source_type: 'SOCIAL',
-            source_id: post.postId,
-            action: 'NOT_INTERESTED',
-          });
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  /** Same not-interested action the old Alert menu ran — now invoked from the action sheet. */
+  function performNotInterested(item: FeedItem) {
+    if (!session) return;
+    const post = socialPostTarget(item);
+    if (!post) return;
+    void submitRecommendationAction(session.token, {
+      source_type: 'SOCIAL',
+      source_id: post.postId,
+      action: 'NOT_INTERESTED',
+    });
+  }
+
+  function closeSheetAnd(run: (item: FeedItem) => void) {
+    const item = sheetItem;
+    setSheetItem(null);
+    if (item) run(item);
   }
 
   // Guard: initial loading
@@ -345,6 +346,12 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
                 />
               </View>
 
+              {/* Bottom readability gradient — two stacked scrims, no new deps */}
+              <View style={styles.bottomScrim} pointerEvents="none">
+                <View style={styles.bottomScrimUpper} />
+                <View style={styles.bottomScrimLower} />
+              </View>
+
               {/* Pause Indicator overlay in center */}
               {paused && index === activeIndex ? (
                 <View style={styles.pauseOverlay} pointerEvents="none">
@@ -411,7 +418,7 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
                 {/* More / Safety Options */}
                 <Pressable
                   style={styles.actionBtn}
-                  onPress={() => handleMoreOptions(item)}
+                  onPress={() => setSheetItem(item)}
                   accessibilityRole="button"
                   accessibilityLabel="Options"
                   hitSlop={8}
@@ -455,6 +462,47 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           );
         }}
       />
+
+      {/* Instagram-style bottom action sheet — same actions as the old Alert menu */}
+      {sheetItem ? (
+        <View style={styles.sheetBackdrop}>
+          <Pressable
+            style={StyleSheet.absoluteFill}
+            onPress={() => setSheetItem(null)}
+            accessibilityRole="button"
+            accessibilityLabel="Dismiss options"
+          />
+          <View style={styles.sheet} accessibilityRole="menu">
+            <View style={styles.sheetHandle} />
+            <Text style={styles.sheetTitle}>Reel Options</Text>
+            <Pressable
+              style={styles.sheetRow}
+              onPress={() => closeSheetAnd(performReport)}
+              accessibilityRole="menuitem"
+            >
+              <Feather name="flag" size={18} color={colors.danger} />
+              <Text style={[styles.sheetLabel, styles.sheetLabelDanger]}>Report to Safety Review</Text>
+            </Pressable>
+            <View style={styles.sheetDivider} />
+            <Pressable
+              style={styles.sheetRow}
+              onPress={() => closeSheetAnd(performNotInterested)}
+              accessibilityRole="menuitem"
+            >
+              <Feather name="eye-off" size={18} color={colors.ink} />
+              <Text style={styles.sheetLabel}>Not Interested</Text>
+            </Pressable>
+            <View style={styles.sheetDivider} />
+            <Pressable
+              style={styles.sheetCancel}
+              onPress={() => setSheetItem(null)}
+              accessibilityRole="menuitem"
+            >
+              <Text style={styles.sheetCancelLabel}>Cancel</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
     </View>
   );
 }
@@ -569,6 +617,23 @@ const styles = StyleSheet.create({
     backgroundColor: '#000000',
     overflow: 'hidden',
   },
+  // Subtle dark gradient behind the bottom caption area for readability:
+  // two stacked semi-transparent scrims give the fading look without new deps.
+  bottomScrim: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 5,
+  },
+  bottomScrimUpper: {
+    height: 100,
+    backgroundColor: 'rgba(0,0,0,0.15)',
+  },
+  bottomScrimLower: {
+    height: 140,
+    backgroundColor: 'rgba(0,0,0,0.35)',
+  },
   pauseOverlay: {
     ...StyleSheet.absoluteFill,
     justifyContent: 'center',
@@ -586,7 +651,7 @@ const styles = StyleSheet.create({
     position: 'absolute',
     right: 12,
     alignItems: 'center',
-    gap: 18,
+    gap: 20,
     zIndex: 10,
   },
   actionBtn: {
@@ -640,8 +705,8 @@ const styles = StyleSheet.create({
   },
   reelCaption: {
     color: '#FFFFFF',
-    fontSize: 13,
-    lineHeight: 18,
+    fontSize: 13.5,
+    lineHeight: 19,
     marginBottom: 8,
     textShadowColor: 'rgba(0,0,0,0.8)',
     textShadowOffset: { width: 0, height: 1 },
@@ -661,5 +726,63 @@ const styles = StyleSheet.create({
     color: '#E2E8F0',
     fontSize: 11,
     fontWeight: '600',
+  },
+  // Bottom action sheet (Instagram-style restyle of the old Alert menu)
+  sheetBackdrop: {
+    ...StyleSheet.absoluteFill,
+    backgroundColor: 'rgba(0,0,0,0.45)',
+    justifyContent: 'flex-end',
+    zIndex: 30,
+  },
+  sheet: {
+    backgroundColor: '#FFFFFF',
+    borderTopLeftRadius: 16,
+    borderTopRightRadius: 16,
+    paddingHorizontal: 16,
+    paddingTop: 10,
+    paddingBottom: 24,
+    ...shadow.pop,
+  },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#DBDBDB',
+    marginBottom: 10,
+  },
+  sheetTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+    textAlign: 'center',
+    marginBottom: 12,
+  },
+  sheetRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    paddingVertical: 12,
+  },
+  sheetLabel: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: colors.ink,
+  },
+  sheetLabelDanger: {
+    color: colors.danger,
+  },
+  sheetDivider: {
+    height: 1,
+    backgroundColor: '#EFEFEF',
+  },
+  sheetCancel: {
+    alignItems: 'center',
+    paddingVertical: 12,
+  },
+  sheetCancelLabel: {
+    fontSize: 15,
+    fontWeight: '800',
+    color: colors.brand,
   },
 });
