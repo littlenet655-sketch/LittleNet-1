@@ -107,14 +107,15 @@ describe('child face enrollment and login contracts', () => {
     assert.deepEqual(bodyJson(1), { identifier: 'kid_rio', mode: 'kids', photo_b64: 'live2', challenge_id: 'ch_1', nonce: 'nonce_1', action_completed: 'BLINK' });
   });
 
-  it('maps face mismatch and liveness failures without clearing the gate', async () => {
+  it('maps face-login failures to one uniform message without clearing the gate', async () => {
     stubFetch();
     nextStatus = 401;
-    nextPayload = { error: 'face_login_failed', reason: 'spoof' };
+    nextPayload = { error: 'face_login_failed' };
     const err = await faceLogin('kid_rio', 'kids', 'live3', 'ch_2', 'nonce_2', 'TURN_LEFT').catch((error: unknown) => error);
     assert.ok(err instanceof ApiError);
     assert.equal((err as ApiError).gate, null);
-    assert.match((err as ApiError).message, /Liveness/);
+    // Anti-enumeration: every face-login failure shows the same message.
+    assert.match((err as ApiError).message, /did not match/i);
   });
 });
 

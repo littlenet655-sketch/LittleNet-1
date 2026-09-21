@@ -45,11 +45,14 @@ describe('backend gate parsing', () => {
     assert.match(userMessageFor(403, 'adult_verification_failed', { reason: 'age_estimate_ambiguous' }), /confidently/i);
   });
 
-  it('explains face-login failure reasons distinctly', () => {
+  it('shows one uniform face-login failure message (anti-enumeration)', () => {
+    // The server intentionally returns the same message for every
+    // face-login failure so callers cannot probe enrollment state.
     const spoof = userMessageFor(401, 'face_login_failed', { reason: 'spoof' });
-    const missing = userMessageFor(404, 'face_login_failed', { reason: 'not_enrolled' });
-    assert.match(spoof, /Liveness/);
-    assert.match(missing, /enroll/i);
+    const missing = userMessageFor(401, 'face_login_failed', { reason: 'not_enrolled' });
+    assert.match(spoof, /did not match/i);
+    assert.match(missing, /did not match/i);
+    assert.equal(spoof, missing);
   });
 
   it('retries only safe GET requests with backoff', () => {

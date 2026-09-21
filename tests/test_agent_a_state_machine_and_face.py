@@ -245,29 +245,36 @@ def test_child_face_login_endpoint(client):
             "photo": (BytesIO(b"image_bytes" * 20), "selfie.jpg"),
         }
 
-    # 1. Un-enrolled child -> 404 not_enrolled
+    # 1. Un-enrolled child -> uniform 401 (anti-enumeration: no 404 oracle,
+    #    no reason field distinguishing "not enrolled" from other failures)
     with patch("mobile.api.fetch_one", side_effect=face_fetch), \
          patch("mobile.api.execute", side_effect=consume_challenge), \
          patch("mobile.api.verify", return_value=(False, "not_enrolled", None)):
         res = client.post("/api/mobile/v1/auth/face-login", data=request_data(), content_type="multipart/form-data")
-        assert res.status_code == 404
-        assert res.get_json()["reason"] == "not_enrolled"
+        assert res.status_code == 401
+        body = res.get_json()
+        assert body["error"] == "face_login_failed"
+        assert "reason" not in body
 
-    # 2. Liveness / spoof failure -> 401
+    # 2. Liveness / spoof failure -> uniform 401, no reason (anti-enumeration)
     with patch("mobile.api.fetch_one", side_effect=face_fetch), \
          patch("mobile.api.execute", side_effect=consume_challenge), \
          patch("mobile.api.verify", return_value=(False, "liveness_failed", None)):
         res = client.post("/api/mobile/v1/auth/face-login", data=request_data(), content_type="multipart/form-data")
         assert res.status_code == 401
-        assert res.get_json()["reason"] == "liveness_failed"
+        body = res.get_json()
+        assert body["error"] == "face_login_failed"
+        assert "reason" not in body
 
-    # 3. Invalid enrolled embedding -> 401
+    # 3. Invalid enrolled embedding -> uniform 401, no reason (anti-enumeration)
     with patch("mobile.api.fetch_one", side_effect=face_fetch), \
          patch("mobile.api.execute", side_effect=consume_challenge), \
          patch("mobile.api.verify", return_value=(False, "invalid_enrolled_embedding", None)):
         res = client.post("/api/mobile/v1/auth/face-login", data=request_data(), content_type="multipart/form-data")
         assert res.status_code == 401
-        assert res.get_json()["reason"] == "invalid_enrolled_embedding"
+        body = res.get_json()
+        assert body["error"] == "face_login_failed"
+        assert "reason" not in body
 
     # 4. Genuine face match -> 200 with tokens
     with patch("mobile.api.fetch_one") as mock_fetch, \

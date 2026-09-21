@@ -116,10 +116,8 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
     case 'live_camera_photo_required':
       return 'A live camera photo is required. Please allow camera access and retake the photo.';
     case 'face_login_failed': {
-      const reason = typeof body?.reason === 'string' ? body.reason : '';
-      if (reason === 'not_enrolled') return 'No face is enrolled for this account yet. Enroll a face first.';
-      if (reason === 'spoof' || reason === 'liveness_failed' || reason === 'no_face' || reason === 'multiple_faces')
-        return 'Liveness check failed. Look at the camera in good light and try again.';
+      // Server intentionally returns a uniform response (anti-enumeration),
+      // so no per-reason message is shown here.
       return 'Face did not match this account. Try again or use password login.';
     }
     case 'face_enrollment_required':
@@ -167,6 +165,8 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
       return 'Your account cannot open this section.';
     case 'parent_approval_required':
       return 'This needs your parent\u2019s approval. Ask your parent to do it from Parent Mode.';
+    case 'parent_verification_incomplete':
+      return 'This parent has not finished identity verification (email code plus live adult check). Activation is blocked until verification completes.';
     case 'mobile_auth_required':
     case 'token_role_mismatch':
       return 'Your session expired. Please log in again.';

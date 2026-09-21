@@ -37,7 +37,6 @@ export const REQUEST_TIMEOUT_MS = 15000;
 
 /** Prefer /api/mobile/v2 where a v2 route exists; keep v1 only where no v2 exists. */
 export const routes = {
-  health: '/api/mobile/v1/health',
   login: '/api/mobile/v1/auth/login',
   logout: '/api/mobile/v1/auth/logout',
   faceChallenge: '/api/mobile/v1/auth/face/challenge',
@@ -71,6 +70,7 @@ export const routes = {
   parentResetChildFace: (childId: number) => `/api/mobile/v1/parent/child/${childId}/reset-face`,
   parentResetChildPassword: (childId: number) => `/api/mobile/v1/parent/child/${childId}/reset-password`,
   parentEnrollChildFace: (childId: number) => `/api/mobile/v1/parent/children/${childId}/face/enroll`,
+  parentFaceDeferral: (childId: number) => `/api/mobile/v1/parent/children/${childId}/face/deferral`,
   parentChild: (childId: number) => `/api/mobile/v1/parent/child/${childId}`,
   adminDashboard: '/api/mobile/v1/admin/dashboard',
   adminReviews: '/api/mobile/v1/admin/reviews',
@@ -90,7 +90,6 @@ export const routes = {
   curatedReelPlayback: (contentId: number) => `/api/mobile/v2/kids/reels/curated/${contentId}/playback`,
   storyView: (storyId: number) => `/api/mobile/v2/kids/stories/${storyId}/view`,
   storyViewers: (storyId: number) => `/api/mobile/v2/kids/stories/${storyId}/viewers`,
-  registerDevice: '/api/mobile/v2/device/register',
   uploadSession: '/api/mobile/v2/uploads/session',
   uploadComplete: (uploadId: string) => `/api/mobile/v2/uploads/${encodeURIComponent(uploadId)}/complete`,
   processingStatus: (postId: number) => `/api/mobile/v2/posts/${postId}/processing-status`,
@@ -107,7 +106,6 @@ export const routes = {
   follow: (childId: number) => `/api/mobile/v1/kids/follow/${childId}`,
   connections: '/api/mobile/v1/kids/connections',
   connectionRequests: '/api/mobile/v1/kids/connections/requests',
-  friends: '/api/mobile/v1/kids/friends',
   saved: '/api/mobile/v1/kids/saved',
   block: (targetId: number) => `/api/mobile/v1/kids/block/${targetId}`,
   mute: (targetId: number) => `/api/mobile/v1/kids/mute/${targetId}`,
@@ -120,7 +118,6 @@ export const routes = {
   conversations: '/api/mobile/v1/kids/messages',
   chat: (peerId: number) => `/api/mobile/v1/kids/chat/${peerId}`,
   sharePost: (peerId: number) => `/api/mobile/v1/kids/chat/${peerId}/share`,
-  settings: '/api/mobile/v1/kids/settings',
 } as const;
 
 type UnauthorizedHandler = () => void;

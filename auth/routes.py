@@ -423,13 +423,9 @@ def face_login():
         try:
             ok, reason, _ = verify(user['user_id'], path)
             if not ok:
-                if reason == 'liveness_failed':
-                    error = 'Liveness check failed. Please look straight into the camera in good lighting.'
-                elif reason == 'not_enrolled':
-                    error = 'Face ID is not enrolled for this account. Use password login and complete the required face setup first.'
-                else:
-                    error = 'Face did not match the enrolled profile.'
-                return render_template('face_login.html', mode=mode, error=error), 401
+                # Anti-enumeration: keep one generic message so the page does
+                # not reveal whether the account exists or has Face ID enrolled.
+                return render_template('face_login.html', mode=mode, error='Face authentication failed. Try again or use password login.'), 401
             _set_session(user, 'FACE')
             return redirect(_dest(user))
         except Exception:

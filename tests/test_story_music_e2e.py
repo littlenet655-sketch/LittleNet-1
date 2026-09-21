@@ -1,5 +1,6 @@
 import io
 import pytest
+from PIL import Image
 from app import create_app
 from database.connection import fetch_one, execute
 from mobile.api import _issue_token
@@ -47,44 +48,52 @@ def test_story_music_full_lifecycle(client):
 
     token, child_id = _get_child_token()
 
-    # 2. Upload story with selected track
-    from PIL import Image
+    # 2. Create the story through the canonical v2 pipeline:
+    #    upload session (quarantine) -> complete -> background processing.
+    #    (The legacy synchronous POST /api/mobile/v1/kids/posts was retired;
+    #    story music metadata is preserved by the v2 complete handler.)
+    import uuid
+    from pathlib import Path
+
+    upload_id = str(uuid.uuid4())
+    object_key = f"quarantine/{child_id}/{upload_id}/source.jpg"
+
     buf = io.BytesIO()
     Image.new("RGB", (120, 120), color="green").save(buf, format="JPEG")
-    buf.seek(0)
+    jpeg_bytes = buf.getvalue()
+
+    execute(
+        """INSERT INTO upload_sessions(upload_id, child_id, object_key, media_type, kind,
+               expected_size_bytes, mime_type, extension, status, expires_at)
+           VALUES(%s, %s, %s, 'IMAGE', 'STORY', %s, 'image/jpeg', 'jpg', 'UPLOADED',
+                  NOW() + INTERVAL '1 hour')""",
+        (upload_id, child_id, object_key, len(jpeg_bytes)),
+    )
+    mock_file = Path("uploads/mock_quarantine") / str(child_id) / upload_id / "source.jpg"
+    mock_file.parent.mkdir(parents=True, exist_ok=True)
+    mock_file.write_bytes(jpeg_bytes)
 
     from unittest.mock import patch
-    from safety.policy import Decision
 
-    safe_signals = {
-        "adult_score": 0.0,
-        "violence_score": 0.0,
-        "weapon_score": 0.0,
-        "toxicity_score": 0.0,
-        "partial_safety_failure": False,
-        "total_safety_failure": False,
-    }
-
-    with patch("mobile.api.evaluate", return_value=(safe_signals, Decision("ALLOW", 0.0, "safe"))), \
-         patch("services.media_persistence.persist_before_db", return_value="uploads/stories/test.jpg"):
+    with patch("mobile.api._child_gate", return_value=None), \
+         patch("mobile.api.effective_categories", return_value={"Other"}), \
+         patch("services.job_queue.enqueue_media_job", return_value="job-test-1"):
         res_upload = client.post(
-            "/api/mobile/v1/kids/posts",
+            f"/api/mobile/v2/uploads/{upload_id}/complete",
             headers={"Authorization": f"Bearer {token}"},
-            data={
-                "media": (buf, "story.jpg", "image/jpeg"),
+            json={
                 "caption": "Story with curated track #music",
                 "content_category": "Other",
                 "audience_age_group": "ALL",
-                "kind": "story",
-                "music_id": str(track_id),
-                "music_start": "0",
-                "music_duration": "30",
+                "music_id": track_id,
+                "music_start": 0,
+                "music_duration": 30,
             },
-            content_type="multipart/form-data",
         )
-    assert res_upload.status_code == 200
+    assert res_upload.status_code == 200, res_upload.get_json()
     upload_data = res_upload.get_json()
     assert upload_data["ok"] is True
+    assert upload_data["status"] == "PROCESSING"
     post_id = upload_data["post_id"]
 
     # 3. Verify DB persistence of music metadata

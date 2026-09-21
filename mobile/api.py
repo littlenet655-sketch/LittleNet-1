@@ -879,8 +879,10 @@ def register_mobile_api(bp):
                 return jsonify(error="face_challenge_expired_or_consumed"), 403
             ok, reason, _ = verify(user["user_id"], path)
             if not ok:
-                code = 404 if reason == "not_enrolled" else 401
-                return jsonify(error="face_login_failed", reason=reason), code
+                # Anti-enumeration: every failure looks identical so an
+                # unauthenticated caller cannot tell "no such account" from
+                # "account exists but no face enrolled" from "face mismatch".
+                return jsonify(error="face_login_failed"), 401
 
             return _mobile_login_response(user, "FACE")
         finally:
@@ -1347,6 +1349,14 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("CHILD")
     def mobile_child_face_skip():
+        uid = int(g.mobile_user["user_id"])
+        # The skip is only honored after the parent explicitly approved the
+        # deferral (POST /api/mobile/v1/parent/children/<id>/face/deferral);
+        # otherwise it stays a dead end with a clear parent-approval message.
+        row = fetch_one("SELECT face_enrollment_skipped FROM child_profiles WHERE child_id=%s", (uid,))
+        if row and row.get("face_enrollment_skipped"):
+            return jsonify(ok=True, skipped=True, deferred=True,
+                           quiz_required=bool(needs_onboarding_quiz(uid)))
         return jsonify(
             ok=False,
             error="parent_approval_required",
@@ -1820,140 +1830,10 @@ def register_mobile_api(bp):
     @limiter.limit("30 per hour")
     @_require_mobile("CHILD")
     def mobile_create_post():
-        uid = int(g.mobile_user["user_id"])
-        kind = str(request.form.get("kind") or "post").lower()
-        feature = "reels" if kind == "reel" else "stories" if kind == "story" else "posting"
-        gate = _child_gate(feature)
-        if gate:
-            return gate
-        caption = str(request.form.get("caption") or "").strip()
-        category = str(request.form.get("content_category") or "Other")
-        category = category if category in SAFE_CATEGORIES else "Other"
-        if category not in effective_categories(uid):
-            return jsonify(error="category_disabled_by_parent"), 403
-        audience_raw = request.form.get("audience_age_group")
-        if audience_raw is not None and str(audience_raw) not in {"ALL", "6-8", "9-11", "12-13", "14-18"}:
-            return jsonify(error="invalid_audience_age_group"), 400
-        audience = str(audience_raw or "ALL")
-        if caption and scan_pii(caption).get("detected"):
-            parent_notify(uid, "CONTENT_BLOCKED", "Personal contact information cannot be shared in captions", "/parent/safety/")
-            return jsonify(error="caption_pii_blocked"), 400
-        media = request.files.get("media")
-        path = None
-        stored = None
-        persisted = False
-        content_type = "TEXT"
-        try:
-            text_signals, _ = evaluate(uid, "TEXT", caption or "")
-            media_signals = None
-            if media and media.filename:
-                ext = os.path.splitext(media.filename)[1].lower().lstrip(".")
-                if ext in {"jpg", "jpeg", "png", "webp"}:
-                    content_type = "IMAGE"
-                elif ext in {"mp4", "mov", "avi", "mkv", "webm"}:
-                    content_type = "VIDEO"
-                elif ext in {"mp3", "wav", "m4a", "ogg", "aac", "flac", "opus"}:
-                    return jsonify(error="audio_uploads_disabled"), 400
-                else:
-                    return jsonify(error="unsupported_media"), 400
-                fd, path = tempfile.mkstemp(prefix="littlenet_mobile_post_", suffix=f".{ext}")
-                os.close(fd)
-                media.save(path)
-                if os.path.getsize(path) > Config.MAX_CONTENT_LENGTH:
-                    try:
-                        os.unlink(path)
-                    except OSError:
-                        pass
-                    return jsonify(error="upload_size_exceeded"), 413
-                if content_type == "VIDEO":
-                    from safety.visual_service import video_duration_seconds
-
-                    duration = video_duration_seconds(path)
-                    limit = Config.REEL_MAX_SECONDS if kind == "reel" else Config.STORY_MAX_SECONDS if kind == "story" else Config.VIDEO_MAX_SECONDS
-                    if duration <= 0 or duration > limit:
-                        return jsonify(error="video_duration_invalid", max_seconds=limit), 400
-                elif content_type == "IMAGE":
-                    from services.media_sanitizer import sanitize_image_in_place
-                    sanitize_image_in_place(path)
-                media_signals, _ = evaluate(uid, content_type, path)
-            if content_type == "TEXT" and not caption:
-                return jsonify(error="media_or_caption_required"), 400
-            merged = _merge_signals(text_signals, media_signals)
-            decision = decide(merged, safety_level(uid), Config.ADULT_HARD_BLOCK_THRESHOLD)
-            if decision.action == "BLOCK":
-                record(uid, content_type, None, merged, decision)
-                parent_notify(uid, "CONTENT_BLOCKED", decision.reason, "/parent/safety/")
-                return jsonify(blocked=True, error="content_blocked", reason=decision.reason), 400
-            if path:
-                from services.media_persistence import persist_before_db
-
-                namespace = "stories" if kind == "story" else "reels" if kind == "reel" else "posts"
-                stored = persist_before_db(path, namespace, uid)
-                persisted = True
-            raw_tags = request.form.getlist("tags") or request.form.getlist("tags[]")
-            if not raw_tags and request.form.get("tags"):
-                t_str = request.form.get("tags", "")
-                raw_tags = [t.strip() for t in t_str.split(",") if t.strip()]
-            from services.tag_service import validate_and_normalize_tags, save_post_tags
-
-            validated_tags, tag_err = validate_and_normalize_tags(raw_tags, uid)
-            if tag_err:
-                return jsonify(error=tag_err), 400
-
-            location_name = str(request.form.get("location_name") or "").strip()[:120] or None
-            music_id = request.form.get("music_id")
-            music_row = None
-            if kind == "story" and music_id:
-                try:
-                    music_row = fetch_one("SELECT * FROM curated_music WHERE music_id=%s AND is_active=TRUE", (int(music_id),))
-                except Exception:
-                    music_row = None
-            s_music_id = music_row["music_id"] if music_row else None
-            s_music_title = music_row["title"] if music_row else None
-            s_music_artist = music_row["artist"] if music_row else None
-            s_music_url = music_row["audio_url"] if music_row else None
-            s_music_start = int(request.form.get("music_start") or 0)
-            s_music_dur = int(request.form.get("music_duration") or (music_row["duration_seconds"] if music_row else 30))
-
-            row = execute(
-                """INSERT INTO posts(child_id,media_type,media_path,caption,content_category,audience_age_group,is_story,is_reel,
-                   safety_score,adult_score,violence_score,weapon_score,toxicity_score,is_safe,moderation_status,moderation_reason,location_name,
-                   story_music_id,story_music_title,story_music_artist,story_music_url,story_music_start,story_music_duration)
-                   VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING post_id""",
-                (
-                    uid, content_type, stored, caption, category, audience, kind == "story", kind == "reel",
-                    decision.risk, merged["adult_score"] * 100, merged["violence_score"] * 100,
-                    merged["weapon_score"] * 100, merged["toxicity_score"] * 100,
-                    decision.action == "ALLOW", "ALLOWED" if decision.action == "ALLOW" else "REVIEW", decision.reason,
-                    location_name,
-                    s_music_id, s_music_title, s_music_artist, s_music_url, s_music_start, s_music_dur,
-                ),
-                returning=True,
-            )
-            if validated_tags:
-                save_post_tags(row["post_id"], validated_tags)
-            event = record(uid, content_type, row["post_id"], merged, decision)
-            if decision.action == "REVIEW":
-                parent_notify(uid, "REVIEW_REQUIRED", "Content is waiting for your review", f"/parent/safety/?event={event}")
-            elif decision.action == "ALLOW":
-                from services.publication_lifecycle import refresh_publication_visibility
-                refresh_publication_visibility(row["post_id"], uid, is_reel=kind == "reel")
-            return jsonify(ok=True, post_id=row["post_id"], status=decision.action)
-        except Exception:
-            if persisted and stored:
-                try:
-                    from services.media_persistence import rollback_reference
-
-                    rollback_reference(stored)
-                except Exception:
-                    pass
-            return jsonify(error="secure_media_persistence_failed"), 503
-        finally:
-            if path:
-                try:
-                    os.remove(path)
-                except OSError:
-                    pass
+        # Retired (integration hardening): synchronous multipart upload-through-Flask
+        # contradicts the v2 direct-R2-quarantine pipeline (AGENTS.md rules 6/7).
+        # Use POST /api/mobile/v2/uploads/session -> R2 PUT -> complete -> status.
+        return jsonify(error="deprecated_use_v2_upload", use="/api/mobile/v2/uploads/session"), 410
 
     @bp.route("/api/mobile/v2/uploads/session", methods=["POST"])
     @csrf.exempt
@@ -2793,6 +2673,46 @@ def register_mobile_api(bp):
                 os.remove(path)
             except OSError:
                 pass
+
+    @bp.route("/api/mobile/v1/parent/children/<int:child_id>/face/deferral", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("30 per hour")
+    @_require_mobile("PARENT")
+    def mobile_parent_face_deferral(child_id):
+        """Parent approves/rejects a child's face-enrollment skip request.
+
+        The child's "Skip for Now" button (POST /api/mobile/v1/kids/face/skip)
+        stays a dead end (403 parent_approval_required) until the parent
+        records an explicit decision here. Approval sets
+        child_profiles.face_enrollment_skipped=TRUE, which the onboarding gate
+        (_face_gate_satisfied) honors; a later successful enrollment clears it.
+        """
+        pid = int(g.mobile_user["user_id"])
+        if not owns(pid, child_id):
+            return jsonify(error="child_not_found"), 404
+        data = request.get_json(silent=True) or {}
+        action = str(data.get("action") or "").lower()
+        if action not in {"approve", "reject"}:
+            return jsonify(error="invalid_action"), 400
+        skipped = action == "approve"
+        profile = fetch_one("SELECT child_id FROM child_profiles WHERE child_id=%s", (child_id,))
+        if not profile:
+            return jsonify(error="child_not_found"), 404
+        execute(
+            "UPDATE child_profiles SET face_enrollment_skipped=%s WHERE child_id=%s",
+            (skipped, child_id),
+        )
+        log(child_id, "FACE_DEFERRAL_" + ("APPROVED" if skipped else "REJECTED"), {"parent_id": pid})
+        notify(
+            child_id,
+            "FACE_DEFERRAL",
+            "Your parent approved skipping face enrollment for now."
+            if skipped
+            else "Your parent asked you to complete face enrollment.",
+            "/child/dashboard/",
+            pid,
+        )
+        return jsonify(ok=True, child_id=child_id, face_enrollment_skipped=skipped)
 
     @bp.route("/api/mobile/v1/parent/controls/<int:child_id>", methods=["GET", "PUT"])
     @csrf.exempt

@@ -201,6 +201,23 @@ export function enrollChildFaceByParent(token: string, childId: number, photoB64
   );
 }
 
+/** Parent approves/rejects a child's face-enrollment skip request.
+
+Until the parent records a decision here, the child's "Skip for Now" button
+stays a dead end (403 parent_approval_required). Approving sets
+face_enrollment_skipped server-side so the onboarding gate passes. */
+export function approveFaceDeferral(
+  token: string,
+  childId: number,
+  action: 'approve' | 'reject',
+): Promise<{ ok: boolean; child_id: number; face_enrollment_skipped: boolean }> {
+  return apiRequest(
+    routes.parentFaceDeferral(childId),
+    { method: 'POST', body: JSON.stringify({ action }) },
+    token,
+  );
+}
+
 /** Parent unlinks a child: mapping deleted and child account deactivated server-side. */
 export function unlinkChild(token: string, childId: number): Promise<{ ok: boolean; message: string }> {
   return apiRequest(routes.parentChild(childId), { method: 'DELETE' }, token);

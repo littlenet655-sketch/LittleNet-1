@@ -22,22 +22,25 @@ def _child_headers(user_id=202):
     return {"Authorization": f"Bearer {token}"}
 
 
-def test_create_post_invalid_audience_rejected(client):
+def test_create_post_v1_sync_route_retired(client):
+    # Integration hardening: POST /api/mobile/v1/kids/posts was a synchronous
+    # multipart upload-through-Flask route that bypassed the v2
+    # session -> R2 quarantine -> background moderation pipeline
+    # (AGENTS.md rules 6/7). It now returns 410 directing callers to v2.
     headers = _child_headers(202)
-    with patch("mobile.api.fetch_one", return_value={"user_id": 202, "role": "CHILD", "account_status": "ACTIVE"}), \
-         patch("mobile.api._child_gate", return_value=None), \
-         patch("mobile.api.effective_categories", return_value={"Science", "Art", "Other"}):
+    with patch("mobile.api.fetch_one", return_value={"user_id": 202, "role": "CHILD", "account_status": "ACTIVE"}):
         res = client.post(
             "/api/mobile/v1/kids/posts",
             headers=headers,
             data={
                 "caption": "My exciting robotics project",
                 "content_category": "Science",
-                "audience_age_group": "12-14",  # Invalid! Canonical is 12-13
+                "audience_age_group": "12-14",
             },
         )
-        assert res.status_code == 400
-        assert res.get_json()["error"] == "invalid_audience_age_group"
+        assert res.status_code == 410
+        assert res.get_json()["error"] == "deprecated_use_v2_upload"
+        assert res.get_json()["use"] == "/api/mobile/v2/uploads/session"
 
 
 def test_child_cannot_mutate_parent_controls(client):

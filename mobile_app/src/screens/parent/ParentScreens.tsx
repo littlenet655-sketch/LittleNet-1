@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Platfo
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import {
+  approveFaceDeferral,
   enrollChildFaceByParent,
   extendChildScreenTime,
   fetchFollowRequests,
@@ -661,7 +662,7 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
   const childId = route.params.childId;
   const child = query.data?.children.find((item) => item.user_id === childId);
 
-  const [panel, setPanel] = useState<'password' | 'face' | null>(null);
+  const [panel, setPanel] = useState<'password' | 'face' | 'faceskip' | null>(null);
   const [newPassword, setNewPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [accountBusy, setAccountBusy] = useState(false);
@@ -740,6 +741,26 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
     } catch (err) {
       setAccountError(errorText(err));
       throw err;
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function decideFaceDeferral(action: 'approve' | 'reject') {
+    setAccountBusy(true);
+    setAccountError('');
+    setAccountDone('');
+    try {
+      const result = await approveFaceDeferral(session?.token ?? '', childId, action);
+      setPanel(null);
+      setAccountDone(
+        result.face_enrollment_skipped
+          ? 'Face skip approved. Your child can continue into Kids Mode without enrolling their face.'
+          : 'Face skip declined. Your child will need to enroll their face to continue.',
+      );
+      await refreshFamily();
+    } catch (err) {
+      setAccountError(errorText(err));
     } finally {
       setAccountBusy(false);
     }
@@ -998,6 +1019,47 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
                 instruction="Good light, the child's face centered and looking at the camera, one face only. This enrolls their biometric login key."
                 onCapture={onEnrollCapture}
               />
+            </View>
+          ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            style={styles.actionTileRow}
+            onPress={() => setPanel(panel === 'faceskip' ? null : 'faceskip')}
+          >
+            <View style={[styles.menuIconBadge, { backgroundColor: '#EFF6FF' }]}>
+              <Feather name="user-check" size={20} color="#2563EB" />
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.menuTitle}>Allow Face Skip</Text>
+              <Text style={styles.muted}>Approve or decline your child's request to skip face enrollment</Text>
+            </View>
+            <Feather name={panel === 'faceskip' ? 'chevron-down' : 'chevron-right'} size={18} color="#9CA3AF" />
+          </Pressable>
+          {panel === 'faceskip' ? (
+            <View style={styles.accountPanel}>
+              <Text style={styles.muted}>
+                If your child cannot enroll their face, approving lets them continue into Kids Mode without it.
+                They can enroll later from this screen.
+              </Text>
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 12 }}>
+                <View style={{ flex: 1 }}>
+                  <Button
+                    label={accountBusy ? 'Saving…' : 'Approve Skip'}
+                    loading={accountBusy}
+                    disabled={accountBusy}
+                    onPress={() => void decideFaceDeferral('approve')}
+                  />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Button
+                    label="Decline"
+                    variant="secondary"
+                    disabled={accountBusy}
+                    onPress={() => void decideFaceDeferral('reject')}
+                  />
+                </View>
+              </View>
             </View>
           ) : null}
 
