@@ -379,7 +379,11 @@ def _build_custom_runtime(root: Path, metadata: dict[str, Any]):
     class LittleNetTextSafetyModel(nn.Module):
         def __init__(self):
             super().__init__()
-            self.encoder = AutoModel.from_pretrained(str(root / _CUSTOM_ENCODER_DIR), local_files_only=True)
+            self.encoder = AutoModel.from_pretrained(
+                str(root / _CUSTOM_ENCODER_DIR),
+                local_files_only=True,
+                revision="local",
+            )
             hidden = int(getattr(self.encoder.config, "hidden_size", 0) or getattr(self.encoder.config, "dim", 0))
             if hidden <= 0:
                 raise RuntimeError("trained_text_hidden_size_missing")
@@ -391,20 +395,15 @@ def _build_custom_runtime(root: Path, metadata: dict[str, Any]):
             first_token = outputs.last_hidden_state[:, 0, :]
             return self.classifier(self.dropout(first_token))
 
-    tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True, revision="local")
     model = LittleNetTextSafetyModel()
-    # Final V2 was saved as a trusted LittleNet checkpoint dictionary
-    # (epoch/model_state_dict/labels/model_name/max_length/macro_auprc).
-    # Prefer PyTorch's restricted loader; fall back to the original training
-    # loader only for this fixed private-volume artifact if required.
-    try:
-        checkpoint = torch.load(root / _CUSTOM_MODEL, map_location="cpu", weights_only=True)
-    except Exception:
-        checkpoint = torch.load(root / _CUSTOM_MODEL, map_location="cpu", weights_only=False)
+    # Final V2 is a plain checkpoint dictionary containing tensors plus simple
+    # metadata. Production accepts only PyTorch's restricted weights-only loader;
+    # an incompatible artifact fails preflight instead of enabling pickle code.
+    checkpoint = torch.load(root / _CUSTOM_MODEL, map_location="cpu", weights_only=True)
     state_dict = _state_dict_from_checkpoint(checkpoint)
 
-    # Verify checkpoint metadata agrees with the staged metadata/bundle before
-    # accepting a trusted-pickle fallback.
+    # Verify checkpoint metadata agrees with the staged metadata/bundle.
     if isinstance(checkpoint, dict):
         checkpoint_labels = checkpoint.get("labels")
         if isinstance(checkpoint_labels, list) and checkpoint_labels:
@@ -425,8 +424,12 @@ def _build_custom_runtime(root: Path, metadata: dict[str, Any]):
 def _build_hf_runtime(root: Path, metadata: dict[str, Any]):
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True)
-    model = AutoModelForSequenceClassification.from_pretrained(str(root), local_files_only=True)
+    tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True, revision="local")
+    model = AutoModelForSequenceClassification.from_pretrained(
+        str(root),
+        local_files_only=True,
+        revision="local",
+    )
     model.eval()
     num_labels = int(getattr(model.config, "num_labels", 0) or 0)
     if num_labels != len(metadata["labels"]):
