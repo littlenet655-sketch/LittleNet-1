@@ -341,6 +341,7 @@ def check_text(text:str):
                             violence=max(violence,float(trained.get('violence_score',0) or 0))
                             weapon=max(weapon,float(trained.get('weapon_score',0) or 0))
                             trained_general=max(trained_general,float(trained.get('general_score',0) or 0))
+                            extras['trained_text_model']=True
                             extras['trained_text_release']=trained.get('trained_text_release')
                             extras['model_signals']=trained.get('model_signals') or {}
                     except Exception as exc:
