@@ -135,6 +135,14 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
       return 'Parent verification is not finished. Continue with email code and adult check.';
     case 'email_verification_required':
       return 'Verify the email code first, then continue with the adult check.';
+    case 'single_face_required':
+      return 'Keep exactly one face fully inside the oval, then blink again.';
+    case 'liveness_failed':
+      return 'Live-face verification did not pass. Look straight at the camera in good light and blink again.';
+    case 'age_estimate_ambiguous':
+      return 'We could not confidently confirm adult age from this photo. Retake it in clear, even lighting.';
+    case 'age_verification_unavailable':
+      return 'Adult age verification is temporarily unavailable. Please try again in a moment.';
     case 'adult_verification_failed':
       return 'Adult verification failed. An adult guardian must complete this step.';
     case 'adult_verification_unavailable':
