@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useCameraPermissions } from 'expo-camera';
-import { Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import { AppState, Linking, Platform, StyleSheet, Text, View } from 'react-native';
+import type { AppStateStatus } from 'react-native';
 import NetInfo from '@react-native-community/netinfo';
 import { Feather } from '@expo/vector-icons';
 import { ApiError } from '../api/client';
@@ -8,12 +9,13 @@ import { CameraBlockedError, CameraPermissionError } from './capture';
 import type { CapturedPhoto } from './capture';
 import {
   cleanupTempFrame,
-  detectFacesInImage,
+  detectFacesOrThrow,
   evaluateLivenessFrame,
+  FacePrecheckError,
   precheckFace,
-  type BlinkStage,
   type FaceChallengeAction,
   type LivenessProgress,
+  type LivenessStage,
 } from './facePrecheck';
 import { Button, Notice, errorText } from '../ui/components';
 import { NativeCameraView } from '../ui/nativeViews';
@@ -31,14 +33,83 @@ interface CameraCaptureProps {
   autoScan?: boolean;
 }
 
+/** Live-scan cadence: low-res temp frames analyzed by on-device ML Kit. */
+const SCAN_INTERVAL_MS = 250;
+/** Give up the automatic scan after this long and let the user retry manually. */
+const SCAN_TIMEOUT_MS = 60_000;
+/** Consecutive native detector failures before the scanner is declared dead. */
+const MAX_CONSECUTIVE_DETECTOR_FAILURES = 3;
+
 function canRetrySubmission(error: unknown): boolean {
   return error instanceof ApiError && (error.status === 0 || error.status >= 500);
 }
 
+function initialLiveness(action: FaceChallengeAction): LivenessProgress {
+  return {
+    action,
+    step: 1,
+    statusText: 'Scanning for face…',
+    detailText: 'Center your face inside the oval',
+    isAligned: false,
+    isComplete: false,
+    ovalColor: '#94A3B8',
+    stage: 'WAITING_FOR_OPEN',
+  };
+}
+
+function defaultInstructionFor(action: FaceChallengeAction): string {
+  switch (action) {
+    case 'TURN_LEFT':
+      return 'Auto-scanning active with Google ML Kit. Position your face in the oval and turn your head left when prompted.';
+    case 'TURN_RIGHT':
+      return 'Auto-scanning active with Google ML Kit. Position your face in the oval and turn your head right when prompted.';
+    case 'SMILE':
+      return 'Auto-scanning active with Google ML Kit. Position your face in the oval and smile when prompted.';
+    case 'BLINK':
+    default:
+      return 'Auto-scanning active with Google ML Kit. Position your face in the oval and blink naturally when prompted.';
+  }
+}
+
+function stepTwoLabel(action: FaceChallengeAction): string {
+  switch (action) {
+    case 'TURN_LEFT':
+    case 'TURN_RIGHT':
+      return '2 Turn Check';
+    case 'SMILE':
+      return '2 Smile Check';
+    case 'BLINK':
+    default:
+      return '2 Blink Check';
+  }
+}
+
+function overlayIcon(liveness: LivenessProgress): 'check-circle' | 'eye' | 'smile' | 'rotate-ccw' | 'user-check' | 'user' {
+  if (liveness.isComplete) return 'check-circle';
+  switch (liveness.stage) {
+    case 'WAITING_FOR_BLINK':
+    case 'WAITING_FOR_REOPEN':
+      return 'eye';
+    case 'WAITING_FOR_SMILE':
+      return 'smile';
+    case 'WAITING_FOR_TURN':
+    case 'WAITING_FOR_RETURN':
+      return 'rotate-ccw';
+    default:
+      return liveness.isAligned ? 'user-check' : 'user';
+  }
+}
+
 /**
  * Real-time biometric face scanner with Google ML Kit.
- * Automatically scans the face, checks alignment & eye blink liveness,
+ * Automatically scans the face, checks alignment & liveness challenge,
  * and auto-captures upon confirmation without requiring manual screen taps.
+ *
+ * Challenge lifecycle guarantees:
+ * - verified liveness stops the live detector before ONE final selfie capture;
+ * - a failed attempt always requires a fresh challenge (no selfie/state reuse);
+ * - backgrounding, unmount, detector outage, and scan timeout all reset the
+ *   challenge instead of leaving stale callbacks or a stuck VERIFIED state.
  */
 export function CameraCapture({
   label,
@@ -56,37 +127,75 @@ export function CameraCapture({
   const [cameraReady, setCameraReady] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [pendingPhoto, setPendingPhoto] = useState<CapturedPhoto | null>(null);
+  const [appState, setAppState] = useState<AppStateStatus>('active');
+  const [scannerDead, setScannerDead] = useState(false);
+  const [scanTimedOut, setScanTimedOut] = useState(false);
 
-  const [liveness, setLiveness] = useState<LivenessProgress>({
-    action: livenessAction,
-    step: 1,
-    statusText: 'Scanning for face…',
-    detailText: 'Center your face inside the oval',
-    isAligned: false,
-    isComplete: false,
-    ovalColor: '#94A3B8',
-    stage: 'WAITING_FOR_OPEN',
-  });
+  const [liveness, setLiveness] = useState<LivenessProgress>(() => initialLiveness(livenessAction));
 
   const loading = busy || working;
   const isScanningRef = useRef(false);
   const autoCapturedRef = useRef(false);
-  const blinkStageRef = useRef<BlinkStage>('WAITING_FOR_OPEN');
+  const blinkStageRef = useRef<LivenessStage>('WAITING_FOR_OPEN');
+  /** Bumped on every reset/effect restart; async scan ticks drop stale results. */
+  const generationRef = useRef(0);
+  /** Synchronous re-entrancy guard: exactly one capture at a time. */
+  const captureInFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const scanStartRef = useRef(0);
+  const detectorFailuresRef = useRef(0);
+  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   function resetLivenessState() {
+    generationRef.current += 1;
     blinkStageRef.current = 'WAITING_FOR_OPEN';
     autoCapturedRef.current = false;
-    setLiveness({
-      action: livenessAction,
-      step: 1,
-      statusText: 'Scanning for face…',
-      detailText: 'Center your face inside the oval',
-      isAligned: false,
-      isComplete: false,
-      ovalColor: '#94A3B8',
-      stage: 'WAITING_FOR_OPEN',
-    });
+    scanStartRef.current = 0;
+    detectorFailuresRef.current = 0;
+    setLiveness(initialLiveness(livenessAction));
   }
+
+  /** Full scanner recovery: clears dead/timed-out flags and starts a fresh challenge. */
+  function restartScan() {
+    setScannerDead(false);
+    setScanTimedOut(false);
+    setError(null);
+    resetLivenessState();
+  }
+
+  // Track mount so async continuations never setState after unmount, and so
+  // the delayed post-failure reset timer is always cleaned up.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      if (errorTimerRef.current) {
+        clearTimeout(errorTimerRef.current);
+        errorTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  // A challenge must not span an app backgrounding: the camera is suspended
+  // and any in-flight challenge state is untrustworthy. Reset on background.
+  useEffect(() => {
+    if (Platform.OS === 'web') return;
+    setAppState(AppState.currentState);
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      setAppState(nextState);
+      if (nextState !== 'active') {
+        resetLivenessState();
+      }
+    });
+    return () => subscription.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A new server-issued challenge action invalidates any in-progress scan.
+  useEffect(() => {
+    resetLivenessState();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [livenessAction]);
 
   async function submit(photo: CapturedPhoto) {
     const network = await NetInfo.fetch();
@@ -98,7 +207,8 @@ export function CameraCapture({
   }
 
   async function capture(autoVerified = false) {
-    if (!cameraRef.current || !cameraReady || working) return;
+    if (!cameraRef.current || !cameraReady || working || captureInFlightRef.current) return;
+    captureInFlightRef.current = true;
     setWorking(true);
     setError(null);
     let capturedPhoto: CapturedPhoto | null = null;
@@ -109,6 +219,7 @@ export function CameraCapture({
         quality: 0.45,
         shutterSound: false,
       });
+      if (!mountedRef.current) return;
       if (!shot?.base64) throw new Error('Could not read the camera photo. Please try again.');
       capturedPhoto = {
         base64: shot.base64,
@@ -121,23 +232,29 @@ export function CameraCapture({
       else await precheckFace(capturedPhoto);
       await submit(capturedPhoto);
     } catch (err) {
+      if (!mountedRef.current) return;
+      // Only transient failures keep the locally checked photo for an offline
+      // retry. Any rejection discards it: the next attempt captures fresh.
       setPendingPhoto(capturedPhoto && canRetrySubmission(err) ? capturedPhoto : null);
       setError(err);
-      if (typeof setTimeout !== 'undefined') {
-        setTimeout(() => {
-          // A failed server decision must require a fresh local blink instead of
-          // reusing the previous VERIFIED state on the next automatic scan.
-          resetLivenessState();
-        }, 1200);
-      } else {
-        resetLivenessState();
+      if (errorTimerRef.current) {
+        clearTimeout(errorTimerRef.current);
       }
+      errorTimerRef.current = setTimeout(() => {
+        errorTimerRef.current = null;
+        // A failed attempt must require a fresh local challenge instead of
+        // reusing the previous VERIFIED state on the next automatic scan.
+        if (mountedRef.current) resetLivenessState();
+      }, 1200);
     } finally {
-      setWorking(false);
+      captureInFlightRef.current = false;
+      if (mountedRef.current) setWorking(false);
     }
   }
 
-  // Automatic Google ML Kit face scanner & liveness loop
+  // Automatic Google ML Kit face scanner & liveness loop.
+  // Temp frames are low-res throwaway JPEGs deleted right after analysis;
+  // only the final verified selfie is kept at capture quality.
   useEffect(() => {
     if (
       Platform.OS === 'web' ||
@@ -146,14 +263,30 @@ export function CameraCapture({
       working ||
       busy ||
       pendingPhoto !== null ||
-      autoCapturedRef.current
+      autoCapturedRef.current ||
+      scannerDead ||
+      scanTimedOut ||
+      appState !== 'active'
     ) {
       return;
     }
 
     let isSubscribed = true;
+    if (scanStartRef.current === 0) {
+      scanStartRef.current = Date.now();
+    }
+    generationRef.current += 1;
+    const generation = generationRef.current;
+
     const interval = setInterval(async () => {
       if (!isSubscribed || isScanningRef.current || working || busy || autoCapturedRef.current) {
+        return;
+      }
+      if (generation !== generationRef.current) return;
+      if (Date.now() - scanStartRef.current > SCAN_TIMEOUT_MS) {
+        if (isSubscribed && generation === generationRef.current) {
+          setScanTimedOut(true);
+        }
         return;
       }
       if (!cameraRef.current) return;
@@ -167,11 +300,35 @@ export function CameraCapture({
           shutterSound: false,
         });
 
+        if (!isSubscribed || generation !== generationRef.current) return;
         tempUri = frame?.uri;
-        if (!isSubscribed || !tempUri) return;
+        if (!tempUri) return;
 
-        const faces = await detectFacesInImage(tempUri);
-        if (!isSubscribed) return;
+        let faces;
+        try {
+          faces = await detectFacesOrThrow(tempUri);
+        } catch {
+          // Native detector outage: surface it instead of pretending the
+          // frame simply had no face.
+          detectorFailuresRef.current += 1;
+          if (
+            detectorFailuresRef.current >= MAX_CONSECUTIVE_DETECTOR_FAILURES &&
+            isSubscribed &&
+            generation === generationRef.current
+          ) {
+            setScannerDead(true);
+            setError(
+              new FacePrecheckError(
+                'native_unavailable',
+                'The on-device face check is unavailable. Rebuild the Android app before continuing.',
+              ),
+            );
+          }
+          return;
+        }
+        detectorFailuresRef.current = 0;
+
+        if (!isSubscribed || generation !== generationRef.current) return;
 
         const progress = evaluateLivenessFrame(
           { width: frame.width, height: frame.height },
@@ -183,7 +340,9 @@ export function CameraCapture({
         blinkStageRef.current = progress.stage;
         setLiveness(progress);
 
-        // Once liveness verified, trigger automatic high-res capture
+        // Once liveness is verified the live detector stops (gated by
+        // autoCapturedRef + effect teardown) and exactly one final selfie
+        // is captured and independently validated before submission.
         if (progress.isComplete && !autoCapturedRef.current) {
           autoCapturedRef.current = true;
           await capture(true);
@@ -196,13 +355,14 @@ export function CameraCapture({
         }
         isScanningRef.current = false;
       }
-    }, 250);
+    }, SCAN_INTERVAL_MS);
 
     return () => {
       isSubscribed = false;
       clearInterval(interval);
     };
-  }, [cameraReady, working, busy, pendingPhoto, autoScan, livenessAction]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraReady, working, busy, pendingPhoto, autoScan, livenessAction, appState, scannerDead, scanTimedOut]);
 
   async function retrySubmission() {
     if (!pendingPhoto) return;
@@ -214,7 +374,7 @@ export function CameraCapture({
       setPendingPhoto(canRetrySubmission(err) ? pendingPhoto : null);
       setError(err);
     } finally {
-      setWorking(false);
+      if (mountedRef.current) setWorking(false);
     }
   }
 
@@ -242,6 +402,10 @@ export function CameraCapture({
       </>
     );
   }
+
+  // Scanner is unavailable (dead native module or timed-out scan): offer a
+  // manual capture fallback backed by the full still-photo precheck.
+  const manualFallback = scannerDead || scanTimedOut;
 
   return (
     <>
@@ -283,19 +447,7 @@ export function CameraCapture({
 
           {/* Floating guidance pill at bottom */}
           <View style={styles.guidancePill}>
-            <Feather
-              name={
-                liveness.isComplete
-                  ? 'check-circle'
-                  : liveness.stage === 'WAITING_FOR_BLINK' || liveness.stage === 'WAITING_FOR_REOPEN'
-                    ? 'eye'
-                    : liveness.isAligned
-                      ? 'user-check'
-                      : 'user'
-              }
-              size={13}
-              color={liveness.ovalColor}
-            />
+            <Feather name={overlayIcon(liveness)} size={13} color={liveness.ovalColor} />
             <Text style={styles.guidanceText}>{liveness.detailText}</Text>
           </View>
         </View>
@@ -321,7 +473,7 @@ export function CameraCapture({
             color={liveness.step > 2 ? '#10B981' : liveness.step === 2 ? colors.brand : colors.muted}
           />
           <Text style={liveness.step === 2 ? styles.stepActive : liveness.step > 2 ? styles.stepDone : styles.step}>
-            2 Blink Check
+            {stepTwoLabel(livenessAction)}
           </Text>
         </View>
         <View style={styles.stepDivider} />
@@ -337,13 +489,11 @@ export function CameraCapture({
         </View>
       </View>
 
-      <Notice
-        tone="info"
-        message={
-          instruction ??
-          'Auto-scanning active with Google ML Kit. Position your face in the oval and blink naturally when prompted.'
-        }
-      />
+      <Notice tone="info" message={instruction ?? defaultInstructionFor(livenessAction)} />
+
+      {scanTimedOut ? (
+        <Notice tone="info" message="The face scan timed out. Make sure your face is well lit and centered, then restart the scan." />
+      ) : null}
 
       {error ? <Notice message={errorText(error)} /> : null}
 
@@ -363,12 +513,17 @@ export function CameraCapture({
           />
         </>
       ) : (
-        <Button
-          label={loading ? (busyLabel ?? 'Checking…') : liveness.isComplete ? 'Liveness Verified! Submitting…' : label}
-          onPress={() => void capture(autoScan && liveness.isComplete)}
-          loading={loading}
-          disabled={loading || !cameraReady || (autoScan && !liveness.isComplete)}
-        />
+        <>
+          {manualFallback ? (
+            <Button label="Restart auto-scan" variant="secondary" onPress={restartScan} disabled={loading} />
+          ) : null}
+          <Button
+            label={loading ? (busyLabel ?? 'Checking…') : liveness.isComplete ? 'Liveness Verified! Submitting…' : label}
+            onPress={() => void capture(autoScan && liveness.isComplete && !manualFallback)}
+            loading={loading}
+            disabled={loading || !cameraReady || (autoScan && !liveness.isComplete && !manualFallback)}
+          />
+        </>
       )}
     </>
   );

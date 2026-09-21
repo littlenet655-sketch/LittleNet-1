@@ -60,4 +60,26 @@ describe('backend gate parsing', () => {
     assert.equal(shouldRetryRequest('GET', 0, 400), false);
     assert.ok(retryDelayMs(1) <= 4000);
   });
+
+  it('explains session revocation distinctly from credential failure', () => {
+    assert.match(userMessageFor(401, 'session_revoked', {}), /log in again/i);
+    assert.match(userMessageFor(401, 'token_revoked', {}), /log in again/i);
+    assert.notEqual(userMessageFor(401, 'session_revoked', {}), userMessageFor(401, 'invalid_credentials', {}));
+  });
+
+  it('surfaces the backend message for server-explained lockouts', () => {
+    const exhausted = parseErrorResponse(403, {
+      error: 'self_resets_exhausted',
+      message: 'You have used all 2 daily resets for today. Please ask your parent to add more time.',
+      resets_remaining: 0,
+    });
+    assert.match(exhausted.message, /2 daily resets/);
+    assert.equal(exhausted.details.resets_remaining, 0);
+
+    const quiet = parseErrorResponse(403, {
+      error: 'quiet_hours_active',
+      message: 'Cannot reset screen time during quiet hours bedtime.',
+    });
+    assert.match(quiet.message, /quiet hours/i);
+  });
 });

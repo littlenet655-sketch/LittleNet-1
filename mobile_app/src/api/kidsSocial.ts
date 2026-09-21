@@ -100,3 +100,43 @@ export function fetchReports(token: string): Promise<{ ok: boolean; reports: Rep
 export function fetchConnections(token: string): Promise<{ ok: boolean; followers: unknown[]; following: unknown[]; suggested: unknown[] }> {
   return get(routes.connections, token);
 }
+
+export interface FollowRequestItem {
+  id: number;
+  requester_id?: number;
+  requester_name?: string;
+  requester_username?: string;
+  target_id?: number;
+  target_name?: string;
+  target_username?: string;
+  avatar_url?: string | null;
+  school_name?: string;
+  approval_stage?: string;
+  created_at?: string;
+  is_incoming?: boolean;
+}
+
+/** Incoming + outgoing follow requests awaiting parent approval (server state). */
+export function fetchConnectionRequests(token: string): Promise<{ ok: boolean; incoming: FollowRequestItem[]; outgoing: FollowRequestItem[] }> {
+  return get<{ ok: boolean; incoming: FollowRequestItem[]; outgoing: FollowRequestItem[] }>(routes.connectionRequests, token);
+}
+
+export interface BlockedUserItem {
+  user_id: number;
+  username?: string;
+  full_name?: string;
+  avatar_url?: string | null;
+  created_at?: string;
+}
+
+/**
+ * Accounts the viewer blocked. Uses the centralized route constants in client.ts.
+ */
+export function fetchBlockedUsers(token: string): Promise<{ ok: boolean; blocked_users: BlockedUserItem[] }> {
+  return get(routes.blockedUsers, token);
+}
+
+/** Accounts the viewer muted (their posts are hidden from surfaces). */
+export function fetchMutedUsers(token: string): Promise<{ ok: boolean; muted_users: BlockedUserItem[] }> {
+  return get(routes.mutedUsers, token);
+}

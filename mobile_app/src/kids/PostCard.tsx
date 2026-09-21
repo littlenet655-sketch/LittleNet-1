@@ -1,4 +1,5 @@
-import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import type { InfiniteData } from '@tanstack/react-query';
 import type { FeedItem, FeedPage } from '../api/kidsFeed';
@@ -10,6 +11,103 @@ import { isPubliclyVisible, runSocialPostAction, socialPostTarget } from './soci
 import { VideoMedia } from './VideoMedia';
 import { Avatar, CategoryBadge, TimeAgo } from '../ui/social';
 import { colors, radius, spacing, type } from '../ui/tokens';
+import { clampAspectRatio, parseAspectRatio } from '../video/types';
+
+const FALLBACK_MEDIA_HEIGHT = 300;
+
+/**
+ * Aspect ratio for a remote image: prefer the server's aspect_ratio tag when
+ * present, otherwise measure the real asset with Image.getSize (no invented
+ * dimensions). Returns null while unresolved so callers can show a placeholder.
+ */
+function useRemoteAspect(uri: string | null | undefined, hint?: string | null): number | null {
+  const hintRatio = parseAspectRatio(hint);
+  const [measured, setMeasured] = useState<number | null>(null);
+  useEffect(() => {
+    setMeasured(null);
+    if (!uri) return;
+    let cancelled = false;
+    Image.getSize(
+      uri,
+      (w, h) => {
+        if (!cancelled && w > 0 && h > 0) setMeasured(clampAspectRatio(w / h));
+      },
+      () => {
+        // Measurement failure is non-fatal: the caller falls back gracefully.
+      },
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [uri]);
+  return measured ?? hintRatio;
+}
+
+/** Image with placeholder, measured aspect ratio, and a retryable error state. */
+function FeedImage({ uri, aspectHint, label }: { uri: string; aspectHint?: string | null; label: string }) {
+  const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
+  const [attempt, setAttempt] = useState(0);
+  const [measured, setMeasured] = useState<number | null>(null);
+  const aspect = measured ?? parseAspectRatio(aspectHint);
+
+  useEffect(() => {
+    setFailed(false);
+    setReady(false);
+    setMeasured(null);
+  }, [uri]);
+
+  // Warm the disk/memory cache so taps into detail views paint instantly.
+  useEffect(() => {
+    void Image.prefetch(uri).catch(() => {});
+  }, [uri]);
+
+  return (
+    <View style={[styles.mediaBox, aspect ? { aspectRatio: aspect } : { height: FALLBACK_MEDIA_HEIGHT }]}>
+      {!failed ? (
+        <Image
+          key={`${uri}#${attempt}`}
+          source={{ uri }}
+          style={StyleSheet.absoluteFill}
+          resizeMode="cover"
+          accessibilityLabel={label}
+          onLoad={(e) => {
+            setReady(true);
+            setFailed(false);
+            const src = e.nativeEvent.source;
+            if (src?.width > 0 && src?.height > 0) {
+              setMeasured(clampAspectRatio(src.width / src.height));
+            }
+          }}
+          onError={() => setFailed(true)}
+        />
+      ) : null}
+      {!ready && !failed ? (
+        <View style={styles.mediaPlaceholder} pointerEvents="none">
+          <ActivityIndicator size="small" color={colors.muted} />
+        </View>
+      ) : null}
+      {failed ? (
+        <View style={styles.mediaFallback}>
+          <Feather name="image" size={28} color={colors.muted} />
+          <Text style={styles.mediaFallbackText}>Couldn't load this image.</Text>
+          <Pressable
+            style={styles.mediaRetry}
+            accessibilityRole="button"
+            accessibilityLabel="Retry loading image"
+            onPress={() => {
+              setAttempt((a) => a + 1);
+              setFailed(false);
+            }}
+          >
+            <Feather name="refresh-cw" size={14} color="#FFFFFF" />
+            <Text style={styles.mediaRetryText}>Retry</Text>
+          </Pressable>
+        </View>
+      ) : null}
+    </View>
+  );
+}
 
 export function PostCard({
   item,
@@ -27,9 +125,11 @@ export function PostCard({
   videoActive?: boolean;
 }) {
   const { session } = useAuth();
+  const isVideo = item.media_type?.toUpperCase() === 'VIDEO';
+  // Hook runs unconditionally; the visibility gate below only affects rendering.
+  const posterAspect = useRemoteAspect(isVideo ? item.poster_url : undefined, item.aspect_ratio);
   if (!isPubliclyVisible(item)) return null;
   const socialTarget = socialPostTarget(item);
-  const isVideo = item.media_type?.toUpperCase() === 'VIDEO';
   const previewUrl = isVideo ? item.poster_url : item.media_url;
 
   async function onLike() {
@@ -104,26 +204,27 @@ export function PostCard({
               source={item.media_url}
               posterUrl={item.poster_url}
               active={videoActive}
-              height={300}
+              height={FALLBACK_MEDIA_HEIGHT}
+              aspectRatio={posterAspect ?? undefined}
               nativeControls={false}
               loop
             />
           </View>
         ) : previewUrl ? (
           <Pressable onPress={onOpen} disabled={!onOpen} style={styles.videoPoster}>
-            <Image source={{ uri: previewUrl }} style={styles.media} />
+            <FeedImage uri={previewUrl} aspectHint={item.aspect_ratio} label="Video preview" />
             <View style={styles.playBadge} pointerEvents="none">
               <Feather name="play" size={24} color="#FFFFFF" />
             </View>
           </Pressable>
         ) : (
-          <Pressable onPress={onOpen} disabled={!onOpen} style={styles.media}>
+          <Pressable onPress={onOpen} disabled={!onOpen} style={[styles.mediaBox, { height: FALLBACK_MEDIA_HEIGHT }]}>
             <Text style={styles.videoLabel}>Video</Text>
           </Pressable>
         )
       ) : previewUrl ? (
         <Pressable onPress={onOpen} disabled={!onOpen}>
-          <Image source={{ uri: previewUrl }} style={styles.media} />
+          <FeedImage uri={previewUrl} aspectHint={item.aspect_ratio} label="Post image" />
         </Pressable>
       ) : null}
       {socialTarget ? (
@@ -187,9 +288,14 @@ const styles = StyleSheet.create({
   name: { fontWeight: '800', color: colors.ink },
   title: { marginTop: 8, color: colors.ink, fontSize: type.body, fontWeight: '800' },
   caption: { marginTop: 8, color: colors.ink, fontSize: type.body, lineHeight: 22 },
-  media: { marginTop: 10, width: '100%', height: 300, borderRadius: 0, backgroundColor: colors.line },
+  mediaBox: { marginTop: 10, width: '100%', backgroundColor: colors.line, overflow: 'hidden' },
+  mediaPlaceholder: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center' },
+  mediaFallback: { ...StyleSheet.absoluteFill, alignItems: 'center', justifyContent: 'center', gap: 8, padding: spacing.md },
+  mediaFallbackText: { color: colors.muted, fontWeight: '700', fontSize: 13 },
+  mediaRetry: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: colors.brand, paddingHorizontal: 16, paddingVertical: 8, borderRadius: 18 },
+  mediaRetryText: { color: '#FFFFFF', fontWeight: '700', fontSize: 13 },
   videoLabel: { margin: 'auto', color: colors.muted, fontWeight: '700' },
-  inlineVideo: { marginTop: 10, width: '100%', height: 300, backgroundColor: colors.ink },
+  inlineVideo: { marginTop: 10, width: '100%', backgroundColor: colors.ink, overflow: 'hidden' },
   videoPoster: { position: 'relative' },
   playBadge: { position: 'absolute', left: '50%', top: '50%', marginLeft: -24, marginTop: -24, width: 48, height: 48, borderRadius: 24, backgroundColor: 'rgba(0,0,0,0.55)', alignItems: 'center', justifyContent: 'center' },
   actions: { flexDirection: 'row', alignItems: 'center', gap: 16, marginTop: 8, paddingHorizontal: spacing.md },

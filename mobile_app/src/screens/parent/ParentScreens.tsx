@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, FlatList, Image, KeyboardAvoidingView, Platfo
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import {
+  enrollChildFaceByParent,
   extendChildScreenTime,
   fetchFollowRequests,
   fetchParentActivity,
@@ -11,16 +12,22 @@ import {
   fetchParentNotifications,
   fetchParentSafety,
   markParentNotificationsRead,
+  resetChildFace,
+  resetChildPassword,
   resetChildScreenTime,
   resolveFollowRequest,
   resolveParentReview,
+  unlinkChild,
   updateParentControls,
   updateTimeLimit,
   type ParentChild,
   type ParentControls,
+  type ParentNotification,
   type ReviewPreview,
 } from '../../api/parentAdmin';
 import { useAuth } from '../../auth/AuthProvider';
+import { CameraCapture } from '../../camera/CameraCapture';
+import type { CapturedPhoto } from '../../camera/livePhoto';
 import type { ParentScreenProps } from '../../navigation/types';
 import { useIsOnline } from '../../query/client';
 import { parentKeys } from '../../query/keys';
@@ -649,8 +656,120 @@ export function ParentChildrenScreen({ navigation }: ParentScreenProps<'Children
 
 export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProps<'ChildSummary'>) {
   const { session } = useAuth();
+  const client = useQueryClient();
   const query = useDashboard(session?.token);
-  const child = query.data?.children.find((item) => item.user_id === route.params.childId);
+  const childId = route.params.childId;
+  const child = query.data?.children.find((item) => item.user_id === childId);
+
+  const [panel, setPanel] = useState<'password' | 'face' | null>(null);
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [accountBusy, setAccountBusy] = useState(false);
+  const [accountError, setAccountError] = useState('');
+  const [accountDone, setAccountDone] = useState('');
+
+  const refreshFamily = () => client.invalidateQueries({ queryKey: parentKeys.dashboard });
+
+  async function submitPassword() {
+    if (newPassword.length < 8) {
+      setAccountError('The new password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setAccountError('The new passwords do not match.');
+      return;
+    }
+    setAccountBusy(true);
+    setAccountError('');
+    setAccountDone('');
+    try {
+      const result = await resetChildPassword(session?.token ?? '', childId, newPassword);
+      setNewPassword('');
+      setConfirmPassword('');
+      setPanel(null);
+      setAccountDone(result.message);
+      await refreshFamily();
+    } catch (err) {
+      setAccountError(errorText(err));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  function confirmResetFace() {
+    Alert.alert(
+      'Reset Face Key?',
+      `${child?.full_name ?? 'Your child'} will be signed out on every device and must enroll their face again before Kids Mode opens. Continue?`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reset Face', style: 'destructive', onPress: () => void doResetFace() },
+      ],
+    );
+  }
+
+  async function doResetFace() {
+    setAccountBusy(true);
+    setAccountError('');
+    setAccountDone('');
+    try {
+      const result = await resetChildFace(session?.token ?? '', childId);
+      setPanel(null);
+      setAccountDone(result.message);
+      await refreshFamily();
+    } catch (err) {
+      setAccountError(errorText(err));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  async function onEnrollCapture(photo: CapturedPhoto) {
+    if (!photo.base64) throw new Error('The camera did not return a photo. Please try again.');
+    setAccountBusy(true);
+    setAccountError('');
+    setAccountDone('');
+    try {
+      const result = await enrollChildFaceByParent(session?.token ?? '', childId, photo.base64);
+      setPanel(null);
+      setAccountDone(
+        result.face_enrolled
+          ? 'Face key enrolled. The child can now sign in with face login and the face gate is clear.'
+          : 'Face enrollment saved.',
+      );
+      await refreshFamily();
+    } catch (err) {
+      setAccountError(errorText(err));
+      throw err;
+    } finally {
+      setAccountBusy(false);
+    }
+  }
+
+  function confirmUnlink() {
+    Alert.alert(
+      'Unlink Child Account?',
+      `This removes ${child?.full_name ?? 'your child'} from your family oversight and deactivates their Kids Mode account. You can contact support to restore it.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Unlink Account', style: 'destructive', onPress: () => void doUnlink() },
+      ],
+    );
+  }
+
+  async function doUnlink() {
+    setAccountBusy(true);
+    setAccountError('');
+    setAccountDone('');
+    try {
+      await unlinkChild(session?.token ?? '', childId);
+      await refreshFamily();
+      navigation.goBack();
+    } catch (err) {
+      setAccountError(errorText(err));
+    } finally {
+      setAccountBusy(false);
+    }
+  }
 
   if (query.isPending) return <Screen><LoadingState message="Loading child summary…" /></Screen>;
   if (query.isError) return <Screen><ErrorState message={errorText(query.error)} onRetry={() => void query.refetch()} /></Screen>;
@@ -807,6 +926,123 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
             </View>
             <Feather name="chevron-right" size={18} color="#9CA3AF" />
           </Pressable>
+        </View>
+
+        {/* Child Account Management */}
+        <Text style={styles.sectionHeaderLabelStandalone}>CHILD ACCOUNT</Text>
+        <View style={styles.actionTilesGroup}>
+          <Pressable
+            accessibilityRole="button"
+            style={styles.actionTileRow}
+            onPress={() => setPanel(panel === 'password' ? null : 'password')}
+          >
+            <View style={[styles.menuIconBadge, { backgroundColor: '#EFF6FF' }]}>
+              <Feather name="lock" size={20} color="#2563EB" />
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.menuTitle}>Reset Child Password</Text>
+              <Text style={styles.muted}>Set a new 8+ character sign-in password</Text>
+            </View>
+            <Feather name={panel === 'password' ? 'chevron-down' : 'chevron-right'} size={18} color="#9CA3AF" />
+          </Pressable>
+          {panel === 'password' ? (
+            <View style={styles.accountPanel}>
+              <Field
+                label="New password (min 8)"
+                placeholder="Minimum 8 characters"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={newPassword}
+                onChangeText={setNewPassword}
+              />
+              <Field
+                label="Confirm new password"
+                placeholder="Repeat the new password"
+                secureTextEntry
+                autoCapitalize="none"
+                autoCorrect={false}
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+              />
+              <Button
+                label={accountBusy ? 'Saving…' : 'Set New Password'}
+                loading={accountBusy}
+                disabled={accountBusy}
+                onPress={() => void submitPassword()}
+              />
+            </View>
+          ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            style={styles.actionTileRow}
+            onPress={() => setPanel(panel === 'face' ? null : 'face')}
+          >
+            <View style={[styles.menuIconBadge, { backgroundColor: '#ECFDF5' }]}>
+              <Feather name="camera" size={20} color="#059669" />
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.menuTitle}>Enroll Child Face Key</Text>
+              <Text style={styles.muted}>Take a live photo to enroll or re-enroll face login</Text>
+            </View>
+            <Feather name={panel === 'face' ? 'chevron-down' : 'chevron-right'} size={18} color="#9CA3AF" />
+          </Pressable>
+          {panel === 'face' ? (
+            <View style={styles.accountPanel}>
+              <CameraCapture
+                label="Capture Child Face"
+                busyLabel="Enrolling Face…"
+                busy={accountBusy}
+                livenessAction="BLINK"
+                instruction="Good light, the child's face centered and looking at the camera, one face only. This enrolls their biometric login key."
+                onCapture={onEnrollCapture}
+              />
+            </View>
+          ) : null}
+
+          <Pressable
+            accessibilityRole="button"
+            style={styles.actionTileRow}
+            onPress={confirmResetFace}
+            disabled={accountBusy}
+          >
+            <View style={[styles.menuIconBadge, { backgroundColor: '#FFFBEB' }]}>
+              <Feather name="refresh-ccw" size={20} color="#D97706" />
+            </View>
+            <View style={styles.flex}>
+              <Text style={styles.menuTitle}>Reset Face Key</Text>
+              <Text style={styles.muted}>Clear the enrolled face and sign the child out everywhere</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color="#9CA3AF" />
+          </Pressable>
+
+          <Pressable
+            accessibilityRole="button"
+            style={[styles.actionTileRow, { borderBottomWidth: 0 }]}
+            onPress={confirmUnlink}
+            disabled={accountBusy}
+          >
+            <View style={[styles.menuIconBadge, { backgroundColor: '#FEF2F2' }]}>
+              <Feather name="user-x" size={20} color="#DC2626" />
+            </View>
+            <View style={styles.flex}>
+              <Text style={[styles.menuTitle, styles.dangerText]}>Unlink Child Account</Text>
+              <Text style={styles.muted}>Remove from your family and deactivate Kids Mode</Text>
+            </View>
+            <Feather name="chevron-right" size={18} color="#9CA3AF" />
+          </Pressable>
+
+          {accountError ? (
+            <View style={styles.accountNoticeWrap}>
+              <Notice message={accountError} />
+            </View>
+          ) : null}
+          {accountDone ? (
+            <View style={styles.accountNoticeWrap}>
+              <Notice tone="ok" message={accountDone} />
+            </View>
+          ) : null}
         </View>
       </ScrollView>
     </Screen>
@@ -1702,10 +1938,14 @@ export function ParentNotificationsScreen({ navigation }: ParentScreenProps<'Par
   });
   const rows = query.data?.notifications ?? [];
 
-  function open(type: string) {
-    const value = type.toUpperCase();
+  function open(row: ParentNotification) {
+    const value = row.notification_type.toUpperCase();
+    const childId = row.child_id;
     if (value.includes('FOLLOW')) navigation.navigate('FollowRequests');
-    else if (value.includes('REVIEW') || value.includes('BLOCK') || value.includes('SAFETY')) navigation.navigate('ParentSafety');
+    else if (value.includes('SCREEN_TIME')) navigation.navigate('ScreenTime', { childId });
+    else if (value.includes('CONTROL') || value === 'PROFILE_APPROVAL') navigation.navigate('ParentControls', { childId });
+    else if (value === 'FACE_RESET') navigation.navigate('ChildSummary', { childId });
+    else if (value.includes('REVIEW') || value.includes('BLOCK') || value.includes('SAFETY') || value.includes('REPORT')) navigation.navigate('ParentSafety');
   }
 
   return (
@@ -1762,7 +2002,7 @@ export function ParentNotificationsScreen({ navigation }: ParentScreenProps<'Par
           <Pressable
             accessibilityRole="button"
             style={[styles.notificationCard, !row.is_read && styles.notificationUnreadCard]}
-            onPress={() => open(row.notification_type)}
+            onPress={() => open(row)}
           >
             <View style={[styles.notificationIconWrap, !row.is_read && styles.notificationIconUnread]}>
               <Feather
@@ -2791,4 +3031,19 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '800',
   },
+
+  /* Child Account Management */
+  accountPanel: {
+    paddingHorizontal: 14,
+    paddingBottom: 14,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  accountNoticeWrap: {
+    paddingHorizontal: 14,
+    paddingBottom: 12,
+    borderBottomWidth: 1,
+    borderBottomColor: '#F3F4F6',
+  },
+  dangerText: { color: '#DC2626' },
 });

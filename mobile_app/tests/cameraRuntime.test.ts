@@ -35,6 +35,9 @@ function loadSource(path: string, imports: Record<string, unknown>): unknown {
       return imports[name];
     },
     console,
+    // React Native always has timers; the bare VM context does not.
+    setTimeout,
+    clearTimeout,
   }, { filename: path });
   return exports;
 }
@@ -68,13 +71,18 @@ function harness(detector?: () => Promise<unknown>) {
   });
   const states: unknown[] = [false, true, null, null];
   let index = 0;
+  let refCalls = 0;
   let online = true;
   const component = loadSource('src/camera/CameraCapture.tsx', {
     'react': {
-      useRef: () => ({ current: camera }),
+      // The camera ref must point at the mocked native camera; every other
+      // ref gets its own fresh box so guard refs (capture-in-flight, scan
+      // generation, ...) behave like the real implementation.
+      useRef: (initial?: unknown) => (refCalls++ === 0 ? { current: camera } : { current: initial }),
       useState: (initial?: unknown) => {
         const slot = index++;
-        if (states[slot] === undefined) states[slot] = initial;
+        // Match React: invoke a lazy initializer exactly once per slot.
+        if (states[slot] === undefined) states[slot] = typeof initial === 'function' ? (initial as () => unknown)() : initial;
         return [states[slot], (value: unknown) => { states[slot] = value; }];
       },
       useEffect: () => {},
@@ -103,6 +111,7 @@ function harness(detector?: () => Promise<unknown>) {
   }
   return { calls, states, setOnline: (value: boolean) => { online = value; }, async press(label: string) {
     index = 0;
+    refCalls = 0;
     const tree = component.CameraCapture({ label: 'Capture', onCapture: async () => { calls.push('submit'); } });
     const button = findButton(tree, label);
     if (!button || typeof button.props?.onPress !== 'function') {

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { FlatList, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useQuery } from '@tanstack/react-query';
 import { fetchOwnProfile, updateOwnProfile } from '../../api/kidsProfiles';
-import { blockUser, fetchConnections, fetchSaved, muteUser, submitReport, type PostDetail } from '../../api/kidsSocial';
+import { blockUser, fetchBlockedUsers, fetchConnectionRequests, fetchConnections, fetchMutedUsers, fetchSaved, muteUser, submitReport, type BlockedUserItem, type FollowRequestItem, type PostDetail } from '../../api/kidsSocial';
 import { useAuth } from '../../auth/AuthProvider';
 import type { ChildScreenProps } from '../../navigation/types';
 import { Avatar } from '../../ui/social';
@@ -27,11 +28,129 @@ export function EditProfileScreen({ navigation }: ChildScreenProps<'EditProfile'
 }
 
 export function ConnectionsScreen({ route, navigation }: ChildScreenProps<'Connections'>) {
-  const { session } = useAuth(); const mode = route.params?.mode ?? 'followers'; const [tab, setTab] = useState(mode); const [data, setData] = useState<{ followers: unknown[]; following: unknown[] }>({ followers: [], following: [] }); const [error, setError] = useState<unknown>(null);
+  const { session } = useAuth(); const mode = route.params?.mode ?? 'followers'; const [tab, setTab] = useState<'followers' | 'following' | 'requests'>(mode === 'following' ? 'following' : 'followers'); const [data, setData] = useState<{ followers: unknown[]; following: unknown[] }>({ followers: [], following: [] }); const [error, setError] = useState<unknown>(null);
+  const requestsQuery = useQuery({
+    queryKey: ['kids', 'connection-requests', session?.token ?? 'signed-out'],
+    enabled: Boolean(session) && tab === 'requests',
+    queryFn: () => fetchConnectionRequests(session!.token),
+  });
   useEffect(() => { if (session) fetchConnections(session.token).then((r) => setData({ followers: r.followers, following: r.following })).catch(setError); }, [session?.token]);
   if (error) return <Screen><GateNotice error={error} /><ErrorState message="Connections are unavailable." /></Screen>;
   const people = (tab === 'followers' ? data.followers : data.following) as Person[];
-  return <Screen><Text style={styles.heading}>Connections</Text><View style={styles.tabs}>{(['followers', 'following'] as const).map((t) => <Pressable key={t} onPress={() => setTab(t)}><Text style={[styles.tab, tab === t && styles.active]}>{t.toUpperCase()}</Text></Pressable>)}</View><FlatList data={people} keyExtractor={(p, i) => `${personId(p)}-${i}`} ListEmptyComponent={<EmptyState title="No connections yet" body="Approved friends will appear here." />} renderItem={({ item }) => <Pressable style={styles.person} onPress={() => personId(item) && navigation.navigate('OtherProfile', { targetId: personId(item) })}><Avatar uri={item.avatar_url} name={item.full_name ?? item.username ?? 'Friend'} size={44} /><View><Text style={styles.body}>{item.full_name ?? item.username ?? 'Friend'}</Text><Text style={styles.sub}>Approved friend</Text></View></Pressable>} /></Screen>;
+  const incoming = requestsQuery.data?.incoming ?? [];
+  const outgoing = requestsQuery.data?.outgoing ?? [];
+  return <Screen><Text style={styles.heading}>Connections</Text><View style={styles.tabs}>{(['followers', 'following', 'requests'] as const).map((t) => <Pressable key={t} onPress={() => setTab(t)}><Text style={[styles.tab, tab === t && styles.active]}>{t.toUpperCase()}</Text></Pressable>)}</View>
+    {tab === 'requests' ? <RequestsList incoming={incoming} outgoing={outgoing} loading={requestsQuery.isPending} error={requestsQuery.error} onOpenProfile={(id) => navigation.navigate('OtherProfile', { targetId: id })} /> : null}
+    {tab !== 'requests' ? <FlatList data={people} keyExtractor={(p, i) => `${personId(p)}-${i}`} ListEmptyComponent={<EmptyState title="No connections yet" body="Approved friends will appear here." />} renderItem={({ item }) => <Pressable style={styles.person} onPress={() => personId(item) && navigation.navigate('OtherProfile', { targetId: personId(item) })}><Avatar uri={item.avatar_url} name={item.full_name ?? item.username ?? 'Friend'} size={44} /><View><Text style={styles.body}>{item.full_name ?? item.username ?? 'Friend'}</Text><Text style={styles.sub}>Approved friend</Text></View></Pressable>} /> : null}
+  </Screen>;
+}
+
+function RequestsList({ incoming, outgoing, loading, error, onOpenProfile }: {
+  incoming: FollowRequestItem[];
+  outgoing: FollowRequestItem[];
+  loading: boolean;
+  error: unknown;
+  onOpenProfile: (id: number) => void;
+}) {
+  if (loading) return <LoadingState message="Loading requests…" />;
+  if (error) return <><GateNotice error={error} /><ErrorState message="Requests are unavailable." /></>;
+  if (!incoming.length && !outgoing.length) {
+    return <EmptyState title="No pending requests" body="Follow requests waiting for parent approval will appear here." />;
+  }
+  const renderRequest = (item: FollowRequestItem, isIncoming: boolean) => {
+    const id = isIncoming ? Number(item.requester_id ?? 0) : Number(item.target_id ?? 0);
+    const name = isIncoming ? item.requester_name || item.requester_username : item.target_name || item.target_username;
+    return (
+      <Pressable key={`${isIncoming ? 'in' : 'out'}:${item.id}`} style={styles.person} onPress={() => id && onOpenProfile(id)}>
+        <Avatar uri={item.avatar_url} name={name ?? 'Friend'} size={44} />
+        <View style={styles.requestMeta}>
+          <Text style={styles.body}>{name ?? 'Friend'}</Text>
+          <Text style={styles.sub}>{isIncoming ? 'Wants to follow you — needs parent approval' : 'Request sent — waiting for parent approval'}</Text>
+        </View>
+      </Pressable>
+    );
+  };
+  return (
+    <ScrollView>
+      {incoming.length > 0 ? <Text style={styles.requestSection}>Incoming</Text> : null}
+      {incoming.map((item) => renderRequest(item, true))}
+      {outgoing.length > 0 ? <Text style={styles.requestSection}>Outgoing</Text> : null}
+      {outgoing.map((item) => renderRequest(item, false))}
+    </ScrollView>
+  );
+}
+
+/** Blocked and muted accounts, managed from the Safety Centre. */
+export function SafetyListsCard() {
+  const { session } = useAuth();
+  const [message, setMessage] = useState('');
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const blockedQuery = useQuery({
+    queryKey: ['kids', 'blocked-users', session?.token ?? 'signed-out'],
+    enabled: Boolean(session),
+    queryFn: () => fetchBlockedUsers(session!.token),
+  });
+  const mutedQuery = useQuery({
+    queryKey: ['kids', 'muted-users', session?.token ?? 'signed-out'],
+    enabled: Boolean(session),
+    queryFn: () => fetchMutedUsers(session!.token),
+  });
+  const blocked = blockedQuery.data?.blocked_users ?? [];
+  const muted = mutedQuery.data?.muted_users ?? [];
+
+  async function unblock(item: BlockedUserItem) {
+    if (!session || busyId) return;
+    setBusyId(item.user_id);
+    setMessage('');
+    try {
+      await blockUser(session.token, item.user_id, 'unblock');
+      setMessage('Unblocked.');
+      await blockedQuery.refetch();
+    } catch {
+      setMessage('Could not unblock. Try again.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function unmute(item: BlockedUserItem) {
+    if (!session || busyId) return;
+    setBusyId(item.user_id);
+    setMessage('');
+    try {
+      await muteUser(session.token, item.user_id, 'unmute');
+      setMessage('Unmuted.');
+      await mutedQuery.refetch();
+    } catch {
+      setMessage('Could not unmute. Try again.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  const renderRow = (item: BlockedUserItem, actionLabel: string, onAction: (item: BlockedUserItem) => void) => (
+    <View key={item.user_id} style={styles.safetyRow}>
+      <Avatar uri={item.avatar_url} name={item.full_name ?? item.username ?? 'Friend'} size={40} />
+      <Text style={styles.safetyName}>{item.full_name ?? item.username ?? 'Friend'}</Text>
+      <Button label={busyId === item.user_id ? '…' : actionLabel} variant="secondary" disabled={busyId !== null} onPress={() => void onAction(item)} />
+    </View>
+  );
+
+  return (
+    <Card>
+      <Text style={styles.section}>Blocked accounts</Text>
+      <Text style={styles.sub}>Blocked people cannot see or contact you, and disappear from your feed, search and messages.</Text>
+      {blockedQuery.isPending ? <LoadingState message="Loading…" /> : null}
+      {!blockedQuery.isPending && !blocked.length ? <Text style={styles.sub}>Nobody blocked.</Text> : null}
+      {blocked.map((item) => renderRow(item, 'Unblock', unblock))}
+      <Text style={styles.section}>Muted accounts</Text>
+      <Text style={styles.sub}>Muted people's posts stay out of your feed.</Text>
+      {mutedQuery.isPending ? <LoadingState message="Loading…" /> : null}
+      {!mutedQuery.isPending && !muted.length ? <Text style={styles.sub}>Nobody muted.</Text> : null}
+      {muted.map((item) => renderRow(item, 'Unmute', unmute))}
+      {message ? <Notice tone="info" message={message} /> : null}
+    </Card>
+  );
 }
 
 export function NewMessageScreen({ navigation }: ChildScreenProps<'NewMessage'>) {
@@ -47,4 +166,9 @@ export function ChatDetailsScreen({ route, navigation }: ChildScreenProps<'ChatD
   return <Screen><ScrollView><Text style={styles.heading}>Chat details</Text><Card><Text style={styles.sub}>Your conversation is private and protected by LittleNet safety checks.</Text><Button label="Open chat" onPress={() => navigation.navigate('Chat', { peerId })} /></Card><Card><Text style={styles.section}>Safety controls</Text><Button label={muted ? 'Unmute friend' : 'Mute notifications'} variant="secondary" onPress={() => act((t) => muteUser(t, peerId, muted ? 'UNMUTE' : 'MUTE'), muted ? 'Notifications on.' : 'Notifications muted.', !muted)} /><Button label="Block friend" variant="secondary" onPress={() => act((t) => blockUser(t, peerId, 'BLOCK'), 'Friend blocked.')} /><Button label="Report conversation" variant="secondary" onPress={() => act((t) => submitReport(t, 'USER', peerId, 'Unsafe behavior'), 'Report sent for safety review.')} />{message ? <Notice tone="info" message={message} /> : null}</Card></ScrollView></Screen>;
 }
 
-const styles = StyleSheet.create({ heading: { fontSize: 26, fontWeight: '800', color: colors.ink, padding: 16, paddingBottom: 4 }, sub: { color: colors.muted, paddingHorizontal: 16, lineHeight: 20 }, tabs: { flexDirection: 'row', justifyContent: 'space-around', borderBottomWidth: 1, borderColor: colors.line, paddingVertical: 14, marginTop: 12 }, tab: { fontSize: 12, fontWeight: '800', color: colors.muted }, active: { color: colors.ink }, body: { color: colors.ink, fontWeight: '700' }, person: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderBottomWidth: 1, borderColor: colors.line }, section: { fontSize: 16, fontWeight: '800', color: colors.ink } });
+const styles = StyleSheet.create({ heading: { fontSize: 26, fontWeight: '800', color: colors.ink, padding: 16, paddingBottom: 4 }, sub: { color: colors.muted, paddingHorizontal: 16, lineHeight: 20 }, tabs: { flexDirection: 'row', justifyContent: 'space-around', borderBottomWidth: 1, borderColor: colors.line, paddingVertical: 14, marginTop: 12 }, tab: { fontSize: 12, fontWeight: '800', color: colors.muted }, active: { color: colors.ink }, body: { color: colors.ink, fontWeight: '700' }, person: { flexDirection: 'row', alignItems: 'center', gap: 12, padding: 14, borderBottomWidth: 1, borderColor: colors.line }, section: { fontSize: 16, fontWeight: '800', color: colors.ink },
+  requestSection: { fontSize: 12, fontWeight: '800', color: colors.muted, letterSpacing: 0.6, paddingHorizontal: 16, paddingTop: 14, paddingBottom: 4, textTransform: 'uppercase' },
+  requestMeta: { flex: 1 },
+  safetyRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 10, borderBottomWidth: 1, borderColor: colors.line },
+  safetyName: { flex: 1, color: colors.ink, fontWeight: '700' },
+});

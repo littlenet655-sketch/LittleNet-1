@@ -6,6 +6,10 @@
 import * as ImagePicker from 'expo-image-picker';
 import { File } from 'expo-file-system';
 
+// Pure identity/size helpers live in the upload-pipeline API module so they are
+// unit-testable without native modules; re-exported here for compatibility.
+export { formatBytes, mediaKindFromMimeType, validateMediaIdentity } from '../api/kidsUpload';
+
 export interface PickedMedia {
   uri: string;
   fileName: string;
@@ -19,20 +23,6 @@ export interface PickedMedia {
 function extOf(name: string, fallback: string): string {
   const parts = name.split('.');
   return parts.length > 1 ? (parts[parts.length - 1] ?? fallback).toLowerCase() : fallback;
-}
-
-const MIME_EXTENSIONS: Record<string, readonly string[]> = {
-  'image/jpeg': ['jpg', 'jpeg'],
-  'image/png': ['png'],
-  'image/webp': ['webp'],
-  'video/mp4': ['mp4', 'm4v'],
-  'video/quicktime': ['mov'],
-};
-
-export function validateMediaIdentity(fileName: string, mimeType: string): void {
-  const extension = extOf(fileName, '');
-  const allowed = MIME_EXTENSIONS[mimeType.toLowerCase()];
-  if (!allowed?.includes(extension)) throw new Error('The selected file type does not match its filename. Choose another file.');
 }
 
 export function localMediaSize(uri: string): number {

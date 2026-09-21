@@ -1,57 +1,78 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, FlatList, Image, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { useQuery } from '@tanstack/react-query';
 import { searchDiscover, type KidSummary } from '../../api/kidsProfiles';
+import { toggleFollow } from '../../api/kidsSocial';
 import { useAuth } from '../../auth/AuthProvider';
-import type { PostDetail } from '../../api/kidsSocial';
 import type { ChildScreenProps } from '../../navigation/types';
+import { queryClient, useIsOnline } from '../../query/client';
+import { kidsKeys } from '../../query/keys';
 import { Avatar } from '../../ui/social';
-import { DisabledFeature, EmptyState, ErrorState, GateNotice, OfflineBanner, Skeleton } from '../../ui/components';
+import { DisabledFeature, EmptyState, ErrorState, GateNotice, OfflineBanner } from '../../ui/components';
 import { ApiError } from '../../api/client';
-import { useIsOnline } from '../../query/client';
 import { useDebouncedSearch } from '../../kids/useSearch';
-import { colors, radius } from '../../ui/tokens';
+import { colors } from '../../ui/tokens';
 
 export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const { session } = useAuth();
   const online = useIsOnline();
   const { raw, setRaw, debounced } = useDebouncedSearch(300);
-  const [kids, setKids] = useState<KidSummary[]>([]);
-  const [posts, setPosts] = useState<PostDetail[]>([]);
-  const [pii, setPii] = useState(false);
   const [kind, setKind] = useState<'People' | 'Posts' | 'Reels' | 'Learn'>('People');
   const [recent, setRecent] = useState<string[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<unknown>(null);
+  const [followBusy, setFollowBusy] = useState<number | null>(null);
   const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
+  const token = session?.token ?? 'signed-out';
+  const queryKey = [...kidsKeys.discover(debounced), token];
 
+  const query = useQuery({
+    queryKey,
+    enabled: Boolean(session),
+    staleTime: 30_000,
+    queryFn: ({ signal }) => searchDiscover(session!.token, debounced, signal),
+  });
+  const kids = query.data?.children ?? [];
+  const posts = query.data?.posts ?? [];
+  const curated = query.data?.curated ?? [];
+  const pii = !!query.data?.pii_warning;
+  const loading = query.isPending;
+  const error = query.error;
+
+  // Track successful, non-PII searches for the "recent" strip.
   useEffect(() => {
-    let cancelled = false;
-    const controller = new AbortController();
-    (async () => {
-      if (!session) return;
-      setLoading(true);
-      try {
-        const res = await searchDiscover(session.token, debounced, controller.signal);
-        if (cancelled) return;
-        setKids(res.children ?? []);
-        setPosts(res.posts ?? []);
-        setPii(!!res.pii_warning);
-        if (debounced.trim() && !res.pii_warning) {
-          setRecent((old) => [debounced.trim(), ...old.filter((item) => item !== debounced.trim())].slice(0, 5));
-        }
-        setError(null);
-      } catch (err) {
-        if (!cancelled) setError(err);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-      controller.abort();
-    };
-  }, [session, debounced]);
+    if (query.data && debounced.trim() && !query.data.pii_warning) {
+      const term = debounced.trim();
+      setRecent((old) => [term, ...old.filter((item) => item !== term)].slice(0, 5));
+    }
+  }, [query.data, debounced]);
+
+  /** Follow/unfollow toggle with optimistic label and authoritative rollback. */
+  async function onFollowKid(kid: KidSummary) {
+    if (!session || followBusy) return;
+    setFollowBusy(kid.user_id);
+    const wasActive = Boolean(kid.is_following || kid.is_pending);
+    // Optimistic: flip to the expected next state instantly.
+    queryClient.setQueryData<Awaited<ReturnType<typeof searchDiscover>>>(queryKey, (old) =>
+      old
+        ? {
+            ...old,
+            children: old.children.map((c) =>
+              c.user_id === kid.user_id
+                ? { ...c, is_following: false, is_pending: !wasActive }
+                : c,
+            ),
+          }
+        : old,
+    );
+    try {
+      await toggleFollow(session.token, kid.user_id);
+    } catch {
+      // Roll back to the authoritative server state on failure.
+    } finally {
+      setFollowBusy(null);
+      await queryClient.invalidateQueries({ queryKey: kidsKeys.discover(debounced) });
+    }
+  }
 
   if (error instanceof ApiError && error.code === 'disabled_by_parent') {
     return <DisabledFeature feature="Discover" />;
@@ -133,7 +154,7 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         </View>
       ) : null}
 
-      {!loading && !error && !kids.length && !posts.length ? (
+      {!loading && !error && !kids.length && !posts.length && !curated.length ? (
         <EmptyState
           icon="search"
           title="No results found"
@@ -142,7 +163,7 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
       ) : null}
 
       {error && !kids.length && !posts.length ? (
-        <ErrorState message="Search is currently unavailable." />
+        <ErrorState message="Search is currently unavailable." onRetry={() => void query.refetch()} />
       ) : null}
 
       {/* People Mode: Vertical list of clean friend cards */}
@@ -154,7 +175,8 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           showsVerticalScrollIndicator={false}
           renderItem={({ item }) => {
             const displayName = item.full_name || item.username;
-            const statusLabel = item.is_following ? 'Following' : item.is_pending ? 'Requested' : 'Connect';
+            const busy = followBusy === item.user_id;
+            const statusLabel = busy ? '…' : item.is_following ? 'Following' : item.is_pending ? 'Requested' : 'Connect';
             return (
               <Pressable
                 style={styles.personCard}
@@ -169,15 +191,54 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
                     @{item.username || 'friend'}
                   </Text>
                 </View>
-                <View style={[styles.personActionBtn, item.is_following && styles.personActionBtnMuted]}>
-                  <Text style={[styles.personActionText, item.is_following && styles.personActionTextMuted]}>
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={item.is_following || item.is_pending ? `Unfollow ${displayName}` : `Follow ${displayName}`}
+                  disabled={busy}
+                  hitSlop={6}
+                  onPress={(e) => {
+                    e.stopPropagation();
+                    void onFollowKid(item);
+                  }}
+                  style={[styles.personActionBtn, (item.is_following || item.is_pending) && styles.personActionBtnMuted]}
+                >
+                  <Text style={[styles.personActionText, (item.is_following || item.is_pending) && styles.personActionTextMuted]}>
                     {statusLabel}
                   </Text>
-                </View>
+                </Pressable>
               </Pressable>
             );
           }}
         />
+      ) : null}
+
+      {/* Learn Mode: server-curated learning picks (displayed as-is; ranking is server-side) */}
+      {kind === 'Learn' && curated.length > 0 ? (
+        <View>
+          <Text style={styles.sectionTitle}>Recommended for you</Text>
+          <FlatList
+            data={curated}
+            horizontal
+            keyExtractor={(c) => `curated:${c.source_id}`}
+            contentContainerStyle={styles.curatedRow}
+            showsHorizontalScrollIndicator={false}
+            renderItem={({ item: c }) => {
+              const imgUri = c.poster_url || c.media_url;
+              return (
+                <View style={styles.curatedCard}>
+                  {imgUri ? (
+                    <Image source={{ uri: imgUri }} style={styles.curatedThumb} resizeMode="cover" />
+                  ) : (
+                    <View style={styles.curatedPlaceholder}>
+                      <Feather name="book-open" size={24} color="#94A3B8" />
+                    </View>
+                  )}
+                  <Text style={styles.curatedCaption} numberOfLines={2}>{c.title || c.caption || 'Learning pick'}</Text>
+                </View>
+              );
+            }}
+          />
+        </View>
       ) : null}
 
       {/* Posts / Reels / Learn Mode: 2-column visual grid */}
@@ -311,8 +372,45 @@ const styles = StyleSheet.create({
   filterTextActive: {
     color: '#FFFFFF',
   },
-  loadingPadding: {
-    padding: 16,
+  sectionTitle: {
+    fontSize: 14,
+    fontWeight: '800',
+    color: colors.ink,
+    paddingHorizontal: 16,
+    paddingTop: 12,
+    paddingBottom: 8,
+  },
+  curatedRow: {
+    paddingHorizontal: 16,
+    gap: 10,
+    paddingBottom: 8,
+  },
+  curatedCard: {
+    width: 150,
+    backgroundColor: colors.surface,
+    borderRadius: 14,
+    overflow: 'hidden',
+    borderWidth: 1,
+    borderColor: '#F0F0F0',
+  },
+  curatedThumb: {
+    width: '100%',
+    height: 110,
+    backgroundColor: '#F1F5F9',
+  },
+  curatedPlaceholder: {
+    width: '100%',
+    height: 110,
+    backgroundColor: '#F1F5F9',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  curatedCaption: {
+    fontSize: 12,
+    color: colors.ink,
+    fontWeight: '600',
+    lineHeight: 16,
+    padding: 8,
   },
   peopleList: {
     padding: 16,

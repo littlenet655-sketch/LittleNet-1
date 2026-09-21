@@ -24,7 +24,24 @@ async function get<T>(path: string, token: string, signal?: AbortSignal): Promis
   return apiRequest<T>(path, signal ? { signal } : {}, token);
 }
 
-export function searchDiscover(token: string, q: string, signal?: AbortSignal): Promise<{ ok: boolean; pii_warning: boolean; children: KidSummary[]; posts: PostDetail[] }> {
+export interface CuratedSearchItem {
+  source_id: number;
+  title?: string;
+  caption?: string;
+  media_type?: string;
+  media_url?: string | null;
+  poster_url?: string | null;
+  content_category?: string;
+}
+
+export function searchDiscover(token: string, q: string, signal?: AbortSignal): Promise<{
+  ok: boolean;
+  pii_warning: boolean;
+  children: KidSummary[];
+  posts: PostDetail[];
+  curated?: CuratedSearchItem[];
+  hashtags?: unknown[];
+}> {
   return get(`${routes.discoverV2}${q ? `?q=${encodeURIComponent(q)}` : ''}`, token, signal);
 }
 

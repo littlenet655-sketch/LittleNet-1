@@ -1,17 +1,63 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { completeUpload, requestUploadSession } from '../../api/kidsUpload';
+import { useVideoPlayer } from 'expo-video';
+import { completeUpload, formatBytes, requestUploadSession, type UploadSession, type UploadStage } from '../../api/kidsUpload';
 import { useAuth } from '../../auth/AuthProvider';
-import { putFileToSignedUrl } from '../../kids/directUpload';
+import { isUploadCancelled, putFileToSignedUrl } from '../../kids/directUpload';
 import { capturePostMedia, localMediaSize, pickGalleryMedia, validateMediaIdentity, type PickedMedia } from '../../kids/postMedia';
 import type { ChildScreenProps } from '../../navigation/types';
 import { Card, Field, GateNotice, Notice } from '../../ui/components';
-import { colors, radius, spacing } from '../../ui/tokens';
+import { NativeVideoView } from '../../ui/nativeViews';
+import { colors, spacing } from '../../ui/tokens';
+import { clampAspectRatio } from '../../video/types';
 
 type Kind = 'post' | 'reel' | 'story';
 
 const SUGGESTED_TAGS = ['art', 'fun', 'learning', 'nature', 'friends', 'school'];
+
+/** Muted first-frame preview of the picked local video — never autoplays audio. */
+function LocalVideoPreview({ uri, width, height }: { uri: string; width?: number; height?: number }) {
+  const player = useVideoPlayer(uri, (instance) => {
+    instance.muted = true;
+    instance.loop = false;
+  });
+  const [firstFrame, setFirstFrame] = useState(false);
+  const aspect = width && height && width > 0 && height > 0 ? clampAspectRatio(width / height) : null;
+
+  useEffect(() => {
+    setFirstFrame(false);
+  }, [uri]);
+
+  useEffect(() => () => {
+    try {
+      player.pause();
+    } catch {
+      // Best-effort teardown.
+    }
+  }, [player]);
+
+  return (
+    <View style={[styles.previewVideo, aspect ? { aspectRatio: aspect } : { height: 240 }]}>
+      <NativeVideoView
+        player={player}
+        style={StyleSheet.absoluteFill}
+        contentFit="contain"
+        nativeControls={false}
+        onFirstFrameRender={() => setFirstFrame(true)}
+      />
+      {!firstFrame ? (
+        <View style={styles.previewVideoLoading} pointerEvents="none">
+          <ActivityIndicator size="small" color="#FFFFFF" />
+        </View>
+      ) : null}
+      <View style={styles.previewVideoBadge} pointerEvents="none">
+        <Feather name="film" size={12} color="#FFFFFF" />
+        <Text style={styles.previewVideoBadgeText}>Video preview</Text>
+      </View>
+    </View>
+  );
+}
 
 export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const { session } = useAuth();
@@ -21,9 +67,27 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const [tags, setTags] = useState('');
   const [location, setLocation] = useState('');
   const [busy, setBusy] = useState(false);
+  const [uploading, setUploading] = useState(false);
+  const [progress, setProgress] = useState<number | null>(null);
   const [status, setStatus] = useState('');
   const [error, setError] = useState<unknown>(null);
+  const [failedStage, setFailedStage] = useState<UploadStage | null>(null);
   const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
+  const abortRef = useRef<AbortController | null>(null);
+  const sessionRef = useRef<UploadSession | null>(null);
+
+  // Never leave a native upload running after the screen goes away.
+  useEffect(() => () => {
+    abortRef.current?.abort();
+  }, []);
+
+  function resetPipelineState() {
+    sessionRef.current = null;
+    abortRef.current = null;
+    setFailedStage(null);
+    setProgress(null);
+    setUploading(false);
+  }
 
   async function choose(fn: () => Promise<PickedMedia | null>) {
     try {
@@ -31,6 +95,7 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
       if (picked) {
         setMedia(picked);
         setError(null);
+        resetPipelineState();
       }
     } catch (err) {
       setError(err);
@@ -44,24 +109,58 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
     }
   }
 
+  function cancelUpload() {
+    abortRef.current?.abort();
+  }
+
   async function publish() {
-    if (!session || !media) return;
+    if (!session || !media || busy) return;
     setBusy(true);
     setError(null);
+    // Resume where the last attempt failed: a live upload session is reused so
+    // a retry never pays for the session step twice.
+    let stage: UploadStage = failedStage === 'r2upload' || failedStage === 'complete' ? failedStage : 'session';
+    setFailedStage(null);
     try {
       const mediaType = media.mimeType.startsWith('video/') ? 'VIDEO' : 'IMAGE';
       validateMediaIdentity(media.fileName, media.mimeType);
       const sizeBytes = localMediaSize(media.uri);
-      setStatus('Preparing safe upload…');
-      const sess = await requestUploadSession(session.token, {
-        kind,
-        filename: media.fileName,
-        mediaType,
-        sizeBytes,
-        mimeType: media.mimeType,
-      });
-      setStatus('Uploading content securely…');
-      await putFileToSignedUrl(sess.upload_url, media.uri, sess.required_headers);
+
+      let sess = sessionRef.current;
+      if (stage === 'session' || !sess) {
+        stage = 'session';
+        setStatus('Preparing safe upload…');
+        setProgress(null);
+        sess = await requestUploadSession(session.token, {
+          kind,
+          filename: media.fileName,
+          mediaType,
+          sizeBytes,
+          mimeType: media.mimeType,
+        });
+        sessionRef.current = sess;
+      }
+
+      if (stage === 'session' || stage === 'r2upload') {
+        stage = 'r2upload';
+        setUploading(true);
+        const controller = new AbortController();
+        abortRef.current = controller;
+        setProgress(0);
+        await putFileToSignedUrl(sess.upload_url, media.uri, sess.required_headers, {
+          signal: controller.signal,
+          onProgress: (sent, total) => {
+            const pct = total > 0 ? Math.min(1, Math.max(0, sent / total)) : 0;
+            setProgress(pct);
+            setStatus(`Uploading securely… ${Math.round(pct * 100)}%`);
+          },
+        });
+        abortRef.current = null;
+        setUploading(false);
+      }
+
+      stage = 'complete';
+      setProgress(null);
       setStatus('LittleNet AI safety check…');
       const done = await completeUpload(session.token, sess.upload_id, {
         caption: caption.trim(),
@@ -69,16 +168,40 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         tags: tags.split(',').map((t) => t.trim()).filter(Boolean),
         locationName: location.trim(),
       });
-      nav.navigate('ProcessingStatus', { postId: done.post_id });
+      resetPipelineState();
+      // Hand the local preview to the status screen; the authoritative
+      // published state always comes from the server poll, never this preview.
+      nav.navigate('ProcessingStatus', {
+        postId: done.post_id,
+        localUri: media.uri,
+        mediaType,
+      });
     } catch (err) {
-      setError(err);
-      setStatus('Upload paused. Your selected file and details are still here—tap Share Safely to retry.');
+      if (isUploadCancelled(err)) {
+        // The presigned session survives a cancel: retry resumes the PUT.
+        setFailedStage('r2upload');
+        setStatus('Upload cancelled. Your file is still selected — tap Share Safely to resume.');
+      } else {
+        setError(err);
+        setFailedStage(stage);
+        setStatus(
+          stage === 'session'
+            ? 'Could not start the safe upload (check your connection). Your details are saved — tap Share Safely to retry.'
+            : stage === 'r2upload'
+              ? 'The upload was interrupted. Your file is still selected — tap Share Safely to resume.'
+              : 'Finishing up hit a snag. Tap Share Safely to retry — this step is safe to repeat.',
+        );
+      }
     } finally {
       setBusy(false);
+      setUploading(false);
+      setProgress(null);
+      abortRef.current = null;
     }
   }
 
   const isVideo = kind === 'reel';
+  const pickedIsVideo = (media?.mimeType ?? '').startsWith('video/');
 
   return (
     <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
@@ -91,9 +214,13 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           return (
             <Pressable
               key={k}
+              disabled={busy}
               onPress={() => {
                 setKind(k);
                 setMedia(null);
+                resetPipelineState();
+                setStatus('');
+                setError(null);
               }}
               style={[styles.kindBtn, active && styles.kindBtnActive]}
             >
@@ -106,6 +233,24 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
 
       {error ? <GateNotice error={error} /> : null}
       {status ? <Notice tone="info" message={status} /> : null}
+
+      {/* Determinate upload progress */}
+      {progress !== null ? (
+        <View style={styles.progressWrap} accessibilityRole="progressbar">
+          <View style={styles.progressTrack}>
+            <View style={[styles.progressFill, { width: `${Math.round(progress * 100)}%` }]} />
+          </View>
+          <View style={styles.progressRow}>
+            <Text style={styles.progressLabel}>{Math.round(progress * 100)}% uploaded</Text>
+            {uploading ? (
+              <Pressable onPress={cancelUpload} style={styles.cancelBtn} accessibilityRole="button" accessibilityLabel="Cancel upload">
+                <Feather name="x" size={14} color="#DC2626" />
+                <Text style={styles.cancelText}>Cancel</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        </View>
+      ) : null}
 
       {/* Media Picker / Preview */}
       {!media ? (
@@ -165,20 +310,28 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         </Card>
       ) : (
         <Card style={styles.previewCard}>
-          {media.mimeType.startsWith('image/') ? (
-            <Image source={{ uri: media.uri }} style={styles.previewImg} resizeMode="cover" />
+          {pickedIsVideo ? (
+            <LocalVideoPreview uri={media.uri} width={media.width} height={media.height} />
           ) : (
-            <View style={styles.videoPlaceholder}>
-              <Feather name="film" size={36} color="#FFFFFF" />
-              <Text style={styles.videoName}>{media.fileName}</Text>
-            </View>
+            <Image source={{ uri: media.uri }} style={styles.previewImg} resizeMode="cover" />
           )}
           <View style={styles.previewBottom}>
             <View style={styles.fileInfo}>
               <Feather name="check-circle" size={14} color="#10B981" />
-              <Text style={styles.fileText} numberOfLines={1}>{media.fileName}</Text>
+              <Text style={styles.fileText} numberOfLines={1}>
+                {media.fileName}{typeof media.fileSize === 'number' && media.fileSize > 0 ? ` · ${formatBytes(media.fileSize)}` : ''}
+              </Text>
             </View>
-            <Pressable onPress={() => setMedia(null)} style={styles.changeBtn}>
+            <Pressable
+              disabled={busy}
+              onPress={() => {
+                setMedia(null);
+                resetPipelineState();
+                setStatus('');
+                setError(null);
+              }}
+              style={styles.changeBtn}
+            >
               <Text style={styles.changeBtnText}>Change</Text>
             </Pressable>
           </View>
@@ -242,7 +395,7 @@ export function CreateScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           <Feather name="send" size={18} color="#FFFFFF" />
         )}
         <Text style={styles.publishBtnText}>
-          {busy ? 'Sharing Safely…' : 'Share Safely ✨'}
+          {busy ? 'Sharing Safely…' : failedStage ? 'Resume Sharing ✨' : 'Share Safely ✨'}
         </Text>
       </Pressable>
     </ScrollView>
@@ -287,6 +440,50 @@ const styles = StyleSheet.create({
   },
   kindTextActive: {
     color: '#FFFFFF',
+  },
+  progressWrap: {
+    backgroundColor: colors.surface,
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  progressTrack: {
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#E2E8F0',
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 4,
+    backgroundColor: colors.brand,
+  },
+  progressRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 8,
+  },
+  progressLabel: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: colors.muted,
+  },
+  cancelBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 4,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 12,
+    backgroundColor: '#FEF2F2',
+  },
+  cancelText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#DC2626',
   },
   pickerCard: {
     padding: 16,
@@ -342,17 +539,31 @@ const styles = StyleSheet.create({
     height: 240,
     backgroundColor: '#F1F5F9',
   },
-  videoPlaceholder: {
+  previewVideo: {
     width: '100%',
-    height: 200,
     backgroundColor: '#0F172A',
-    justifyContent: 'center',
-    alignItems: 'center',
-    gap: 8,
   },
-  videoName: {
-    color: '#E2E8F0',
-    fontSize: 12,
+  previewVideoLoading: {
+    ...StyleSheet.absoluteFill,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  previewVideoBadge: {
+    position: 'absolute',
+    left: 10,
+    bottom: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    backgroundColor: 'rgba(0,0,0,0.55)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 10,
+  },
+  previewVideoBadgeText: {
+    color: '#FFFFFF',
+    fontSize: 11,
+    fontWeight: '700',
   },
   previewBottom: {
     flexDirection: 'row',

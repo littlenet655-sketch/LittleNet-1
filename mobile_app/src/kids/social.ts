@@ -130,8 +130,35 @@ export function shouldPlayReel(index: number, activeIndex: number, foreground: b
 }
 
 export interface ConversationPreview {
+  conversation_id: number;
   peer_id: number;
   last_message?: { sender_child_id?: number; is_seen?: boolean } | null;
+}
+
+/** Deduplicate conversations by their server identity, preserving first order. */
+export function dedupeConversations<T extends ConversationPreview>(rows: T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const row of rows) {
+    if (seen.has(row.conversation_id)) continue;
+    seen.add(row.conversation_id);
+    out.push(row);
+  }
+  return out;
+}
+
+/**
+ * A message stuck in REVIEW must render as a pending state, never as a
+ * normal delivered message. The server only ever returns REVIEW messages to
+ * their sender, so this is checked for own messages.
+ */
+export function isChatMessagePending(
+  message: { moderation_status?: string } | null | undefined,
+  isOwn: boolean,
+): boolean {
+  if (!isOwn) return false;
+  const status = (message?.moderation_status ?? 'ALLOWED').toUpperCase();
+  return status !== 'ALLOWED';
 }
 
 export function canMessageRelationship(relationship: { can_message?: boolean } | null | undefined): boolean {
@@ -158,4 +185,22 @@ export function createSearchGuard() {
       return id === latest;
     },
   };
+}
+
+/**
+ * Maps a server notification target_url to an app destination. The backend
+ * only ever creates /chat/<id>/ and /child/dashboard/ style URLs for kids
+ * (plus parent-control alerts); anything unrecognized returns null so the
+ * caller can safely ignore it instead of navigating somewhere wrong.
+ */
+export function notificationDestination(url: string | null | undefined): { route: string; params: Record<string, unknown> } | null {
+  const target = url ?? '';
+  const postMatch = target.match(/\/post\/(\d+)/);
+  if (postMatch?.[1]) return { route: 'PostDetail', params: { postId: Number(postMatch[1]) } };
+  const chatMatch = target.match(/\/chat\/(\d+)/);
+  if (chatMatch?.[1]) return { route: 'Chat', params: { peerId: Number(chatMatch[1]) } };
+  const profileMatch = target.match(/\/profile\/(\d+)/);
+  if (profileMatch?.[1]) return { route: 'OtherProfile', params: { targetId: Number(profileMatch[1]) } };
+  if (/\/child\/dashboard\/?/.test(target)) return { route: 'KidsTabs', params: { tab: 'FeedTab' } };
+  return null;
 }

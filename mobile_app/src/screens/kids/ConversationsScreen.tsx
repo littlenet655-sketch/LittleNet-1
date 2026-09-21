@@ -3,7 +3,7 @@ import { FlatList, Pressable, RefreshControl, StyleSheet, Text } from 'react-nat
 import { useIsFocused } from '@react-navigation/native';
 import { fetchConversations, type ConversationItem } from '../../api/kidsChat';
 import { useAuth } from '../../auth/AuthProvider';
-import { isConversationUnread } from '../../kids/social';
+import { dedupeConversations, isConversationUnread } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground } from '../../query/client';
 import { Avatar, TimeAgo } from '../../ui/social';
@@ -27,7 +27,9 @@ export function ConversationsScreen({ navigation }: ChildScreenProps<'KidsTabs'>
     else setRefreshing(true);
     try {
       const res = await fetchConversations(session.token);
-      setItems(res.conversations ?? []);
+      // Backend returns the full conversation list (no cursor params); dedupe
+      // defensively so repeats never render twice.
+      setItems(dedupeConversations(res.conversations ?? []));
       setError(null);
     } catch (err) {
       setError(err);

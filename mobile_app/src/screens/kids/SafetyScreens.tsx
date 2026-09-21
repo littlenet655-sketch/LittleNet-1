@@ -7,6 +7,7 @@ import type { ChildScreenProps } from '../../navigation/types';
 import { TimeAgo } from '../../ui/social';
 import { Button, Card, EmptyState, ErrorState, GateNotice, LoadingState, Screen } from '../../ui/components';
 import { colors, radius, spacing, type } from '../../ui/tokens';
+import { SafetyListsCard } from './SocialStates';
 
 export function SafetyCentreScreen({ navigation }: ChildScreenProps<'SafetyCentre'>) {
   return (
@@ -24,6 +25,7 @@ export function SafetyCentreScreen({ navigation }: ChildScreenProps<'SafetyCentr
           <Text style={styles.body}>Open the post, profile, comment, or message you are worried about. Use its Safety actions to choose a clear reason and send a report.</Text>
           <Button label="Open my feed" onPress={() => navigation.navigate('KidsTabs', { tab: 'FeedTab' })} />
         </Card>
+        <SafetyListsCard />
         <Button label="View report history" variant="secondary" onPress={() => navigation.navigate('ReportHistory')} />
         <View style={styles.parentNote}>
           <Text style={styles.cardTitle}>Need a parent?</Text>

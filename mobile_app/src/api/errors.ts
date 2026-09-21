@@ -165,9 +165,14 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
       return 'Today\u2019s screen-time limit is reached. Come back tomorrow.';
     case 'role_forbidden':
       return 'Your account cannot open this section.';
+    case 'parent_approval_required':
+      return 'This needs your parent\u2019s approval. Ask your parent to do it from Parent Mode.';
     case 'mobile_auth_required':
     case 'token_role_mismatch':
       return 'Your session expired. Please log in again.';
+    case 'session_revoked':
+    case 'token_revoked':
+      return 'Your session was ended for security (for example after a password or account change). Please log in again.';
     case 'child_not_found':
       return 'That child account was not found under your parent account.';
     case 'media_storage_unavailable':

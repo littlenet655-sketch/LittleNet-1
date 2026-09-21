@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { routes } from '../src/api/client';
-import { childNextRoute, screenForGate } from '../src/navigation/gates';
+import { routes, ApiError } from '../src/api/client';
+import { childNextRoute, resetsDisplayState, screenForGate, shouldRefreshOnboardingForGate } from '../src/navigation/gates';
 
 describe('onboarding navigation', () => {
   it('orders child gates face -> quiz -> home', () => {
@@ -26,5 +26,29 @@ describe('onboarding navigation', () => {
     assert.ok(routes.uploadSession.startsWith('/api/mobile/v2/'));
     assert.equal(routes.processingStatus(42), '/api/mobile/v2/posts/42/processing-status');
     assert.equal(routes.uploadComplete('up 1/2'), '/api/mobile/v2/uploads/up%201%2F2/complete');
+  });
+
+  it('refreshes onboarding only on a NEW 428 face/quiz gate', () => {
+    const faceGate = new ApiError(428, 'face_enrollment_required', 'Face enrollment is required', 'face');
+    const quizGate = new ApiError(428, 'quiz_required', 'quiz required', 'quiz');
+    const other = new ApiError(403, 'disabled_by_parent', 'disabled', null);
+
+    // Unknown onboarding: always refresh so the child is routed to enrollment/quiz.
+    assert.equal(shouldRefreshOnboardingForGate(faceGate, null), true);
+    assert.equal(shouldRefreshOnboardingForGate(quizGate, undefined), true);
+    // Changed gates refresh; already-known gates do not (no refresh loop).
+    assert.equal(shouldRefreshOnboardingForGate(faceGate, { face_required: false, quiz_required: true }), true);
+    assert.equal(shouldRefreshOnboardingForGate(faceGate, { face_required: true, quiz_required: false }), false);
+    assert.equal(shouldRefreshOnboardingForGate(quizGate, { face_required: false, quiz_required: true }), false);
+    // Non-428 errors never trigger the enrollment redirect.
+    assert.equal(shouldRefreshOnboardingForGate(other, null), false);
+    assert.equal(shouldRefreshOnboardingForGate(new Error('boom'), null), false);
+  });
+
+  it('never guesses a server reset count: unknown stays unknown', () => {
+    assert.equal(resetsDisplayState(null), 'unknown');
+    assert.equal(resetsDisplayState(2), 'available');
+    assert.equal(resetsDisplayState(1), 'available');
+    assert.equal(resetsDisplayState(0), 'exhausted');
   });
 });

@@ -11,6 +11,52 @@ import type { AuthScreenProps, ChildScreenProps } from '../navigation/types';
 import { Button, Card, Field, GateNotice, GuidelineChips, Notice, Screen, errorText } from '../ui/components';
 import { colors, radius, spacing, type } from '../ui/tokens';
 
+/**
+ * Normalize every face-login failure into a user-facing message that reveals
+ * nothing about the account.
+ *
+ * The backend deliberately returns indistinguishable failures for an unknown
+ * identifier, a missing face enrollment, and a non-matching face (synthetic
+ * challenges for unknown identifiers, uniform `face_login_failed` codes).
+ * The client distinguishes these cases internally via status/code/reason for
+ * flow decisions, but must never turn those differences into an account or
+ * enrollment oracle in the UI.
+ */
+export function faceLoginFailureMessage(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (error.status === 0) {
+      return 'No internet connection. Reconnect, then retry verification.';
+    }
+    switch (error.code) {
+      case 'face_challenge_expired_or_consumed':
+      case 'challenge_expired':
+      case 'challenge_already_used_replay_detected':
+      case 'invalid_face_challenge':
+      case 'face_auth_challenge_required':
+      case 'challenge_action_mismatch':
+      case 'challenge_nonce_mismatch':
+      case 'challenge_not_found':
+      case 'missing_challenge_params':
+        // The single-use challenge is gone; only a fresh challenge can work.
+        return 'This face check expired. Start a fresh face check and try again.';
+      case 'network_unreachable':
+      case 'server_unavailable':
+      case 'request_timeout':
+        return 'Verification is temporarily unavailable. Try again in a moment.';
+      default:
+        break;
+    }
+    if (error.status >= 500) {
+      return 'Verification is temporarily unavailable. Try again in a moment.';
+    }
+    // 400/401/403/404 from face-login: unknown account, no enrolled face,
+    // non-matching face, or rejected liveness all look identical here on
+    // purpose — never reveal which one happened.
+    return 'Face login did not work. Check the username and try again, or use password login.';
+  }
+  return errorText(error);
+}
+
 /** Replay-resistant face login with interactive challenge-response and role awareness. */
 export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogin'>) {
   const { signIn } = useAuth();
@@ -50,9 +96,17 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
       const response = await faceLogin(trimmed, mode, photo.base64, challenge.challenge_id, challenge.nonce, challenge.action);
       await signIn(response);
     } catch (err) {
+      // The server-side challenge is single-use: any failure invalidates it,
+      // so the next attempt must start a fresh challenge with a fresh photo.
       setChallenge(null);
-      setError(err);
-      throw err;
+      // Normalize before surfacing: the raw ApiError message would reveal
+      // whether the account exists or has a face enrolled.
+      const normalized =
+        err instanceof ApiError
+          ? new ApiError(err.status, err.code, faceLoginFailureMessage(err), err.gate, err.details)
+          : err;
+      setError(normalized);
+      throw normalized;
     } finally {
       setBusy(false);
     }

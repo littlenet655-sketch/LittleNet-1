@@ -57,6 +57,7 @@ export type LivenessStage =
   | 'WAITING_FOR_REOPEN'
   | 'WAITING_FOR_TURN'
   | 'WAITING_FOR_RETURN'
+  | 'WAITING_FOR_SMILE'
   | 'VERIFIED';
 
 export type BlinkStage = LivenessStage;
@@ -87,6 +88,25 @@ export async function detectFacesInImage(uri: string): Promise<Face[]> {
   }
 }
 
+/**
+ * Strict variant for the live scanner: resolves with detected faces, or
+ * rejects when the native detector itself fails. Lets the caller distinguish
+ * "no face in frame" (empty array) from "detector unavailable" (throw) so a
+ * broken native module surfaces an actionable error instead of an endless
+ * "Looking for face…" state.
+ */
+export async function detectFacesOrThrow(uri: string): Promise<Face[]> {
+  if (Platform.OS === 'web' || !uri) return [];
+  if (typeof FaceDetection?.detect !== 'function') {
+    throw new Error('FaceDetection.detect is not available');
+  }
+  return FaceDetection.detect(uri, {
+    performanceMode: 'fast',
+    classificationMode: 'all',
+    minFaceSize: 0.15,
+  });
+}
+
 /** Safe temporary frame deletion that never throws. */
 export async function cleanupTempFrame(uri?: string): Promise<void> {
   if (Platform.OS === 'web' || !uri) return;
@@ -101,8 +121,31 @@ export async function cleanupTempFrame(uri?: string): Promise<void> {
   }
 }
 
-function turnedOrSmilingColor(ok: boolean): string {
-  return ok ? '#10B981' : '#38BDF8';
+/**
+ * Signed head-turn threshold in degrees of ML Kit rotationY.
+ *
+ * ML Kit reports positive rotationY when the face turns toward the RIGHT side
+ * of the image being processed. The front camera stores the sensor frame
+ * unmirrored, so a user turning their head to their OWN left turns toward the
+ * right side of that image (positive), and their own right is negative.
+ * Each challenge therefore accepts one sign only: a turn in the opposite
+ * direction must never verify. Confirm the sign on a physical device if the
+ * camera sensor pipeline ever changes.
+ */
+export const TURN_YAW_THRESHOLD_DEGREES = 15;
+
+/** +1 when TURN_LEFT expects positive rotationY, -1 when TURN_RIGHT expects negative, 0 otherwise. */
+function expectedTurnSign(action: FaceChallengeAction): 1 | -1 | 0 {
+  if (action === 'TURN_LEFT') return 1;
+  if (action === 'TURN_RIGHT') return -1;
+  return 0;
+}
+
+/** Stage the scanner rests at while no usable face is tracked. */
+function waitingStageFor(action: FaceChallengeAction): LivenessStage {
+  if (action === 'BLINK') return 'WAITING_FOR_OPEN';
+  if (action === 'SMILE') return 'WAITING_FOR_SMILE';
+  return 'WAITING_FOR_TURN';
 }
 
 /**
@@ -124,7 +167,7 @@ export function evaluateLivenessFrame(
       isAligned: false,
       isComplete: false,
       ovalColor: '#94A3B8',
-      stage: action === 'BLINK' ? 'WAITING_FOR_OPEN' : 'WAITING_FOR_TURN',
+      stage: waitingStageFor(action),
     };
   }
 
@@ -137,7 +180,7 @@ export function evaluateLivenessFrame(
       isAligned: false,
       isComplete: false,
       ovalColor: '#EF4444',
-      stage: action === 'BLINK' ? 'WAITING_FOR_OPEN' : 'WAITING_FOR_TURN',
+      stage: waitingStageFor(action),
     };
   }
 
@@ -166,40 +209,43 @@ export function evaluateLivenessFrame(
       isAligned: false,
       isComplete: false,
       ovalColor: '#F59E0B',
-      stage: action === 'BLINK' ? 'WAITING_FOR_OPEN' : 'WAITING_FOR_TURN',
+      stage: waitingStageFor(action),
     };
   }
 
-  // Head turn verification: Detect head yaw movement
-  if (action === 'TURN_LEFT') {
+  // Head turn verification: the challenge accepts the correct direction ONLY.
+  // A turn past the threshold in the opposite direction is explicitly
+  // rejected with corrective guidance instead of silently ignored.
+  const turnSign = expectedTurnSign(action);
+  if (turnSign !== 0) {
     const rotY = face.rotationY ?? 0;
-    // Front-facing cameras can report + or - yaw depending on sensor mirroring.
-    // A rotation of >= 10 degrees proves natural 3D head movement.
-    const turned = Math.abs(rotY) >= 10;
+    const signedYaw = rotY * turnSign;
+    const turned = signedYaw >= TURN_YAW_THRESHOLD_DEGREES;
+    const wrongWay = signedYaw <= -TURN_YAW_THRESHOLD_DEGREES;
+    const turnLabel = action === 'TURN_LEFT' ? 'left ⬅️' : 'right ➡️';
+    if (turned) {
+      return {
+        action,
+        step: 3,
+        statusText: 'Position Verified!',
+        detailText: 'Hold steady, capturing photo…',
+        isAligned: true,
+        isComplete: true,
+        ovalColor: '#10B981',
+        stage: 'VERIFIED',
+      };
+    }
     return {
       action,
-      step: turned ? 3 : 2,
-      statusText: turned ? 'Position Verified!' : 'Turn Head Left',
-      detailText: turned ? 'Hold steady, capturing photo…' : 'Turn your head slightly to the left ⬅️',
+      step: 2,
+      statusText: wrongWay ? 'Wrong Direction' : action === 'TURN_LEFT' ? 'Turn Head Left' : 'Turn Head Right',
+      detailText: wrongWay
+        ? `That's the other way — turn your head to your ${turnLabel}`
+        : `Turn your head slightly to the ${turnLabel}`,
       isAligned: true,
-      isComplete: turned,
-      ovalColor: turned ? '#10B981' : '#38BDF8',
-      stage: turned ? 'VERIFIED' : 'WAITING_FOR_TURN',
-    };
-  }
-
-  if (action === 'TURN_RIGHT') {
-    const rotY = face.rotationY ?? 0;
-    const turned = Math.abs(rotY) >= 10;
-    return {
-      action,
-      step: turned ? 3 : 2,
-      statusText: turned ? 'Position Verified!' : 'Turn Head Right',
-      detailText: turned ? 'Hold steady, capturing photo…' : 'Turn your head slightly to the right ➡️',
-      isAligned: true,
-      isComplete: turned,
-      ovalColor: turned ? '#10B981' : '#38BDF8',
-      stage: turned ? 'VERIFIED' : 'WAITING_FOR_TURN',
+      isComplete: false,
+      ovalColor: wrongWay ? '#F59E0B' : '#38BDF8',
+      stage: 'WAITING_FOR_TURN',
     };
   }
 
@@ -212,12 +258,16 @@ export function evaluateLivenessFrame(
       detailText: smiling ? 'Hold steady, capturing photo…' : 'Please smile at the camera 😊',
       isAligned: true,
       isComplete: smiling,
-      ovalColor: turnedOrSmilingColor(smiling),
-      stage: smiling ? 'VERIFIED' : 'WAITING_FOR_BLINK',
+      ovalColor: smiling ? '#10B981' : '#38BDF8',
+      stage: smiling ? 'VERIFIED' : 'WAITING_FOR_SMILE',
     };
   }
 
-  // Default: BLINK verification
+  // Default: BLINK verification.
+  // The full OPEN -> CLOSED -> OPEN sequence is required: starting with eyes
+  // closed, or reopening without a detected close, never advances the stage.
+  // Losing the face (or alignment) resets the stage to WAITING_FOR_OPEN, so a
+  // partial sequence can never be resumed and reused.
   const leftEye = face.leftEyeOpenProbability;
   const rightEye = face.rightEyeOpenProbability;
 
@@ -261,6 +311,23 @@ export function evaluateLivenessFrame(
         isComplete: false,
         ovalColor: '#06B6D4',
         stage: 'WAITING_FOR_REOPEN',
+      };
+    }
+
+    // nextStage can only be WAITING_FOR_OPEN or WAITING_FOR_BLINK here.
+    // Crucially the stage is never advanced without its entry condition:
+    // eyes must be seen OPEN before the user is asked to blink, otherwise a
+    // CLOSED -> OPEN partial sequence would verify.
+    if (nextStage === 'WAITING_FOR_OPEN') {
+      return {
+        action,
+        step: 2,
+        statusText: 'Open Your Eyes',
+        detailText: 'Look at the camera with both eyes open 👀',
+        isAligned: true,
+        isComplete: false,
+        ovalColor: '#06B6D4',
+        stage: 'WAITING_FOR_OPEN',
       };
     }
 
@@ -325,13 +392,15 @@ export async function precheckFaceChallenge(photo: CapturedPhoto, action: FaceCh
     throw new FacePrecheckError('low_quality', 'Move closer and take a clearer challenge photo.');
   }
   const rotY = face.rotationY ?? 0;
+  // Direction-strict, matching the live scanner: TURN_LEFT needs positive
+  // rotationY, TURN_RIGHT needs negative. A wrong-direction turn never passes.
   const completed = action === 'BLINK'
     ? face.leftEyeOpenProbability !== undefined && face.rightEyeOpenProbability !== undefined
       && face.leftEyeOpenProbability < 0.40 && face.rightEyeOpenProbability < 0.40
     : action === 'TURN_LEFT'
-      ? (rotY >= 10 || rotY <= -10)
+      ? rotY >= TURN_YAW_THRESHOLD_DEGREES
       : action === 'TURN_RIGHT'
-        ? (rotY <= -10 || rotY >= 10)
+        ? rotY <= -TURN_YAW_THRESHOLD_DEGREES
         : (face.smilingProbability ?? 0) >= 0.65;
   if (!completed) {
     const instruction = action === 'BLINK' ? 'close both eyes' : action === 'TURN_LEFT' ? 'turn your head left' : action === 'TURN_RIGHT' ? 'turn your head right' : 'smile';

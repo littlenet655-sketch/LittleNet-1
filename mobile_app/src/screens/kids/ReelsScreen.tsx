@@ -67,6 +67,18 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
     }
   }).current;
 
+  // Keep the active index inside the loaded window: feed refreshes must not
+  // leave it pointing past the end (which would idle every player).
+  useEffect(() => {
+    if (feed.items.length === 0) {
+      if (activeIndex !== 0) setActiveIndex(0);
+      return;
+    }
+    if (activeIndex > feed.items.length - 1) {
+      setActiveIndex(feed.items.length - 1);
+    }
+  }, [feed.items.length, activeIndex]);
+
   // Flush batched impressions to server
   const flushBatch = useCallback(async () => {
     if (!session?.token || impressionBatchRef.current.length === 0) return;

@@ -178,6 +178,34 @@ export function fetchParentActivity(token: string, childId: number): Promise<{ o
   return apiRequest(routes.parentActivity(childId), {}, token);
 }
 
+/** Parent sets a new password for their linked child (backend enforces 8+ chars). */
+export function resetChildPassword(token: string, childId: number, newPassword: string): Promise<{ ok: boolean; message: string }> {
+  return apiRequest(routes.parentResetChildPassword(childId), { method: 'POST', body: JSON.stringify({ new_password: newPassword }) }, token);
+}
+
+/** Parent clears the child's enrolled face profile; the child's sessions are revoked server-side. */
+export function resetChildFace(token: string, childId: number): Promise<{ ok: boolean; message: string }> {
+  return apiRequest(routes.parentResetChildFace(childId), { method: 'POST' }, token);
+}
+
+/**
+ * Parent-side child face enrollment with a fresh live camera photo (base64 JSON).
+ * Allows 60s for serverless AI cold start. Completes the child's face gate so
+ * "Skip for Now" on the child device can fall back to parent approval here.
+ */
+export function enrollChildFaceByParent(token: string, childId: number, photoB64: string): Promise<{ ok: boolean; child_id: number; face_enrolled: boolean; quiz_required: boolean }> {
+  return apiRequest(
+    routes.parentEnrollChildFace(childId),
+    { method: 'POST', body: JSON.stringify({ photo_b64: photoB64 }), timeoutMs: 60000 },
+    token,
+  );
+}
+
+/** Parent unlinks a child: mapping deleted and child account deactivated server-side. */
+export function unlinkChild(token: string, childId: number): Promise<{ ok: boolean; message: string }> {
+  return apiRequest(routes.parentChild(childId), { method: 'DELETE' }, token);
+}
+
 export function fetchAdminDashboard(token: string): Promise<{ ok: boolean; counts: { users: number; children: number; parents: number; open_reviews: number } }> {
   return apiRequest(routes.adminDashboard, {}, token);
 }

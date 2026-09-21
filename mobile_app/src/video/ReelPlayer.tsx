@@ -59,7 +59,18 @@ export function ReelPlayer({
   const posterUri = item.poster_url ?? null;
   const showPoster = !firstFrameRendered && Boolean(posterUri);
 
+  // Warm the poster into the image cache as soon as the cell mounts so the
+  // first paint shows artwork instead of black, even on slow networks.
+  useEffect(() => {
+    if (posterUri) {
+      void Image.prefetch(posterUri).catch(() => {});
+    }
+  }, [posterUri]);
+
   const handlePress = () => {
+    // While the error overlay is up, taps belong to the retry control —
+    // never toggle play/pause underneath it.
+    if (errorMessage) return;
     onTogglePlay();
     setShowPlayStateFeedback(true);
     if (feedbackTimerRef.current) clearTimeout(feedbackTimerRef.current);

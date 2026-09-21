@@ -3,6 +3,7 @@ import { ActivityIndicator, Alert, Pressable, ScrollView, StyleSheet, Text, View
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { fetchKidsTimeLimitStatus, resetKidsTimeLimitSelf, sendHeartbeat } from '../../api/kidsFeed';
+import { resetsDisplayState } from '../../navigation/gates';
 import { useAuth } from '../../auth/AuthProvider';
 import { colors, radius, spacing } from '../../ui/tokens';
 
@@ -26,6 +27,7 @@ export function ScreenTimeLockedScreen({ lockType, onUnlock, onSignOut }: Screen
   const [resetting, setResetting] = useState(false);
   const [resetsRemaining, setResetsRemaining] = useState<number | null>(null);
   const [resetsUsed, setResetsUsed] = useState<number>(0);
+  const [resetsUnreachable, setResetsUnreachable] = useState(false);
   const isQuiet = lockType === 'quiet_hours';
 
   useEffect(() => {
@@ -37,14 +39,14 @@ export function ScreenTimeLockedScreen({ lockType, onUnlock, onSignOut }: Screen
         if (cancelled) return;
         setResetsRemaining(res.resets_remaining);
         setResetsUsed(res.resets_used);
+        setResetsUnreachable(false);
         if (!res.locked) {
           onUnlock();
         }
       } catch {
-        // Non-blocking fallback
-        if (!cancelled && resetsRemaining === null) {
-          setResetsRemaining(2);
-        }
+        // Server is authoritative: never guess a reset count offline. The
+        // card stays disabled and explains the outage instead.
+        if (!cancelled) setResetsUnreachable(true);
       }
     })();
     return () => {
@@ -59,6 +61,7 @@ export function ScreenTimeLockedScreen({ lockType, onUnlock, onSignOut }: Screen
       const res = await resetKidsTimeLimitSelf(session.token);
       setResetsRemaining(res.resets_remaining);
       setResetsUsed(res.resets_used);
+      setResetsUnreachable(false);
       Alert.alert(
         'Unlocked! 🎉',
         `Your screen time has been reset! You have ${res.resets_remaining} self-reset(s) left today. Have fun and remember to take kind breaks.`,
@@ -111,8 +114,9 @@ export function ScreenTimeLockedScreen({ lockType, onUnlock, onSignOut }: Screen
     );
   }
 
-  const canSelfReset = !isQuiet && resetsRemaining !== null && resetsRemaining > 0;
-  const selfResetsExhausted = !isQuiet && resetsRemaining !== null && resetsRemaining <= 0;
+  const resetsState = resetsDisplayState(resetsRemaining);
+  const canSelfReset = !isQuiet && resetsState === 'available';
+  const selfResetsExhausted = !isQuiet && resetsState === 'exhausted';
 
   return (
     <View style={[styles.container, isQuiet ? styles.quietBg : styles.screenTimeBg]}>
@@ -161,9 +165,18 @@ export function ScreenTimeLockedScreen({ lockType, onUnlock, onSignOut }: Screen
                 <Text style={styles.selfResetBadgeText}>DAILY SELF-RESETS</Text>
               </View>
               <Text style={styles.selfResetCountText}>
-                {resetsRemaining !== null ? `${resetsRemaining}/2 Left Today` : '2 Left Today'}
+                {resetsRemaining !== null ? `${resetsRemaining}/2 Left Today` : 'Checking resets…'}
               </Text>
             </View>
+
+            {resetsUnreachable ? (
+              <View style={styles.exhaustedBox}>
+                <Feather name="wifi-off" size={16} color="#B45309" />
+                <Text style={[styles.exhaustedText, { color: '#92400E' }]}>
+                  Couldn't reach LittleNet to check your remaining resets. Reconnect and tap "Check if Parent Added Time".
+                </Text>
+              </View>
+            ) : null}
 
             {canSelfReset ? (
               <>

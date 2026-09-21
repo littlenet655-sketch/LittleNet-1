@@ -6,7 +6,7 @@ import { submitRecommendationAction } from '../../api/recommendation';
 import { useAuth } from '../../auth/AuthProvider';
 import { PostCard } from '../../kids/PostCard';
 import { useFeed } from '../../kids/useFeed';
-import { socialPostTarget, socialProfileTarget } from '../../kids/social';
+import { socialPostTarget, socialProfileTarget, feedKey } from '../../kids/social';
 import type { ChildScreenProps } from '../../navigation/types';
 import { useIsForeground, useIsOnline } from '../../query/client';
 import type { FeedItem } from '../../api/kidsFeed';
@@ -62,8 +62,8 @@ export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   return (
     <Screen>
       <FlatList
-        data={feed.items.filter((it) => !hiddenKeys.has(`${it.source_type}:${it.source_id}`))}
-        keyExtractor={(it) => `${it.source_type}:${it.source_id}`}
+        data={feed.items.filter((it) => !hiddenKeys.has(feedKey(it)))}
+        keyExtractor={(it) => feedKey(it)}
         refreshControl={<RefreshControl refreshing={feed.refreshing} onRefresh={feed.refresh} />}
         ListHeaderComponent={<><BrandHeader title="LittleNet" subtitle="Kind posts from friends." /><View style={styles.tabs}>{(['For You', 'Friends', 'Learn'] as const).map((item) => <Pressable key={item} onPress={() => { setActiveVideoKey(null); setTab(item); }}><Text style={[styles.tab, tab === item && styles.active]}>{item}</Text></Pressable>)}</View><OfflineBanner online={online} />{feed.error ? <GateNotice error={feed.error} /> : null}</>}
         ListEmptyComponent={<EmptyState title="Nothing here yet" body="When friends share kind posts, they will appear here." />}
@@ -71,7 +71,7 @@ export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           const post = socialPostTarget(item);
           const profile = socialProfileTarget(item);
           const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
-          const key = `${item.source_type}:${item.source_id}`;
+          const key = feedKey(item);
           return <PostCard
             item={item}
             onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}

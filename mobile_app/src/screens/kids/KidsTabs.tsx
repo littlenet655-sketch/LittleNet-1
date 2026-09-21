@@ -1,7 +1,11 @@
 import { Image, Pressable, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useQuery } from '@tanstack/react-query';
+import { fetchNotifications } from '../../api/kidsChat';
+import { useAuth } from '../../auth/AuthProvider';
 import type { ChildScreenProps } from '../../navigation/types';
+import { kidsKeys } from '../../query/keys';
 import { colors } from '../../ui/tokens';
 
 const TABS: {
@@ -18,9 +22,18 @@ const TABS: {
 
 export function KidsTabsShell({ navigation, route, render }: ChildScreenProps<'KidsTabs'> & { render: (tab: string) => React.ReactNode }) {
   const insets = useSafeAreaInsets();
+  const { session } = useAuth();
   const active = String((route.params as { tab?: string } | undefined)?.tab ?? 'FeedTab');
   const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
   const isReels = active === 'ReelsTab';
+  // Shared cache with NotificationsScreen: the badge reflects server state.
+  const notificationsQuery = useQuery({
+    queryKey: [...kidsKeys.notifications, session?.token ?? 'signed-out'],
+    enabled: Boolean(session),
+    staleTime: 30_000,
+    queryFn: () => fetchNotifications(session!.token),
+  });
+  const unread = (notificationsQuery.data?.notifications ?? []).filter((n) => !n.is_read).length;
 
   return (
     <View style={[styles.root, isReels && styles.rootDark]}>
@@ -48,12 +61,17 @@ export function KidsTabsShell({ navigation, route, render }: ChildScreenProps<'K
               </Pressable>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Notifications"
+                accessibilityLabel={`Notifications${unread > 0 ? `, ${unread} unread` : ''}`}
                 onPress={() => nav.navigate('NotificationsTab', {})}
                 hitSlop={10}
                 style={styles.utilityBtn}
               >
                 <Feather name="bell" size={22} color={colors.ink} />
+                {unread > 0 ? (
+                  <View style={styles.badge}>
+                    <Text style={styles.badgeText}>{unread > 9 ? '9+' : String(unread)}</Text>
+                  </View>
+                ) : null}
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -165,6 +183,23 @@ const styles = StyleSheet.create({
   },
   utilityBtn: {
     padding: 2,
+  },
+  badge: {
+    position: 'absolute',
+    top: -4,
+    right: -6,
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    backgroundColor: colors.brand,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 3,
+  },
+  badgeText: {
+    color: '#FFFFFF',
+    fontSize: 10,
+    fontWeight: '800',
   },
   body: {
     flex: 1,

@@ -5,30 +5,79 @@ import { useIsForeground } from '../query/client';
 import { Button } from '../ui/components';
 import { NativeVideoView } from '../ui/nativeViews';
 import { colors, radius, spacing } from '../ui/tokens';
+import { clampAspectRatio } from '../video/types';
 
 export function VideoMedia({
   source,
   posterUrl,
   active = true,
   height = 380,
+  aspectRatio,
   onComplete,
   nativeControls = true,
   loop = false,
+  /**
+   * Optional one-shot credential refresh. When playback fails (e.g. an expired
+   * signed URL), the component asks for a fresh source once before showing the
+   * error UI. Return null when no fresh source is available.
+   */
+  refreshSource,
 }: {
   source: string;
   posterUrl?: string | null;
   active?: boolean;
   height?: number;
+  aspectRatio?: number;
   onComplete?: () => void;
   nativeControls?: boolean;
   loop?: boolean;
+  refreshSource?: () => Promise<string | null>;
 }) {
   const foreground = useIsForeground();
   const player = useVideoPlayer(null);
   const sourceRef = useRef<string | null>(null);
+  const refreshTriedRef = useRef(false);
+  const refreshSourceRef = useRef(refreshSource);
+  const [liveSource, setLiveSource] = useState(source);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const playableSource = active && foreground ? source : null;
+  const [posterAspect, setPosterAspect] = useState<number | null>(null);
+
+  useEffect(() => {
+    refreshSourceRef.current = refreshSource;
+  }, [refreshSource]);
+
+  // A fresh `source` prop resets all per-source state (retry budget included).
+  useEffect(() => {
+    setLiveSource(source);
+    refreshTriedRef.current = false;
+    setError(null);
+    setReady(false);
+  }, [source]);
+
+  // Graceful measured fallback: derive the frame from the poster when the
+  // caller did not supply an explicit aspect ratio.
+  useEffect(() => {
+    setPosterAspect(null);
+    if (aspectRatio || !posterUrl) return;
+    let cancelled = false;
+    Image.getSize(
+      posterUrl,
+      (w, h) => {
+        if (!cancelled && w > 0 && h > 0) setPosterAspect(clampAspectRatio(w / h));
+      },
+      () => {},
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [posterUrl, aspectRatio]);
+
+  const shellStyle = aspectRatio || posterAspect
+    ? { aspectRatio: aspectRatio ?? posterAspect ?? 1 }
+    : { height };
+
+  const playableSource = active && foreground ? liveSource : null;
 
   useEffect(() => {
     player.loop = loop;
@@ -36,7 +85,25 @@ export function VideoMedia({
 
   useEffect(() => {
     const subscription = player.addListener('statusChange', ({ status, error: playbackError }) => {
-      if (status === 'error') setError(playbackError?.message ?? 'This video could not play.');
+      if (status === 'error') {
+        // One bounded attempt at a credential refresh before giving up.
+        if (!refreshTriedRef.current && refreshSourceRef.current) {
+          refreshTriedRef.current = true;
+          void refreshSourceRef.current()
+            .then((fresh) => {
+              if (fresh && fresh !== sourceRef.current) {
+                setLiveSource(fresh);
+              } else {
+                setError(playbackError?.message ?? 'This video could not play.');
+              }
+            })
+            .catch(() => {
+              setError(playbackError?.message ?? 'This video could not play.');
+            });
+        } else {
+          setError(playbackError?.message ?? 'This video could not play.');
+        }
+      }
     });
     const completeSub = player.addListener('playToEnd', () => {
       onComplete?.();
@@ -68,8 +135,23 @@ export function VideoMedia({
 
   async function retry() {
     if (!playableSource) return;
+    // Manual retry spends a fresh refresh attempt when a refresher exists.
+    refreshTriedRef.current = false;
     setError(null);
     setReady(false);
+    const refresher = refreshSourceRef.current;
+    if (refresher) {
+      refreshTriedRef.current = true;
+      try {
+        const fresh = await refresher();
+        if (fresh) {
+          setLiveSource(fresh);
+          return;
+        }
+      } catch {
+        // Fall through to the direct retry below.
+      }
+    }
     try {
       await player.replaceAsync(playableSource);
       if (sourceRef.current === playableSource) player.play();
@@ -79,7 +161,7 @@ export function VideoMedia({
   }
 
   return (
-    <View style={[styles.shell, { height }]}>
+    <View style={[styles.shell, shellStyle]}>
       <NativeVideoView player={player} style={styles.video} contentFit="cover" nativeControls={nativeControls} onFirstFrameRender={() => setReady(true)} />
       {!ready && posterUrl ? <Image source={{ uri: posterUrl }} style={styles.overlay} /> : null}
       {!ready && !posterUrl && !error ? <View style={styles.overlayCenter}><Text style={styles.loading}>Loading video…</Text></View> : null}

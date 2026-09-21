@@ -6,16 +6,23 @@ import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { useIsOnline } from '../query/client';
 import { kidsKeys } from '../query/keys';
+import { shouldRefreshOnboardingForGate } from '../navigation/gates';
 
 const HEARTBEAT_INTERVAL_MS = 30000;
 
 export function useScreenTimeHeartbeat(onGateChange?: (gate: string | null) => void): void {
-  const { session } = useAuth();
+  const { session, refreshMe } = useAuth();
   const online = useIsOnline();
   const queryClient = useQueryClient();
   const token = session?.token;
   const isChild = session?.user?.role === 'CHILD';
   const appStateRef = useRef<AppStateStatus>(AppState.currentState);
+  // Refs keep the 30s interval from re-subscribing on every session refresh
+  // while still seeing the latest gates.
+  const onboardingRef = useRef(session?.onboarding);
+  onboardingRef.current = session?.onboarding;
+  const refreshMeRef = useRef(refreshMe);
+  refreshMeRef.current = refreshMe;
 
   useEffect(() => {
     if (!token || !isChild || !online) return;
@@ -39,6 +46,16 @@ export function useScreenTimeHeartbeat(onGateChange?: (gate: string | null) => v
           if (err.status === 423 || err.gate === 'screen_time' || err.gate === 'quiet_hours') {
             onGateChange?.(err.gate ?? 'screen_time');
             void queryClient.invalidateQueries({ queryKey: kidsKeys.home });
+            return;
+          }
+          if (shouldRefreshOnboardingForGate(err, onboardingRef.current)) {
+            // 428 face/quiz gate: pull authoritative gates from /me so the
+            // child is routed to FaceEnroll/Quiz instead of staying stuck.
+            try {
+              await refreshMeRef.current();
+            } catch {
+              // A 401 here is handled centrally (local invalidation + re-login).
+            }
           }
         }
       }

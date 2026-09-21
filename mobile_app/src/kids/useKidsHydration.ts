@@ -44,7 +44,9 @@ export function useKidsHydration(): void {
 
     void Promise.allSettled([
       queryClient.prefetchQuery({ queryKey: [...kidsKeys.home, token], queryFn: () => fetchKidsHome(token) }),
-      queryClient.prefetchInfiniteQuery({ queryKey: [...kidsKeys.feed, token], ...feedQuery }),
+      // Keys must match useFeed/useQuery consumers exactly, or the warm cache
+      // is never read: feed keys are [...kidsKeys.feed, mode, token].
+      queryClient.prefetchInfiniteQuery({ queryKey: [...kidsKeys.feed, 'for_you', token], ...feedQuery }),
       queryClient.prefetchInfiniteQuery({ queryKey: [...kidsKeys.reels, token], ...reelsQuery }),
       queryClient.prefetchQuery({ queryKey: [...kidsKeys.discover(''), token], queryFn: () => searchDiscover(token, '') }),
       queryClient.prefetchQuery({ queryKey: [...kidsKeys.ownProfile, token], queryFn: () => fetchOwnProfile(token) }),

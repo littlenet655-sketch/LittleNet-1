@@ -9,7 +9,20 @@
     "skipLibCheck": true,
     "outDir": "test-dist",
     "rootDir": ".",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["tests/**/*.ts", "src/api/**/*.ts", "src/auth/session.ts", "src/auth/backends.ts", "src/navigation/gates.ts", "src/kids/social.ts", "src/quiz/decision.ts"]
+  "include": [
+    "tests/**/*.ts",
+    "src/api/**/*.ts",
+    "src/auth/session.ts",
+    "src/auth/backends.ts",
+    "src/navigation/gates.ts",
+    "src/kids/social.ts",
+    "src/quiz/decision.ts",
+    "src/video/types.ts",
+    "src/video/playbackPolicy.ts",
+    "src/video/reelPlaybackMetrics.ts"
+  ]
 }
