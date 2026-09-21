@@ -1,16 +1,17 @@
-import os, uuid, base64, tempfile
+import os, uuid, base64
 from flask import Blueprint, render_template, request, redirect, session, jsonify, flash, url_for
 from auth.service import (
     approve_child_account,
     login_user,
     profile_exists,
     get_parent_verification_data,
+    ensure_token_parent_pending,
     process_parent_verification,
     get_child_approval_details,
     process_child_decision
 )
 from auth.parent_email_otp import begin_parent_registration, verify_parent_email_otp, resend_parent_email_otp
-from safety.face_service import enroll, verify, verify_adult_face
+from safety.face_service import enroll, verify
 from services.usage import start_session, close_session
 from database.connection import fetch_one, execute
 from extensions import limiter, csrf
@@ -68,12 +69,19 @@ def _mask_email(email):
 def _resume_parent_verification(user):
     session.clear()
     session.permanent = True
-    session['pending_parent_user_id'] = user['user_id']
-    session['pending_parent_email'] = user.get('email')
     otp = fetch_one('SELECT verified_at FROM parent_email_otps WHERE user_id=%s', (user['user_id'],))
     if otp and otp.get('verified_at'):
-        session['pending_parent_email_verified'] = True
-        return redirect('/verify-parent-liveness/')
+        # Email OTP is the complete parent verification: activate and sign in.
+        execute(
+            "UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT' AND account_status='PENDING_APPROVAL'",
+            (user['user_id'],),
+        )
+        active = fetch_one('SELECT * FROM users WHERE user_id=%s', (user['user_id'],))
+        if active and active.get('account_status') == 'ACTIVE':
+            _set_session(active)
+            return redirect('/parent/dashboard/')
+    session['pending_parent_user_id'] = user['user_id']
+    session['pending_parent_email'] = user.get('email')
     session['pending_parent_email_verified'] = False
     return redirect('/verify-parent-email/')
 
@@ -136,6 +144,26 @@ def register_page():
 
 @auth_bp.route('/verify-parent/<token>/', methods=['GET', 'POST'])
 @limiter.limit('30 per minute')
+def _render_token_verified_result(token, child_data, result):
+    """Shared completion step for the token guardian flow after the parent's
+    email ownership is proven: run verification, sign in, and route onward."""
+    if not result.get('success'):
+        return None
+    parent_row = fetch_one('SELECT * FROM users WHERE user_id=%s', (result['parent_id'],))
+    if parent_row and parent_row.get('account_status') == 'ACTIVE':
+        _set_session(parent_row)
+
+    if result.get('auto_approved'):
+        return render_template(
+            'approval_success.html', is_verified=True, title='Child Account Approved & Active!',
+            message=f"You have successfully verified your parent account and activated {child_data.get('child_name')}'s account. They can now log in safely!",
+            button_url='/parent/dashboard/', button_text='Go to Parent Dashboard'
+        )
+    return redirect(f"/parent/approve-child/{result['approval_token']}/")
+
+
+@auth_bp.route('/verify-parent/<token>/', methods=['GET', 'POST'])
+@limiter.limit('30 per minute')
 def verify_parent(token):
     child_data = get_parent_verification_data(token)
     if not child_data:
@@ -152,35 +180,77 @@ def verify_parent(token):
             button_url='/login/?mode=kids', button_text='Go to Child Login'
         )
 
-    parent_user = fetch_one("SELECT user_id FROM users WHERE LOWER(email)=%s AND role='PARENT'", (child_data['parent_email'].lower(),))
+    parent_user = fetch_one("SELECT user_id, account_status FROM users WHERE LOWER(email)=%s AND role='PARENT'", (child_data['parent_email'].lower(),))
     parent_exists = bool(parent_user)
 
     if request.method == 'POST':
-        selfie_b64 = request.form.get('selfie_data', '')
-        selfie_bytes = b''
-        if selfie_b64 and 'base64,' in selfie_b64:
-            try:
-                selfie_bytes = base64.b64decode(selfie_b64.split('base64,', 1)[1])
-            except Exception:
-                selfie_bytes = b''
+        # Email-OTP-only guardian verification: validate the form, ensure a
+        # parent account exists, then prove email ownership with a 6-digit OTP.
+        prep = ensure_token_parent_pending(token, request.form)
+        if not prep.get('success'):
+            return render_template('parent_verify.html', child=child_data, parent_exists=parent_exists, error=prep.get('error')), 400
 
-        result = process_parent_verification(token, request.form, selfie_bytes)
-        if not result.get('success'):
-            return render_template('parent_verify.html', child=child_data, parent_exists=parent_exists, error=result.get('error')), 400
+        if prep.get('already_active'):
+            # Already-verified parent account: complete verification directly.
+            form = dict(request.form)
+            result = process_parent_verification(token, form)
+            if not result.get('success'):
+                return render_template('parent_verify.html', child=child_data, parent_exists=parent_exists, error=result.get('error')), 400
+            return _render_token_verified_result(token, child_data, result)
 
-        parent_row = fetch_one('SELECT * FROM users WHERE user_id=%s', (result['parent_id'],))
-        if parent_row and parent_row.get('account_status') == 'ACTIVE':
-            _set_session(parent_row)
-
-        if result.get('auto_approved'):
-            return render_template(
-                'approval_success.html', is_verified=True, title='Child Account Approved & Active!',
-                message=f"You have successfully verified your identity and activated {child_data.get('child_name')}'s account. They can now log in safely!",
-                button_url='/parent/dashboard/', button_text='Go to Parent Dashboard'
-            )
-        return redirect(f"/parent/approve-child/{result['approval_token']}/")
+        ok, error, dev_code = resend_parent_email_otp(prep['parent_id'], with_code=True)
+        if not ok:
+            return render_template('parent_verify.html', child=child_data, parent_exists=parent_exists, error=error), 400
+        session['pending_token_verification'] = token
+        session['pending_token_parent_id'] = prep['parent_id']
+        return redirect(f'/verify-parent/{token}/otp/')
 
     return render_template('parent_verify.html', child=child_data, parent_exists=parent_exists)
+
+
+@auth_bp.route('/verify-parent/<token>/otp/', methods=['GET', 'POST'])
+@limiter.limit('30 per minute')
+def verify_parent_token_otp(token):
+    """Second step of the token guardian flow: verify the 6-digit email OTP,
+    then complete parent verification and child approval."""
+    if session.get('pending_token_verification') != token:
+        return redirect(f'/verify-parent/{token}/')
+    parent_id = session.get('pending_token_parent_id')
+    child_data = get_parent_verification_data(token)
+    parent = fetch_one("SELECT * FROM users WHERE user_id=%s AND role='PARENT'", (parent_id,)) if parent_id else None
+    if not child_data or not parent:
+        for key in ('pending_token_verification', 'pending_token_parent_id'):
+            session.pop(key, None)
+        return redirect(f'/verify-parent/{token}/')
+
+    if request.method == 'POST':
+        if 'resend' in request.form:
+            ok, error = resend_parent_email_otp(parent_id)
+            return render_template(
+                'parent_token_otp.html', child=child_data,
+                masked_email=_mask_email(parent['email']),
+                error=error if not ok else None,
+                notice='A new 6-digit code was sent.' if ok else None,
+            ), (200 if ok else 400)
+
+        ok, error, _ = verify_parent_email_otp(parent_id, request.form.get('otp', ''))
+        if not ok:
+            return render_template(
+                'parent_token_otp.html', child=child_data,
+                masked_email=_mask_email(parent['email']), error=error,
+            ), 400
+
+        for key in ('pending_token_verification', 'pending_token_parent_id'):
+            session.pop(key, None)
+        result = process_parent_verification(token, {'parent_name': parent.get('full_name') or '', 'consent': '1', 'auto_approve': '1'})
+        if not result.get('success'):
+            return render_template(
+                'parent_token_otp.html', child=child_data,
+                masked_email=_mask_email(parent['email']), error=result.get('error'),
+            ), 400
+        return _render_token_verified_result(token, child_data, result)
+
+    return render_template('parent_token_otp.html', child=child_data, masked_email=_mask_email(parent['email']))
 
 
 @auth_bp.route('/parent/approve-child/<token>/', methods=['GET', 'POST'])
@@ -266,8 +336,21 @@ def verify_parent_email_page():
     if request.method == 'POST':
         ok, error, _ = verify_parent_email_otp(parent['user_id'], request.form.get('otp', ''))
         if ok:
-            session['pending_parent_email_verified'] = True
-            return redirect('/verify-parent-liveness/')
+            # Email OTP is the final parent activation step: activate the
+            # account and sign the parent in. There is no separate
+            # selfie/liveness step.
+            execute(
+                "UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT' AND account_status='PENDING_APPROVAL'",
+                (parent['user_id'],),
+            )
+            session.pop('pending_parent_user_id', None)
+            session.pop('pending_parent_email', None)
+            session.pop('pending_parent_email_verified', None)
+            session.pop('pending_parent_delivery_error', None)
+            active = fetch_one('SELECT * FROM users WHERE user_id=%s', (parent['user_id'],))
+            if active and active.get('account_status') == 'ACTIVE':
+                _set_session(active)
+            return redirect('/parent/dashboard/')
         return render_template('parent_email_verify.html', masked_email=_mask_email(parent['email']), error=error, delivery_error=delivery_error), 400
     return render_template('parent_email_verify.html', masked_email=_mask_email(parent['email']), delivery_error=delivery_error)
 
@@ -280,74 +363,6 @@ def resend_parent_email_page():
         return redirect('/register-parent/')
     ok, error = resend_parent_email_otp(parent['user_id'])
     return render_template('parent_email_verify.html', masked_email=_mask_email(parent['email']), error=error if not ok else None, notice='A new 6-digit code was sent.' if ok else None), (200 if ok else 400)
-
-
-@auth_bp.route('/verify-parent-liveness/', methods=['GET', 'POST'])
-@limiter.limit('15 per minute')
-def verify_parent_liveness_page():
-    parent = _pending_parent()
-    if not parent:
-        return redirect('/register-parent/')
-    otp = fetch_one('SELECT verified_at FROM parent_email_otps WHERE user_id=%s', (parent['user_id'],))
-    if not otp or not otp.get('verified_at'):
-        session['pending_parent_email_verified'] = False
-        return redirect('/verify-parent-email/')
-    session['pending_parent_email_verified'] = True
-
-    if request.method == 'POST':
-        raw = request.form.get('selfie_data', '')
-        if not raw or 'base64,' not in raw:
-            return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']), error='A live camera capture is required. There is no upload or skip option.'), 400
-        try:
-            data = base64.b64decode(raw.split('base64,', 1)[1], validate=True)
-        except Exception:
-            return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']), error='The live camera capture was invalid. Please retry.'), 400
-        if len(data) < 2000 or len(data) > 8 * 1024 * 1024:
-            return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']), error='The live camera capture was incomplete. Please retry in good lighting.'), 400
-
-        fd, path = tempfile.mkstemp(prefix='littlenet_parent_', suffix='.jpg'); os.close(fd)
-        enrollment_error = None
-        try:
-            with open(path, 'wb') as f:
-                f.write(data)
-            result = verify_adult_face(path)
-            if result.get('is_adult'):
-                try:
-                    enroll(parent['user_id'], path)
-                except Exception as exc:
-                    enrollment_error = exc
-        finally:
-            try:os.remove(path)
-            except OSError:pass
-
-        if not result.get('is_adult'):
-            reason = result.get('reason') or 'adult_not_verified'
-            if reason in {'liveness_failed', 'liveness_unavailable'}:
-                message = 'Live anti-spoof verification failed. Use the live camera, look directly at it, and blink naturally.'
-            else:
-                message = 'Adult guardian verification failed. Parent Mode can only be activated by a verified adult.'
-            return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']), error=message), 403
-
-        if enrollment_error is not None:
-            return render_template(
-                'parent_liveness_verify.html',
-                masked_email=_mask_email(parent['email']),
-                error='Your adult check passed, but Face ID enrollment could not be completed. Please retry the live blink so Parent Face ID is saved correctly.'
-            ), 503
-
-        execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT' AND account_status='PENDING_APPROVAL'", (parent['user_id'],))
-        try:
-            from services.audit import log
-            log(parent['user_id'], 'PARENT_LIVENESS_VERIFIED', {'method': result.get('method'), 'estimated_age': result.get('estimated_age'), 'face_id_enrolled': True})
-        except Exception:
-            pass
-        active = fetch_one('SELECT * FROM users WHERE user_id=%s', (parent['user_id'],))
-        if not active or active.get('account_status') != 'ACTIVE':
-            return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']), error='Parent activation could not be completed.'), 500
-        _set_session(active, 'PARENT_LIVENESS')
-        return redirect('/parent/dashboard/')
-
-    return render_template('parent_liveness_verify.html', masked_email=_mask_email(parent['email']))
 
 
 @auth_bp.route('/register-parent/<token>/', methods=['GET', 'POST'])
@@ -392,18 +407,20 @@ def face_enroll():
 @auth_bp.route('/face-login/', methods=['GET', 'POST'])
 @limiter.limit('10 per minute')
 def face_login():
+    # Child Face ID login only. Parent Face ID login was removed: parents
+    # sign in with their password on the web.
     mode = (request.form.get('mode') or request.args.get('mode') or 'kids').strip().lower()
-    mode = 'parent' if mode == 'parent' else 'kids'
-    role = 'PARENT' if mode == 'parent' else 'CHILD'
+    if mode == 'parent':
+        return redirect('/login/?mode=parent')
 
     if request.method == 'POST':
         identifier = request.form.get('email', '').strip().lower()
         user = fetch_one(
-            "SELECT * FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role=%s AND account_status='ACTIVE'",
-            (identifier, identifier, role),
+            "SELECT * FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role='CHILD' AND account_status='ACTIVE'",
+            (identifier, identifier),
         )
         if not user:
-            return render_template('face_login.html', mode=mode, error=f"{'Parent' if role == 'PARENT' else 'Child'} account not found or not active."), 400
+            return render_template('face_login.html', mode='kids', error='Child account not found or not active.'), 400
         os.makedirs('uploads/faces', exist_ok=True)
         path = os.path.join('uploads/faces', f'login_{uuid.uuid4().hex}.jpg')
         has_photo = False
@@ -419,21 +436,21 @@ def face_login():
                     has_photo = True
                 except Exception:pass
         if not has_photo:
-            return render_template('face_login.html', mode=mode, error='Live camera selfie is required.'), 400
+            return render_template('face_login.html', mode='kids', error='Live camera selfie is required.'), 400
         try:
             ok, reason, _ = verify(user['user_id'], path)
             if not ok:
                 # Anti-enumeration: keep one generic message so the page does
                 # not reveal whether the account exists or has Face ID enrolled.
-                return render_template('face_login.html', mode=mode, error='Face authentication failed. Try again or use password login.'), 401
+                return render_template('face_login.html', mode='kids', error='Face authentication failed. Try again or use password login.'), 401
             _set_session(user, 'FACE')
             return redirect(_dest(user))
         except Exception:
-            return render_template('face_login.html', mode=mode, error='Face authentication service unavailable. Use password login.'), 503
+            return render_template('face_login.html', mode='kids', error='Face authentication service unavailable. Use password login.'), 503
         finally:
             try:os.remove(path)
             except OSError:pass
-    return render_template('face_login.html', mode=mode)
+    return render_template('face_login.html', mode='kids')
 
 
 @auth_bp.route('/logout/',methods=['POST'])

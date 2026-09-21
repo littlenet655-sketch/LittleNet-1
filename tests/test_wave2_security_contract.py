@@ -8,20 +8,19 @@ def _text(path):
     return (ROOT / path).read_text(encoding='utf-8')
 
 
-def test_parent_liveness_uses_real_mediapipe_blendshapes_and_self_hosted_module():
-    template = _text('auth/templates/parent_liveness_verify.html')
-    js = _text('static/js/parent_liveness_mediapipe.js')
-    assert '/static/js/parent_liveness_mediapipe.js' in template
-    assert '<script>' not in template
-    assert '/static/vendor/mediapipe/vision_bundle.mjs' in js
-    assert 'FaceLandmarker.createFromOptions' in js
-    assert "runningMode: 'VIDEO'" in js
-    assert 'outputFaceBlendshapes: true' in js
-    assert "'eyeBlinkLeft'" in js and "'eyeBlinkRight'" in js
-    assert "phase = 'WAIT_OPEN'" in js
-    assert "phase = 'WAIT_CLOSED'" in js
-    assert "phase = 'WAIT_REOPEN'" in js
-    assert 'brightness' not in js.lower()
+def test_parent_liveness_page_and_mediapipe_module_are_removed():
+    # Parent face/liveness verification was removed by explicit product
+    # decision. The page, its self-hosted MediaPipe module, and every
+    # reference to them must be gone (child face flows are unaffected).
+    assert not (ROOT / 'auth/templates/parent_liveness_verify.html').exists()
+    assert not (ROOT / 'static/js/parent_liveness_mediapipe.js').exists()
+    routes = _text('auth/routes.py')
+    service = _text('auth/service.py')
+    assert 'verify_parent_liveness_page' not in routes
+    assert 'parent_liveness_verify.html' not in routes
+    assert 'parent_liveness_mediapipe' not in routes
+    assert 'verify_adult_face' not in routes
+    assert 'verify_adult_face' not in service
 
 
 def test_mediapipe_build_assets_are_integrity_verified_not_just_hashed_after_download():

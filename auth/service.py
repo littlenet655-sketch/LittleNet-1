@@ -6,7 +6,6 @@ from database.connection import fetch_one, fetch_all, execute, get_db_connection
 from mailg.send_email import send_email
 from config import Config
 from services.identity import validate_username, validate_name
-from auth.verification_provider import default_verification_provider
 
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -188,264 +187,218 @@ def get_parent_verification_data(token):
     finally:
         conn.close()
 
-def _record_verification_audit(parent_user_id, child_id, status, liveness, face_match, masked_id, consent):
-    """Helper to record audit entry into parent_verifications even on failure."""
+def _validate_token_guardian_form(map_data, form_data):
+    """Shared validation for the token-based guardian verification form.
+
+    Parent identity is proven by email ownership (the caller verifies an
+    email OTP before activation); the form additionally requires an 18+
+    date-of-birth declaration and explicit guardian consent. There is no
+    selfie / liveness / face step.
+    """
+    parent_name = (form_data.get("parent_name") or map_data.get("parent_name") or "").strip()
+    dob = (form_data.get("dob") or "").strip()
+    consent = bool(form_data.get("consent"))
+
+    if not parent_name:
+        return None, "Please provide the parent or guardian full name."
+    if not consent:
+        return None, "You must confirm that you are the child's legal adult parent or guardian."
+    if dob:
+        try:
+            birth_date = datetime.strptime(dob, "%Y-%m-%d").date()
+            today = datetime.now(timezone.utc).date()
+            declared_age = today.year - birth_date.year - (
+                (today.month, today.day) < (birth_date.month, birth_date.day)
+            )
+            if declared_age < 18:
+                return None, "Adult verification failed: Parent must be 18 years of age or older."
+        except ValueError:
+            return None, "Please provide a valid date of birth for the parent or guardian."
+    return {"parent_name": parent_name, "dob": dob}, None
+
+
+def _mask_parent_email(email):
+    email = (email or "").strip()
+    if "@" not in email:
+        return email
+    local, domain = email.split("@", 1)
+    shown = local[:2] if len(local) > 2 else local[:1]
+    return f"{shown}{'*' * max(2, len(local) - len(shown))}@{domain}"
+
+
+def ensure_token_parent_pending(token, form_data):
+    """Validate the guardian form for the child-approval token flow and ensure
+    a parent account exists so an email OTP can be issued.
+
+    Returns {"success": True, "parent_id": ..., "already_active": bool} or
+    {"success": False, "error": ...}. New parents are created PENDING_APPROVAL
+    (never ACTIVE here); already-ACTIVE parents skip the OTP step.
+    """
+    map_data = get_parent_verification_data(token)
+    if not map_data:
+        return {"success": False, "error": "Invalid or expired verification invitation link."}
+    parent_email = map_data["parent_email"].strip().lower()
+
+    valid, error = _validate_token_guardian_form(map_data, form_data)
+    if error:
+        return {"success": False, "error": error}
+
+    conn = get_db_connection()
+    if not conn:
+        return {"success": False, "error": "Database error while processing verification."}
     try:
-        conn = get_db_connection()
-        if not conn:
-            return
-        with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO parent_verifications(
-                    parent_user_id,
-                    child_id,
-                    verification_status,
-                    liveness_status,
-                    face_match_status,
-                    masked_id,
-                    consent_given,
-                    consent_timestamp
-                )
-                VALUES(%s, %s, %s, %s, %s, %s, %s, NOW())
-            """, (parent_user_id, child_id, status, liveness, face_match, masked_id, consent))
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT user_id, account_status FROM users WHERE LOWER(email)=%s AND role='PARENT'",
+            (parent_email,),
+        )
+        row = cur.fetchone()
+        if row and row.get("account_status") == "ACTIVE":
+            return {"success": True, "already_active": True, "parent_id": row["user_id"]}
+        if row:
+            parent_id = row["user_id"]
+            cur.execute("UPDATE users SET full_name=%s WHERE user_id=%s", (valid["parent_name"], parent_id))
+        else:
+            raw_pw = form_data.get("password", "")
+            if not raw_pw or len(raw_pw) < 8:
+                return {"success": False, "error": "Please set a password of at least 8 characters for your new LittleNet parent account."}
+            cur.execute(
+                """INSERT INTO users(username, full_name, email, password_hash, role, account_status)
+                   VALUES(%s, %s, %s, %s, 'PARENT', 'PENDING_APPROVAL')
+                   RETURNING user_id""",
+                (parent_email, valid["parent_name"], parent_email, hash_password(raw_pw)),
+            )
+            parent_id = cur.fetchone()["user_id"]
         conn.commit()
     except Exception as e:
-        print("[AUDIT RECORD ERROR]", e)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return {"success": False, "error": f"Database error: {e}"}
     finally:
-        if conn:
-            conn.close()
+        conn.close()
+    return {"success": True, "already_active": False, "parent_id": parent_id}
 
-def process_parent_verification(token, form_data, selfie_bytes, doc_bytes=None):
-    """
-    Executes live selfie and ID document verification via IdentityVerificationProvider.
-    Creates or activates the parent user account upon successful verification.
-    Generates a secure, single-use approval token and returns verified state.
+
+def process_parent_verification(token, form_data):
+    """Email-OTP-verified guardian check for the child-approval token flow.
+
+    Parent face/selfie/liveness verification was removed by explicit product
+    decision: identity is proven by ownership of the parent email address (the
+    caller verifies an email OTP before invoking this for new parents; parents
+    that already hold an ACTIVE account were verified at registration).
+    Creates or activates the parent account, records the VERIFIED guardian
+    audit row (the record the ``littlenet_guard_parent_child_approval`` DB
+    trigger treats as authoritative), and returns an approval token for the
+    child-approval step.
     """
     map_data = get_parent_verification_data(token)
     if not map_data:
         return {"success": False, "error": "Invalid or expired verification invitation link."}
 
     child_id = map_data["child_id"]
-    parent_name = form_data.get("parent_name", map_data["parent_name"]).strip()
     parent_email = map_data["parent_email"].strip().lower()
-    doc_type = form_data.get("document_type", "GUARDIAN_DECLARATION")
-    doc_number = form_data.get("document_number", "").strip()
-    dob = form_data.get("dob", "").strip()
-    consent = bool(form_data.get("consent"))
 
-    if not consent:
-        return {"success": False, "error": "You must provide explicit consent for biometric and identity verification."}
+    valid, error = _validate_token_guardian_form(map_data, form_data)
+    if error:
+        return {"success": False, "error": error}
+    parent_name = valid["parent_name"]
 
-    # Check if Express Guardian Verification mode is selected (recommended for real parents)
-    is_express = (
-        form_data.get("verification_mode") == "EXPRESS"
-        or form_data.get("express_verify") == "1"
-    )
-
-    if is_express:
-        # Express Guardian Verification: Fast, simple, and realistic for everyday parents
-        if dob:
-            try:
-                birth_date = datetime.strptime(dob, "%Y-%m-%d").date()
-                today = datetime.now(timezone.utc).date()
-                declared_age = today.year - birth_date.year - (
-                    (today.month, today.day) < (birth_date.month, birth_date.day)
-                )
-                if declared_age < 18:
-                    return {"success": False, "error": "Adult verification failed: Parent must be 18 years of age or older."}
-            except ValueError:
-                return {"success": False, "error": "Please provide a valid date of birth for the parent or guardian."}
-        
-        provider_name = "EXPRESS_GUARDIAN_CONSENT"
-        masked_identity = "GUARDIAN-CONSENT-VERIFIED"
-        verified_doc_type = "GUARDIAN_DECLARATION"
-        if not selfie_bytes:
-            return {"success": False, "error": "Live camera selfie is required for identity verification."}
-
-        # Verify that the captured face is an adult person (18+)
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-            tmp.write(selfie_bytes)
-            tmp_path = tmp.name
-        try:
-            from safety.face_service import verify_adult_face
-            adult_res = verify_adult_face(tmp_path)
-            if not isinstance(adult_res, dict) or adult_res.get('is_adult') is not True:
-                return {"success": False, "error": "Adult verification failed: a verified adult parent or legal guardian must complete this live-camera check."}
-        finally:
-            if os.path.exists(tmp_path):
-                try: os.remove(tmp_path)
-                except OSError: pass
-
-        # Express parent verification succeeded with live adult face verification
-    else:
-        # The deterministic Aadhaar mock is development-only. A crafted POST
-        # must never be able to select it on a public deployment.
-        base_url = str(getattr(Config, "BASE_URL", "") or "").lower()
-        allow_mock_identity = (
-            os.getenv("LITTLENET_ALLOW_MOCK_IDENTITY", "").strip().lower() in {"1", "true", "yes"}
-            and ("localhost" in base_url or "127.0.0.1" in base_url)
-            and not base_url.startswith("https://")
-        )
-        if not allow_mock_identity:
-            return {
-                "success": False,
-                "error": "Legacy demo identity verification is disabled. Use Express Guardian Verification with the live camera.",
-                "status": "DISABLED",
-            }
-
-        # Local-development-only mock identity path.
-        id_res = default_verification_provider.verify_parent_identity(
-            document_type=doc_type,
-            document_number=doc_number,
-            full_name=parent_name,
-            dob_or_year=dob,
-            document_image_bytes=doc_bytes
-        )
-
-        if not id_res.get("success"):
-            _record_verification_audit(
-                parent_user_id=map_data.get("parent_id"),
-                child_id=child_id,
-                status="FAILED",
-                liveness="FAILED",
-                face_match="FAILED",
-                masked_id=id_res.get("masked_id", "XXXX-XXXX-0000"),
-                consent=consent
-            )
-            return {
-                "success": False,
-                "error": id_res.get("error_message", "Identity verification failed."),
-                "status": id_res.get("status", "FAILED")
-            }
-
-        # 2. Verify Liveness and Anti-Spoofing
-        liveness_res = default_verification_provider.verify_liveness(selfie_bytes)
-        if not liveness_res.get("success"):
-            _record_verification_audit(
-                parent_user_id=map_data.get("parent_id"),
-                child_id=child_id,
-                status="FAILED",
-                liveness="FAILED",
-                face_match="FAILED",
-                masked_id=id_res.get("masked_id"),
-                consent=consent
-            )
-            return {
-                "success": False,
-                "error": liveness_res.get("error_message", "Liveness check failed. Please retake a clear live selfie."),
-                "status": "FAILED"
-            }
-
-        face_res = default_verification_provider.verify_face_match(selfie_bytes, doc_bytes)
-        if not face_res.get("success"):
-            _record_verification_audit(
-                parent_user_id=map_data.get("parent_id"),
-                child_id=child_id,
-                status="FAILED",
-                liveness=liveness_res.get("liveness_status", "PASSED"),
-                face_match="FAILED",
-                masked_id=id_res.get("masked_id"),
-                consent=consent
-            )
-            return {
-                "success": False,
-                "error": face_res.get("error_message", "Face match failed."),
-                "status": "FAILED"
-            }
-
-        provider_name = id_res.get("provider", "SANDBOX_MOCK")
-        masked_identity = id_res.get("masked_id", "XXXX-XXXX-5678")
-        verified_doc_type = doc_type
-
-    # 3. Create or link Parent Account
+    # Create or link Parent Account
     conn = get_db_connection()
     if not conn:
         return {"success": False, "error": "Database error while processing verification."}
 
     try:
         cur = conn.cursor()
-        cur.execute("SELECT user_id, password_hash, account_status FROM users WHERE LOWER(email)=%s", (parent_email,))
+        cur.execute(
+            "SELECT user_id, account_status FROM users WHERE LOWER(email)=%s AND role='PARENT'",
+            (parent_email,),
+        )
         parent_user = cur.fetchone()
 
         if parent_user:
             parent_id = parent_user["user_id"]
-            cur.execute("UPDATE users SET full_name=%s, account_status='ACTIVE' WHERE user_id=%s", (parent_name, parent_id))
+            cur.execute(
+                "UPDATE users SET full_name=%s, account_status='ACTIVE' WHERE user_id=%s",
+                (parent_name, parent_id),
+            )
         else:
             raw_pw = form_data.get("password", "")
-            if not raw_pw:
+            if not raw_pw or len(raw_pw) < 8:
                 conn.rollback()
-                return {"success": False, "error": "Please set a password for your new LittleNet parent account."}
-
-            pw_hash = hash_password(raw_pw)
-            cur.execute("""
-                INSERT INTO users(username, full_name, email, password_hash, role, account_status)
-                VALUES(%s, %s, %s, %s, 'PARENT', 'ACTIVE')
-                RETURNING user_id
-            """, (parent_email, parent_name, parent_email, pw_hash))
+                return {"success": False, "error": "Please set a password of at least 8 characters for your new LittleNet parent account."}
+            cur.execute(
+                """INSERT INTO users(username, full_name, email, password_hash, role, account_status)
+                   VALUES(%s, %s, %s, %s, 'PARENT', 'ACTIVE')
+                   RETURNING user_id""",
+                (parent_email, parent_name, parent_email, hash_password(raw_pw)),
+            )
             parent_id = cur.fetchone()["user_id"]
 
-        # 4. Record Verification Audit
-        cur.execute("""
-            INSERT INTO parent_verifications(
-                parent_user_id, child_id, verification_provider, verification_status,
-                liveness_status, face_match_status, document_type, masked_id,
-                consent_given, consent_timestamp, verified_at
-            )
-            VALUES(%s, %s, %s, 'VERIFIED', 'PASSED', 'MATCHED', %s, %s, TRUE, NOW(), NOW())
-        """, (
-            parent_id, child_id, provider_name,
-            verified_doc_type, masked_identity
-        ))
+        # Record Verification Audit (email-OTP based; no liveness/face evidence)
+        masked = _mask_parent_email(parent_email)
+        cur.execute(
+            """INSERT INTO parent_verifications(
+                   parent_user_id, child_id, verification_provider, verification_status,
+                   liveness_status, face_match_status, document_type, masked_id,
+                   consent_given, consent_timestamp, verified_at)
+               VALUES(%s, %s, 'EMAIL_OTP', 'VERIFIED', 'NOT_APPLICABLE', 'NOT_APPLICABLE',
+                      'GUARDIAN_DECLARATION', %s, TRUE, NOW(), NOW())""",
+            (parent_id, child_id, masked),
+        )
 
-        # 5. Generate secure approval token
+        # Generate secure approval token
         approval_token = str(uuid.uuid4())
         expires_at = datetime.now(timezone.utc) + timedelta(hours=48)
 
-        auto_approved = bool(form_data.get("auto_approve") == "1" or is_express)
+        auto_approved = form_data.get("auto_approve") == "1"
         if auto_approved:
-            # Instant 1-Step Activation: Saves real parents from multi-step hurdle
+            # Instant 1-Step Activation: the parent proved email ownership via OTP.
             cur.execute("UPDATE users SET account_status = 'ACTIVE' WHERE user_id = %s", (child_id,))
-            cur.execute("""
-                UPDATE parent_child_map
-                SET parent_id = %s,
-                    verified_parent_id = %s,
-                    approval_token = %s,
-                    approved = TRUE,
-                    approved_at = NOW(),
-                    is_token_used = TRUE,
-                    approval_status = 'APPROVED'
-                WHERE verification_token = %s OR approval_token = %s
-            """, (parent_id, parent_id, approval_token, token, token))
-
-            cur.execute("""
-                INSERT INTO parent_safety_settings(child_id, parent_id, safety_level)
-                VALUES(%s, %s, 'STRICT')
-                ON CONFLICT (child_id) DO UPDATE SET parent_id = EXCLUDED.parent_id
-            """, (child_id, parent_id))
-
-            cur.execute("""
-                INSERT INTO child_time_limits(child_id, daily_limit_minutes, strict_mode)
-                VALUES(%s, 60, TRUE)
-                ON CONFLICT (child_id) DO NOTHING
-            """, (child_id,))
-
-            cur.execute("""
-                INSERT INTO parent_control_settings(child_id, parent_id, allow_reels, allow_stories, allow_messaging, allow_posting, allow_discover, educational_only_feed)
-                VALUES(%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE)
-                ON CONFLICT (child_id) DO NOTHING
-            """, (child_id, parent_id))
+            cur.execute(
+                """UPDATE parent_child_map
+                   SET parent_id = %s,
+                       verified_parent_id = %s,
+                       approval_token = %s,
+                       approved = TRUE,
+                       approved_at = NOW(),
+                       is_token_used = TRUE,
+                       approval_status = 'APPROVED'
+                   WHERE verification_token = %s OR approval_token = %s""",
+                (parent_id, parent_id, approval_token, token, token),
+            )
+            cur.execute(
+                """INSERT INTO parent_safety_settings(child_id, parent_id, safety_level)
+                   VALUES(%s, %s, 'STRICT')
+                   ON CONFLICT (child_id) DO UPDATE SET parent_id = EXCLUDED.parent_id""",
+                (child_id, parent_id),
+            )
+            cur.execute(
+                """INSERT INTO child_time_limits(child_id, daily_limit_minutes, strict_mode)
+                   VALUES(%s, 60, TRUE)
+                   ON CONFLICT (child_id) DO NOTHING""",
+                (child_id,),
+            )
+            cur.execute(
+                """INSERT INTO parent_control_settings(child_id, parent_id, allow_reels, allow_stories, allow_messaging, allow_posting, allow_discover, educational_only_feed)
+                   VALUES(%s, %s, TRUE, TRUE, TRUE, TRUE, TRUE, FALSE)
+                   ON CONFLICT (child_id) DO NOTHING""",
+                (child_id, parent_id),
+            )
         else:
-            cur.execute("""
-                UPDATE parent_child_map
-                SET parent_id = %s,
-                    verified_parent_id = %s,
-                    approval_token = %s,
-                    approval_token_expires_at = %s,
-                    approval_status = 'AWAITING_PARENT_APPROVAL',
-                    is_token_used = FALSE
-                WHERE verification_token = %s OR approval_token = %s
-            """, (parent_id, parent_id, approval_token, expires_at, token, token))
+            cur.execute(
+                """UPDATE parent_child_map
+                   SET parent_id = %s,
+                       verified_parent_id = %s,
+                       approval_token = %s,
+                       approval_token_expires_at = %s,
+                       approval_status = 'AWAITING_PARENT_APPROVAL',
+                       is_token_used = FALSE
+                   WHERE verification_token = %s OR approval_token = %s""",
+                (parent_id, parent_id, approval_token, expires_at, token, token),
+            )
 
         conn.commit()
     except Exception as e:
@@ -454,12 +407,12 @@ def process_parent_verification(token, form_data, selfie_bytes, doc_bytes=None):
     finally:
         conn.close()
 
-    # 6. Send Approval Email to Parent
+    # Send Approval Email to Parent
     base_url = Config.BASE_URL.rstrip('/')
     approval_url = f"{base_url}/parent/approve-child/{approval_token}/"
     approval_body = f"""
     <h2>LittleNet Parent Verification Complete</h2>
-    <p>Your identity as <strong>{parent_name}</strong> has been successfully verified.</p>
+    <p>Your parent email ownership for <strong>{parent_name}</strong> has been successfully verified.</p>
     <p><a href="{approval_url}" style="display:inline-block;padding:12px 24px;background:#0095F6;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">Review & Approve {map_data['child_name']}'s Account</a></p>
     """
     try:
@@ -486,9 +439,10 @@ def process_parent_verification(token, form_data, selfie_bytes, doc_bytes=None):
         "parent_id": parent_id,
         "parent_email": parent_email,
         "approval_token": approval_token,
-        "masked_id": masked_identity,
+        "masked_id": masked,
         "auto_approved": auto_approved
     }
+
 
 def get_child_approval_details(approval_token, logged_in_parent_id):
     """
@@ -683,13 +637,20 @@ def parent_verification_complete(parent_user_id):
     read from existing authoritative records only — no new state invented:
 
     1. ``parent_verifications`` row with ``verification_status='VERIFIED'``
-       (express/token guardian flow — the same record the database trigger
+       (token guardian flow: verified email OTP + guardian consent + 18+
+       declaration — the same record the database trigger
        ``littlenet_guard_parent_child_approval`` treats as authoritative), OR
-    2. the OTP+liveness flow: ``parent_email_otps.verified_at`` is set AND
-       liveness evidence exists — either a ``face_profiles`` enrollment row
-       (Face ID captured during liveness) or an ``activity_logs``
-       ``PARENT_LIVENESS_VERIFIED`` audit record (covers parents whose Face
-       ID was legitimately reset after verification).
+    2. ``parent_email_otps.verified_at`` is set (standalone registration:
+       verified email OTP is now the complete parent identity verification —
+       the live selfie/liveness step was removed by explicit product decision).
+
+    Security-bar note: prong 2 previously also required face/liveness
+    evidence (``face_profiles`` row or ``PARENT_LIVENESS_VERIFIED`` audit).
+    The remaining assurance for a parent is a server-validated 18+
+    date-of-birth declaration, email ownership via a hashed / expiring /
+    attempt-limited OTP, explicit guardian consent, and a password. The admin
+    activation gates (web ``admin/routes.py`` and mobile
+    ``mobile/admin_api.py``) still enforce this server-side.
     """
     try:
         uid = int(parent_user_id)
@@ -702,16 +663,7 @@ def parent_verification_complete(parent_user_id):
     if verified:
         return True
     otp = fetch_one("SELECT verified_at FROM parent_email_otps WHERE user_id=%s", (uid,))
-    if not otp or not otp.get("verified_at"):
-        return False
-    face = fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1", (uid,))
-    if face:
-        return True
-    audit = fetch_one(
-        "SELECT 1 FROM activity_logs WHERE child_id=%s AND activity_type='PARENT_LIVENESS_VERIFIED' LIMIT 1",
-        (uid,),
-    )
-    return bool(audit)
+    return bool(otp and otp.get("verified_at"))
 
 def login_user(identifier, password):
     val = (identifier or '').strip()

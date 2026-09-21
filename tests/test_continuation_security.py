@@ -7,30 +7,24 @@ def text(path):
     return (ROOT / path).read_text(encoding='utf-8')
 
 
-def test_parent_flow_is_email_then_otp_then_live_adult_activation():
+def test_parent_flow_is_email_then_otp_activation():
     api = text('auth/api.py')
     routes = text('auth/routes.py')
     otp = text('auth/parent_email_otp.py')
-    live = text('auth/templates/parent_liveness_verify.html')
-    live_js = text('static/js/parent_liveness_mediapipe.js')
     assert "request.path.rstrip('/')!='/register-parent'" in api
     assert "'PARENT',%s,'PENDING_APPROVAL'" in otp
     assert 'pending_parent_email_verified' in api
     assert "return redirect('/verify-parent-email/')" in api
-    assert "return redirect('/verify-parent-liveness/')" in routes
-    # The verify-parent-* routes live only on auth_bp (auth/routes.py); the
-    # shadowed api_bp duplicates were removed. auth_bp registers first, so it
-    # is the single authoritative implementation.
+    # The live adult/liveness step was removed: OTP success activates the
+    # parent account directly and signs them in.
+    assert "return redirect('/verify-parent-liveness/')" not in routes
+    assert "@auth_bp.route('/verify-parent-liveness/'" not in routes
     assert "@api_bp.route('/verify-parent-liveness/'" not in api
-    assert "@auth_bp.route('/verify-parent-liveness/'" in routes
     assert "UPDATE users SET account_status='ACTIVE'" in routes
     assert "UPDATE users SET account_status='ACTIVE'" not in otp
-    assert 'verify_adult_face' in routes
-    assert '/static/js/parent_liveness_mediapipe.js' in live
-    assert 'navigator.mediaDevices.getUserMedia' in live_js
-    assert 'FaceLandmarker.createFromOptions' in live_js
-    assert "'eyeBlinkLeft'" in live_js and "'eyeBlinkRight'" in live_js
-    assert 'selfie_data' in live
+    assert 'verify_adult_face' not in routes
+    assert 'parent_liveness_verify.html' not in routes
+    assert 'selfie_data' not in routes
 
 
 def test_parent_otp_is_hashed_expiring_and_rate_limited():
@@ -45,17 +39,16 @@ def test_parent_otp_is_hashed_expiring_and_rate_limited():
     assert "5 per 10 minutes" in routes
 
 
-def test_parent_liveness_has_no_demo_or_manual_capture_bypass():
-    live = text('auth/templates/parent_liveness_verify.html')
-    live_js = text('static/js/parent_liveness_mediapipe.js')
-    assert 'Demo Liveness' not in live
-    assert 'drawFallbackSelfie' not in live
-    assert 'manualCaptureBtn' not in live
-    assert 'navigator.mediaDevices.getUserMedia' in live_js
-    assert 'brightness' not in live_js.lower()
-    assert "phase = 'WAIT_OPEN'" in live_js
-    assert "phase = 'WAIT_CLOSED'" in live_js
-    assert "phase = 'WAIT_REOPEN'" in live_js
+def test_parent_liveness_page_and_js_are_removed_no_bypass_possible():
+    # The parent liveness page and its MediaPipe JS were removed entirely by
+    # explicit product decision, so no demo/manual-capture bypass can exist.
+    assert not (ROOT / 'auth/templates/parent_liveness_verify.html').exists()
+    assert not (ROOT / 'static/js/parent_liveness_mediapipe.js').exists()
+    routes = text('auth/routes.py')
+    assert 'verify_parent_liveness_page' not in routes
+    assert 'parent_liveness_mediapipe' not in routes
+    assert 'drawFallbackSelfie' not in routes
+    assert 'manualCaptureBtn' not in routes
 
 
 def test_server_face_path_remains_anti_spoof_fail_closed():

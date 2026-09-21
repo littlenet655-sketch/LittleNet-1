@@ -24,7 +24,7 @@ API = ROOT / "auth" / "api.py"
 VERIFY_PARENT_PATHS = (
     "/verify-parent-email/",
     "/verify-parent-email/resend/",
-    "/verify-parent-liveness/",
+    "/verify-parent/<token>/otp/",
 )
 
 
@@ -47,7 +47,10 @@ def test_register_parent_direct_bypass_is_deleted():
 
 # Functions in auth/service.py that may legitimately write account_status='ACTIVE'.
 # Each sits behind the verified-parent pipeline:
-#   - process_parent_verification: runs only after live adult/liveness verification
+#   - process_parent_verification: runs only after the parent's email
+#     ownership is proven via OTP (or the parent already holds an ACTIVE
+#     account); the selfie/liveness step was removed by explicit product
+#     decision, and a VERIFIED guardian audit row is still recorded.
 #   - register_parent_account: requires an already-approved (verified) parent token
 #   - process_child_decision: requires a logged-in, verified parent approving the child
 _VERIFIED_PIPELINE_FUNCS = {

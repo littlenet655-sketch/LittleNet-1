@@ -230,7 +230,8 @@ def verified_parent_child_creation_gate():
 def parent_registration_email_gate():
     """Intercept standalone parent registration before the legacy direct route.
 
-    Parent flow is locked to: email -> OTP -> live adult/liveness -> ACTIVE.
+    Parent flow is locked to: email -> OTP -> ACTIVE (verified email OTP is
+    the complete parent verification; there is no selfie/liveness step).
     """
     if request.method!='POST' or request.path.rstrip('/')!='/register-parent':
         return None

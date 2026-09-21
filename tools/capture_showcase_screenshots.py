@@ -10,7 +10,7 @@ screens = [
     "01_login.png",
     "02_parent_signup.png",
     "03_email_otp.png",
-    "04_parent_liveness.png",
+    "04_parent_device_auth.png",
     "05_child_enrollment.png",
     "06_home.png",
     "07_search_explore.png",

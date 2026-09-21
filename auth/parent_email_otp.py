@@ -1,8 +1,9 @@
 """Email OTP gate for standalone Parent Mode registration.
 
-The parent account is created in PENDING_APPROVAL state. Email OTP proves email
-ownership only; the account remains pending until live adult/liveness verification
-succeeds. OTP values are never stored in plaintext and expire after ten minutes.
+The parent account is created in PENDING_APPROVAL state. Email OTP proves
+email ownership; the account is activated once the OTP is verified. There is
+no separate selfie/liveness step. OTP values are never stored in plaintext
+and expire after ten minutes.
 """
 import hashlib
 import hmac
@@ -96,8 +97,8 @@ def _validate_registration(form):
         raise ValueError('Please confirm the adult guardian declaration.')
 
     # Deliberately no arithmetic/captcha-style guardian question here. Adult
-    # status is proved by DOB validation, email ownership and the required live
-    # camera liveness/adult gate that follows OTP verification.
+    # status is proved by DOB validation and email ownership; verified email
+    # OTP is the complete parent verification (no selfie/liveness step).
     return username, full_name, email, password, dob_str
 
 
@@ -108,7 +109,7 @@ def _send_code(user_id, email, full_name, code):
     <p>Your one-time verification code is:</p>
     <p style="font-size:30px;font-weight:800;letter-spacing:8px;margin:20px 0;">{code}</p>
     <p>This code expires in {OTP_TTL_MINUTES} minutes. Do not share it with anyone.</p>
-    <p>After OTP verification, LittleNet will ask for a live adult/liveness check before the account can become active.</p>
+    <p>Once verified, your Parent account is activated immediately.</p>
     <p>If you did not create a LittleNet Parent account, you can ignore this email.</p>
     """
     sent = bool(send_parent_otp_email(
@@ -177,9 +178,9 @@ def begin_parent_registration(form):
 def verify_parent_email_otp(user_id, code):
     """Verify parent email ownership and return the user row.
 
-    The caller activates the parent account after a successful OTP check
-    (device authentication now gates Parent Mode locally; there is no
-    separate liveness/selfie step)."""
+    The caller activates the parent account after a successful OTP check.
+    Verified email OTP is the complete parent verification (the live
+    selfie/liveness step was removed)."""
     _ensure_table()
     code = (code or '').strip()
     if len(code) != 6 or not code.isdigit():
@@ -248,7 +249,7 @@ def resend_parent_email_otp(user_id, with_code=False):
         err = 'No pending parent verification was found.'
         return (False, err, None) if with_code else (False, err)
     if user.get('verified_at'):
-        err = 'Email is already verified. Continue with live adult verification.'
+        err = 'Email is already verified.'
         return (False, err, None) if with_code else (False, err)
 
     code = _new_code()

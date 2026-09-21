@@ -5,10 +5,10 @@ when the parent completed identity verification, as determined by the
 authoritative ``auth.service.parent_verification_complete`` check:
 
 1. ``parent_verifications`` row with ``verification_status='VERIFIED'``
-   (express/token guardian flow), OR
-2. ``parent_email_otps.verified_at`` set AND liveness evidence
-   (``face_profiles`` enrollment row or ``activity_logs``
-   ``PARENT_LIVENESS_VERIFIED`` record).
+   (token guardian flow: verified email OTP + guardian consent), OR
+2. ``parent_email_otps.verified_at`` set (standalone registration: verified
+   email OTP is now the complete parent identity verification — the live
+   selfie/liveness step was removed by explicit product decision).
 
 No live database is required: ``auth.service.fetch_one`` is monkeypatched.
 Source-contract tests additionally prove both admin endpoints (web
@@ -36,10 +36,6 @@ def _fake_fetch_one(scenario):
             return {"1": 1} if scenario.get("guardian_record") else None
         if "parent_email_otps" in sql:
             return {"verified_at": scenario.get("otp_verified_at")}
-        if "face_profiles" in sql:
-            return {"1": 1} if scenario.get("face_enrolled") else None
-        if "activity_logs" in sql:
-            return {"1": 1} if scenario.get("liveness_audit") else None
         raise AssertionError(f"unexpected query: {sql}")
     return fake
 
@@ -54,20 +50,12 @@ def test_verified_guardian_record_is_sufficient(monkeypatch):
     assert auth_service.parent_verification_complete(42) is True
 
 
-def test_otp_plus_face_enrollment_is_sufficient(monkeypatch):
+def test_otp_verified_alone_is_sufficient(monkeypatch):
+    # Verified email OTP is now the complete parent identity verification
+    # (the selfie/liveness step was removed by explicit product decision).
     monkeypatch.setattr(
         auth_service, "fetch_one",
-        _fake_fetch_one({"otp_verified_at": "2026-09-21T10:00:00", "face_enrolled": True}),
-    )
-    assert auth_service.parent_verification_complete(42) is True
-
-
-def test_otp_plus_liveness_audit_covers_face_reset(monkeypatch):
-    # A previously verified parent whose Face ID was legitimately reset keeps
-    # the PARENT_LIVENESS_VERIFIED audit record: re-activation must stay allowed.
-    monkeypatch.setattr(
-        auth_service, "fetch_one",
-        _fake_fetch_one({"otp_verified_at": "2026-09-21T10:00:00", "liveness_audit": True}),
+        _fake_fetch_one({"otp_verified_at": "2026-09-21T10:00:00"}),
     )
     assert auth_service.parent_verification_complete(42) is True
 
@@ -77,19 +65,11 @@ def test_fully_unverified_parent_is_rejected(monkeypatch):
     assert auth_service.parent_verification_complete(42) is False
 
 
-def test_otp_without_liveness_evidence_is_rejected(monkeypatch):
+def test_unverified_email_is_rejected(monkeypatch):
+    # Email OTP must be verified in the verified-parent pipeline.
     monkeypatch.setattr(
         auth_service, "fetch_one",
-        _fake_fetch_one({"otp_verified_at": "2026-09-21T10:00:00"}),
-    )
-    assert auth_service.parent_verification_complete(42) is False
-
-
-def test_unverified_email_is_rejected_even_with_face_row(monkeypatch):
-    # Email OTP must precede liveness in the verified-parent pipeline.
-    monkeypatch.setattr(
-        auth_service, "fetch_one",
-        _fake_fetch_one({"otp_verified_at": None, "face_enrolled": True}),
+        _fake_fetch_one({"otp_verified_at": None}),
     )
     assert auth_service.parent_verification_complete(42) is False
 

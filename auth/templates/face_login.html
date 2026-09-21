@@ -1,6 +1,6 @@
 {% extends 'base.html' %}
-{% set face_mode = mode or request.args.get('mode', 'kids') %}
-{% block title %}{% if face_mode=='parent' %}Parent Face ID Login{% else %}Face ID Login{% endif %} — LittleNet{% endblock %}
+{% set face_mode = 'kids' %}
+{% block title %}Face ID Login — LittleNet{% endblock %}
 
 {% block content %}
 <div class="face-scan-shell">
@@ -15,8 +15,8 @@
       </svg>
     </div>
 
-    <h1 class="face-title">{% if face_mode=='parent' %}Parent Face ID Login{% else %}Live Face ID Login{% endif %}</h1>
-    <p class="face-subtitle">{% if face_mode=='parent' %}Use the face enrolled during parent verification to sign in securely.{% else %}Look directly into the camera for biometric authentication.{% endif %}</p>
+    <h1 class="face-title">Live Face ID Login</h1>
+    <p class="face-subtitle">Look directly into the camera for biometric authentication.</p>
 
     {% if error %}
     <div class="auth-alert auth-alert-error" role="alert" style="margin-bottom:20px;">
@@ -46,18 +46,18 @@
       <div class="face-guide-chip"><span>🛡️</span><span>Live Camera</span></div>
     </div>
 
-    <form method="post" action="/face-login/?mode={{ 'parent' if face_mode=='parent' else 'kids' }}" id="face-login-form">
+    <form method="post" action="/face-login/?mode=kids" id="face-login-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <input type="hidden" name="photo_b64" id="photo-b64-input">
-      <input type="hidden" name="mode" value="{{ 'parent' if face_mode=='parent' else 'kids' }}">
+      <input type="hidden" name="mode" value="kids">
 
       <div class="auth-field" style="text-align:left;margin-bottom:16px;">
-        <label class="field-label" for="face-email">{% if face_mode=='parent' %}Parent Email or Username{% else %}Child Email or Username{% endif %}</label>
+        <label class="field-label" for="face-email">Child Email or Username</label>
         <div class="input-wrap">
           <span class="input-icon">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
           </span>
-          <input type="text" id="face-email" name="email" class="auth-input" placeholder="{% if face_mode=='parent' %}parent@example.com or parent username{% else %}child username or email{% endif %}" value="{{ request.args.get('email', '') }}" required autocapitalize="none" autocorrect="off" spellcheck="false">
+          <input type="text" id="face-email" name="email" class="auth-input" placeholder="child username or email" value="{{ request.args.get('email', '') }}" required autocapitalize="none" autocorrect="off" spellcheck="false">
         </div>
       </div>
 
@@ -67,7 +67,7 @@
       </button>
     </form>
 
-    <a href="/login/?mode={{ 'parent' if face_mode=='parent' else 'kids' }}" class="face-back-link">← Use password login instead</a>
+    <a href="/login/?mode=kids" class="face-back-link">← Use password login instead</a>
   </div>
 </div>
 

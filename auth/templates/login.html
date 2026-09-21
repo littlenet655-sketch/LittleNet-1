@@ -72,10 +72,10 @@
       <button type="submit" class="btn primary auth-submit-btn" id="auth-submit-btn"><span>Log In</span><span class="btn-arrow">&rarr;</span></button>
     </form>
 
-    {% if mode!='admin' %}
+    {% if mode!='admin' and mode!='parent' %}
     <div id="face-login-wrap">
       <div class="auth-divider"><span>OR</span></div>
-      <a href="/face-login/?mode={{ 'parent' if mode=='parent' else 'kids' }}" class="face-login-btn">{{ ico.icon('camera',17) }} <span>{% if mode=='parent' %}Parent Face ID Login{% else %}Face ID Login{% endif %}</span></a>
+      <a href="/face-login/?mode=kids" class="face-login-btn">{{ ico.icon('camera',17) }} <span>Face ID Login</span></a>
     </div>
     {% endif %}
 

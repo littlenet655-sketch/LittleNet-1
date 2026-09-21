@@ -1,39 +1,56 @@
+"""Guardian verification fail-closed contracts (post face-removal).
+
+Parent face/selfie/liveness verification was removed by explicit product
+decision. The token guardian flow now fails closed on:
+  - missing/invalid verification token,
+  - missing guardian consent,
+  - missing guardian name,
+  - under-18 date-of-birth declaration,
+  - missing/short password for a brand-new parent account,
+and it never accepts or requires a selfie.
+"""
 from pathlib import Path
 
 ROOT = Path(__file__).parents[1]
 
 
-def test_guardian_verification_requires_explicit_express_mode_or_local_mock_gate():
+def test_token_guardian_flow_requires_consent_name_and_adult_dob():
     src = (ROOT / "auth/service.py").read_text(encoding="utf-8")
-    assert 'form_data.get("verification_mode") == "EXPRESS"' in src
-    assert 'LITTLENET_ALLOW_MOCK_IDENTITY' in src
-    assert '"localhost" in base_url or "127.0.0.1" in base_url' in src
-    assert 'and not base_url.startswith("https://")' in src
-    assert 'or (not selfie_bytes and not doc_number and consent)' not in src
-
-
-def test_adult_face_gate_never_defaults_missing_result_to_success():
-    src = (ROOT / "auth/service.py").read_text(encoding="utf-8")
-    assert "adult_res.get('is_adult') is not True" in src
-    assert "adult_res.get('is_adult', True)" not in src
+    # ensure_token_parent_pending + process_parent_verification share the
+    # validator; all three gates must be present.
+    assert 'You must confirm that you are the child\'s legal adult parent or guardian.' in src
+    assert 'Please provide the parent or guardian full name.' in src
+    assert 'Adult verification failed: Parent must be 18 years of age or older.' in src
     assert 'datetime.strptime(dob, "%Y-%m-%d")' in src
-    assert 'birth_year > 2006' not in src
 
 
-def test_legacy_token_only_child_approval_is_disabled():
-    routes = (ROOT / "auth/routes.py").read_text(encoding="utf-8")
+def test_token_guardian_flow_has_no_selfie_or_liveness_step():
     service = (ROOT / "auth/service.py").read_text(encoding="utf-8")
-    start = routes.index("@auth_bp.route('/approve/<token>/'")
-    end = routes.index("@auth_bp.route('/register-parent'", start)
-    legacy = routes[start:end]
-    assert "redirect(f'/verify-parent/{token}/', code=303)" in legacy
-    assert 'approve_child_account(token)' not in legacy
-    helper = service[service.index('def approve_child_account(token):'):service.index('def login_user(', service.index('def approve_child_account(token):'))]
-    assert 'raise RuntimeError' in helper
-    assert "UPDATE users SET account_status='ACTIVE'" not in helper
+    routes = (ROOT / "auth/routes.py").read_text(encoding="utf-8")
+    assert 'selfie_bytes' not in service
+    assert 'verify_adult_face' not in service
+    assert 'verify_liveness' not in service
+    assert 'verify_face_match' not in service
+    assert 'selfie_data' not in routes
+    assert 'LITTLENET_ALLOW_MOCK_IDENTITY' not in service
 
 
-def test_parent_approval_details_fail_closed_without_verified_record():
-    src = (ROOT / "auth/service.py").read_text(encoding="utf-8")
-    assert 'PARENT_VERIFICATION_REQUIRED' in src
-    assert 'if not ver_row or ver_row.get("verification_status") != "VERIFIED"' in src
+def test_token_guardian_flow_records_email_otp_audit_row():
+    service = (ROOT / "auth/service.py").read_text(encoding="utf-8")
+    # The VERIFIED audit row (authoritative for the DB trigger and the admin
+    # gate) is still written, with EMAIL_OTP as the provider.
+    assert "'EMAIL_OTP', 'VERIFIED', 'NOT_APPLICABLE', 'NOT_APPLICABLE'" in service
+    assert "verification_status='VERIFIED'" in service
+
+
+def test_new_token_parent_is_created_pending_and_activated_only_after_otp():
+    service = (ROOT / "auth/service.py").read_text(encoding="utf-8")
+    # ensure_token_parent_pending must never activate directly.
+    pending_fn = service[service.index("def ensure_token_parent_pending"):]
+    pending_fn = pending_fn[:pending_fn.index("def process_parent_verification")]
+    assert "'PENDING_APPROVAL'" in pending_fn
+    assert "account_status='ACTIVE'" not in pending_fn
+    # The OTP step route verifies the code before process_parent_verification.
+    routes = (ROOT / "auth/routes.py").read_text(encoding="utf-8")
+    assert "@auth_bp.route('/verify-parent/<token>/otp/'" in routes
+    assert "verify_parent_email_otp(parent_id" in routes

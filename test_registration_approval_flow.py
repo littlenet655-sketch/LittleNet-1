@@ -1,7 +1,4 @@
-import io
 import uuid
-import base64
-from PIL import Image
 from database.connection import get_db_connection
 from auth.service import (
     register_child,
@@ -11,14 +8,6 @@ from auth.service import (
     process_child_decision,
     login_user
 )
-from auth.verification_provider import default_verification_provider
-
-def generate_test_image_bytes():
-    """Generates a small test RGB image bytes simulating a camera selfie."""
-    img = Image.new("RGB", (320, 240), color=(73, 109, 137))
-    buf = io.BytesIO()
-    img.save(buf, format="JPEG")
-    return buf.getvalue()
 
 def run_tests():
     print("==========================================================")
@@ -89,56 +78,76 @@ def run_tests():
     print("[PASS] Child credentials authenticate, but account_status remains PENDING_APPROVAL (blocking access).")
 
     # -----------------------------------------------------------
-    # TEST 4: Parent Verification - Failure Scenario
+    # TEST 4: Parent Verification - Failure Scenarios (fail closed)
     # -----------------------------------------------------------
-    print("\n[TEST 4] Testing Parent Verification Failure (invalid ID format or trigger)...")
-    fail_res = process_parent_verification(
+    print("\n[TEST 4] Testing Parent Verification failure modes (no selfie step exists)...")
+    no_consent_res = process_parent_verification(
         ver_token,
         {
             "parent_name": parent_name,
-            "document_type": "AADHAAR_MOCK",
-            "document_number": "123456780000",  # Ends in 0000 -> trigger failure
+            "dob": "1990-05-20",
             "password": "parentPassword123!",
-            "consent": "on"
         },
-        selfie_bytes=generate_test_image_bytes()
     )
-    assert not fail_res["success"], "Expected parent verification to fail on test trigger 0000"
-    print(f"[PASS] Simulated verification failure handled correctly: {fail_res['error']}")
+    assert not no_consent_res["success"], "Expected failure when guardian consent is missing"
+    print(f"[PASS] Missing consent rejected: {no_consent_res['error']}")
+
+    underage_res = process_parent_verification(
+        ver_token,
+        {
+            "parent_name": parent_name,
+            "dob": "2015-01-01",
+            "password": "parentPassword123!",
+            "consent": "on",
+        },
+    )
+    assert not underage_res["success"], "Expected failure for under-18 DOB declaration"
+    print(f"[PASS] Under-18 DOB rejected: {underage_res['error']}")
+
+    bad_token_res = process_parent_verification(
+        "invalid-token-0000",
+        {
+            "parent_name": parent_name,
+            "dob": "1990-05-20",
+            "password": "parentPassword123!",
+            "consent": "on",
+        },
+    )
+    assert not bad_token_res["success"], "Expected failure for invalid token"
+    print(f"[PASS] Invalid token rejected: {bad_token_res['error']}")
 
     # -----------------------------------------------------------
-    # TEST 5: Parent Verification - Success Scenario
+    # TEST 5: Parent Verification - Success (email-OTP-verified, no selfie)
     # -----------------------------------------------------------
-    print("\n[TEST 5] Testing Parent Verification Success (Valid Mock ID + Selfie)...")
-    selfie_bytes = generate_test_image_bytes()
+    print("\n[TEST 5] Testing Parent Verification Success (email ownership + consent, no selfie)...")
     success_res = process_parent_verification(
         ver_token,
         {
             "parent_name": parent_name,
-            "document_type": "AADHAAR_MOCK",
-            "document_number": "548912345678",
+            "dob": "1990-05-20",
             "password": "parentPassword123!",
-            "consent": "on"
+            "consent": "on",
         },
-        selfie_bytes=selfie_bytes
     )
     assert success_res["success"], f"Parent verification failed: {success_res.get('error')}"
     parent_id = success_res["parent_id"]
     approval_token = success_res["approval_token"]
-    assert success_res["masked_id"] == "XXXX-XXXX-5678"
+    assert success_res["status"] == "VERIFIED"
+    assert "****" in success_res["masked_id"] and "@" in success_res["masked_id"]
     print(f"[PASS] Parent verified successfully. Parent ID: {parent_id}, Masked ID: {success_res['masked_id']}")
 
     # Verify audit record in parent_verifications
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT verification_status, liveness_status, face_match_status, masked_id FROM parent_verifications WHERE parent_user_id = %s", (parent_id,))
+    cur.execute("SELECT verification_status, verification_provider, liveness_status, face_match_status, masked_id FROM parent_verifications WHERE parent_user_id = %s", (parent_id,))
     ver_rec = cur.fetchone()
     assert ver_rec["verification_status"] == "VERIFIED"
-    assert ver_rec["liveness_status"] == "PASSED"
-    assert ver_rec["face_match_status"] == "MATCHED"
+    assert ver_rec["verification_provider"] == "EMAIL_OTP"
+    assert ver_rec["liveness_status"] == "NOT_APPLICABLE"
+    assert ver_rec["face_match_status"] == "NOT_APPLICABLE"
     cur.close()
     conn.close()
-    print("[PASS] Verification audit log confirmed in `parent_verifications` table.")
+    print("[PASS] Email-OTP verification audit log confirmed in `parent_verifications` table.")
 
     # -----------------------------------------------------------
     # TEST 6: Unauthorized Approval Access (Wrong Parent or Child User)
