@@ -20,6 +20,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { AuthProvider, useAuth } from './src/auth/AuthProvider';
 import { RootNavigator } from './src/navigation/RootNavigator';
 import { QueryProvider } from './src/query/client';
+import { installParentGateInvalidation } from './src/deviceAuth/parentAuthGate';
 
 // Keep native splash visible until we are ready to reveal the app.
 SplashScreen.preventAutoHideAsync().catch(() => {});
@@ -71,6 +72,13 @@ function SplashOverlay({ onReady }: { onReady: () => void }) {
 export default function App() {
   const [appReady, setAppReady] = useState(false);
   const handleReady = useCallback(() => setAppReady(true), []);
+
+  // Install the parent-auth background invalidation once at startup.
+  // Idempotent: the ParentModeGate also installs it on mount.
+  useEffect(() => {
+    const remove = installParentGateInvalidation();
+    return remove;
+  }, []);
 
   return (
     <SafeAreaProvider>

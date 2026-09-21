@@ -29,6 +29,7 @@ import {
 import { useAuth } from '../../auth/AuthProvider';
 import { CameraCapture } from '../../camera/CameraCapture';
 import type { CapturedPhoto } from '../../camera/livePhoto';
+import { ensureParentAuthForAction } from '../../components/ParentModeGate';
 import type { ParentScreenProps } from '../../navigation/types';
 import { useIsOnline } from '../../query/client';
 import { parentKeys } from '../../query/keys';
@@ -680,6 +681,8 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
       setAccountError('The new passwords do not match.');
       return;
     }
+    // Sensitive action: require a fresh parent device authentication.
+    if (!(await ensureParentAuthForAction())) return;
     setAccountBusy(true);
     setAccountError('');
     setAccountDone('');
@@ -709,6 +712,8 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
   }
 
   async function doResetFace() {
+    // Sensitive action: require a fresh parent device authentication.
+    if (!(await ensureParentAuthForAction())) return;
     setAccountBusy(true);
     setAccountError('');
     setAccountDone('');
@@ -726,6 +731,10 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
 
   async function onEnrollCapture(photo: CapturedPhoto) {
     if (!photo.base64) throw new Error('The camera did not return a photo. Please try again.');
+    // Sensitive action: require a fresh parent device authentication.
+    if (!(await ensureParentAuthForAction())) {
+      throw new Error('Parent authentication was cancelled.');
+    }
     setAccountBusy(true);
     setAccountError('');
     setAccountDone('');
@@ -747,6 +756,8 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
   }
 
   async function decideFaceDeferral(action: 'approve' | 'reject') {
+    // Sensitive action: require a fresh parent device authentication.
+    if (!(await ensureParentAuthForAction())) return;
     setAccountBusy(true);
     setAccountError('');
     setAccountDone('');
@@ -778,6 +789,8 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
   }
 
   async function doUnlink() {
+    // Sensitive action: require a fresh parent device authentication.
+    if (!(await ensureParentAuthForAction())) return;
     setAccountBusy(true);
     setAccountError('');
     setAccountDone('');
@@ -1258,7 +1271,11 @@ export function ParentReviewScreen({ navigation, route }: ParentScreenProps<'Par
               <Button
                 label="Approve Safely"
                 loading={mutation.isPending}
-                onPress={() => mutation.mutate('APPROVE')}
+                onPress={() => {
+                  void (async () => {
+                    if (await ensureParentAuthForAction()) mutation.mutate('APPROVE');
+                  })();
+                }}
               />
             </View>
             <View style={styles.flex}>
@@ -1266,7 +1283,11 @@ export function ParentReviewScreen({ navigation, route }: ParentScreenProps<'Par
                 label="Block & Remove"
                 variant="secondary"
                 disabled={mutation.isPending}
-                onPress={() => mutation.mutate('BLOCK')}
+                onPress={() => {
+                  void (async () => {
+                    if (await ensureParentAuthForAction()) mutation.mutate('BLOCK');
+                  })();
+                }}
               />
             </View>
           </View>
@@ -1459,7 +1480,11 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
                   <Pressable
                     key={extra}
                     disabled={extendMutation.isPending || resetMutation.isPending}
-                    onPress={() => extendMutation.mutate(extra)}
+                    onPress={() => {
+                      void (async () => {
+                        if (await ensureParentAuthForAction()) extendMutation.mutate(extra);
+                      })();
+                    }}
                     style={styles.extensionBtn}
                   >
                     <Feather name="plus-circle" size={13} color="#2563EB" />
@@ -1479,7 +1504,11 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
                       {
                         text: 'Reset Now',
                         style: 'destructive',
-                        onPress: () => resetMutation.mutate(),
+                        onPress: () => {
+                          void (async () => {
+                            if (await ensureParentAuthForAction()) resetMutation.mutate();
+                          })();
+                        },
                       },
                     ],
                   );
@@ -1538,7 +1567,11 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
               label="Save Screen Time"
               disabled={!valid}
               loading={mutation.isPending}
-              onPress={() => mutation.mutate()}
+              onPress={() => {
+                void (async () => {
+                  if (await ensureParentAuthForAction()) mutation.mutate();
+                })();
+              }}
             />
           </Card>
 
@@ -1767,7 +1800,11 @@ export function ParentControlsScreen({ route }: ParentScreenProps<'ParentControl
               label="Save Feature Controls"
               disabled={!draft.allowed_categories.length}
               loading={mutation.isPending}
-              onPress={() => mutation.mutate()}
+              onPress={() => {
+                void (async () => {
+                  if (await ensureParentAuthForAction()) mutation.mutate();
+                })();
+              }}
             />
           </View>
         </ScrollView>
@@ -1834,13 +1871,16 @@ export function ParentFollowRequestsScreen(_props: ParentScreenProps<'FollowRequ
                       <Button
                         label="Approve Friendship"
                         disabled={mutation.isPending}
-                        onPress={() =>
-                          mutation.mutate({
-                            childId: row.child_id,
-                            targetId: row.following_child_id,
-                            action: 'approve',
-                          })
-                        }
+                        onPress={() => {
+                          void (async () => {
+                            if (!(await ensureParentAuthForAction())) return;
+                            mutation.mutate({
+                              childId: row.child_id,
+                              targetId: row.following_child_id,
+                              action: 'approve',
+                            });
+                          })();
+                        }}
                       />
                     </View>
                     <View style={styles.flex}>
@@ -1848,13 +1888,16 @@ export function ParentFollowRequestsScreen(_props: ParentScreenProps<'FollowRequ
                         label="Decline"
                         variant="secondary"
                         disabled={mutation.isPending}
-                        onPress={() =>
-                          mutation.mutate({
-                            childId: row.child_id,
-                            targetId: row.following_child_id,
-                            action: 'reject',
-                          })
-                        }
+                        onPress={() => {
+                          void (async () => {
+                            if (!(await ensureParentAuthForAction())) return;
+                            mutation.mutate({
+                              childId: row.child_id,
+                              targetId: row.following_child_id,
+                              action: 'reject',
+                            });
+                          })();
+                        }}
                       />
                     </View>
                   </View>

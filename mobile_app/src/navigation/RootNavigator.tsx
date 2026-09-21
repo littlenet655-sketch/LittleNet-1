@@ -42,11 +42,12 @@ import {
   AdminReviewsScreen,
   AdminUsersScreen,
 } from '../screens/admin/AdminScreens';
-import { GuardianLivenessScreen, OtpVerifyScreen, ParentRegisterScreen } from '../screens/ParentOnboarding';
+import { OtpVerifyScreen, ParentRegisterScreen } from '../screens/ParentOnboarding';
 import { ForgotPasswordScreen, ResetPasswordScreen } from '../screens/PasswordReset';
 import { QuizScreen } from '../screens/Quiz';
 import { LoginScreen, WelcomeScreen } from '../screens/WelcomeLogin';
 import { BrandHeader, Button, LoadingState, Notice, Screen } from '../ui/components';
+import { ParentModeGate } from '../components/ParentModeGate';
 import { useScreenTimeHeartbeat } from '../kids/useScreenTimeHeartbeat';
 import { resolveChildRoute } from './gates';
 import type { AdminStackParamList, AuthStackParamList, ChildStackParamList, ParentStackParamList } from './types';
@@ -73,7 +74,6 @@ function AuthNavigator() {
       <AuthStack.Screen name="ResetPassword" component={ResetPasswordScreen} options={{ headerTitle: '' }} />
       <AuthStack.Screen name="ParentRegister" component={ParentRegisterScreen} options={{ headerTitle: '' }} />
       <AuthStack.Screen name="OtpVerify" component={OtpVerifyScreen} options={{ headerTitle: '' }} />
-      <AuthStack.Screen name="GuardianLiveness" component={GuardianLivenessScreen} options={{ headerTitle: '' }} />
       <AuthStack.Screen name="FaceLogin" component={FaceLoginScreen} options={{ headerTitle: '' }} />
     </AuthStack.Navigator>
   );
@@ -233,7 +233,9 @@ export function RootNavigator() {
   if (session.user.role === 'PARENT') {
     return (
       <NavigationContainer>
-        <ParentNavigator />
+        <ParentModeGate>
+          <ParentNavigator />
+        </ParentModeGate>
       </NavigationContainer>
     );
   }

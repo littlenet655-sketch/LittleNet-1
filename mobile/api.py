@@ -62,7 +62,7 @@ from quiz.service import (
     record_feed_view,
     required_feed_quiz,
 )
-from safety.face_service import clear_child_face, enroll, has_face_profile, store_embedding, verify, verify_adult_face
+from safety.face_service import clear_child_face, enroll, has_face_profile, verify
 from safety.moderation_service import evaluate, record, safety_level
 from safety.pii_service import scan_pii
 from safety.policy import Decision, decide
@@ -1059,7 +1059,22 @@ def register_mobile_api(bp):
         ok, error, user = verify_parent_email_otp(int(pending["uid"]), str(data.get("otp") or ""))
         if not ok:
             return jsonify(error=error or "invalid_otp"), 400
-        return jsonify(ok=True, pending_token=_issue_pending_parent(user["user_id"], user.get("email") or pending.get("email") or ""))
+        # Parent face/liveness verification has been removed from the
+        # registration flow (device authentication now gates Parent Mode
+        # locally). Email OTP ownership is the final server-side step:
+        # activate the parent account here and return a signed-in session.
+        execute(
+            "UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'",
+            (int(user["user_id"]),),
+        )
+        user = fetch_one("SELECT * FROM users WHERE user_id=%s", (int(user["user_id"]),))
+        if not user or user.get("account_status") != "ACTIVE":
+            return jsonify(error="parent_activation_failed"), 500
+        try:
+            log(int(user["user_id"]), "PARENT_EMAIL_VERIFIED", {"method": "email_otp"})
+        except Exception:
+            pass
+        return _mobile_login_response(user, "PARENT_EMAIL_OTP")
 
     @bp.route("/api/mobile/v1/auth/parent/resend-email", methods=["POST"])
     @csrf.exempt
@@ -1143,132 +1158,6 @@ def register_mobile_api(bp):
             return jsonify(ok=False, error=msg), 400
         return jsonify(ok=True, message=msg)
 
-
-    @bp.route("/api/mobile/v1/auth/parent/verify-liveness", methods=["POST"])
-    @csrf.exempt
-    @limiter.limit("15 per minute")
-    def mobile_parent_verify_liveness():
-        data = request.get_json(silent=True) or {}
-        pending_token = str(data.get("pending_token") or request.form.get("pending_token") or "")
-        pending = _load_pending_parent(pending_token)
-        if not pending:
-            return jsonify(error="pending_verification_expired"), 401
-        otp = fetch_one("SELECT verified_at FROM parent_email_otps WHERE user_id=%s", (int(pending["uid"]),))
-        if not otp or not otp.get("verified_at"):
-            return jsonify(error="email_verification_required"), 428
-        path = _save_request_image("littlenet_mobile_parent_")
-        if not path:
-            return jsonify(error="live_camera_photo_required"), 400
-        try:
-            try:
-                result = verify_adult_face(path)
-            except Exception as exc:
-                result = {"is_adult": False, "reason": "adult_face_service_unavailable", "error": str(exc)}
-
-            if not result.get("is_adult"):
-                reason = str(result.get("reason") or "adult_face_required")
-                try:
-                    log(
-                        int(pending["uid"]),
-                        "PARENT_LIVENESS_FAILED",
-                        {"reason": reason, "method": result.get("method")},
-                    )
-                except Exception:
-                    # Verification must not fail just because audit telemetry is unavailable.
-                    pass
-
-                if reason == "under_age":
-                    return jsonify(
-                        error="adult_verification_failed",
-                        reason=reason,
-                        message="Adult age verification did not pass.",
-                    ), 403
-                if reason == "single_face_required":
-                    return jsonify(
-                        error="single_face_required",
-                        reason=reason,
-                        message="Keep exactly one face fully inside the frame and try again.",
-                    ), 422
-                if reason == "liveness_failed":
-                    return jsonify(
-                        error="liveness_failed",
-                        reason=reason,
-                        message="Live-face verification did not pass. Look straight at the camera and blink again.",
-                    ), 422
-                if reason == "age_estimate_ambiguous":
-                    return jsonify(
-                        error="age_estimate_ambiguous",
-                        reason=reason,
-                        message="Adult age could not be confirmed confidently from this photo. Retake it in clear, even lighting.",
-                    ), 422
-                if reason == "age_verification_unavailable":
-                    return jsonify(
-                        error="age_verification_unavailable",
-                        reason=reason,
-                        message="Adult age verification is temporarily unavailable. Please try again.",
-                    ), 503
-                if reason in (
-                    "adult_face_service_unavailable",
-                    "liveness_unavailable",
-                    "adult_face_error",
-                    "adult_face_verification_invalid",
-                    "adult_face_verification_empty",
-                ):
-                    return jsonify(
-                        error="adult_verification_unavailable",
-                        reason=reason,
-                        message="Adult verification service is temporarily busy. Please try again.",
-                    ), 503
-                return jsonify(
-                    error="adult_verification_failed",
-                    reason=reason,
-                    message="Adult verification did not pass. Retake the live selfie and try again.",
-                ), 403
-
-            # The adult-verification AI response normally carries the Facenet512
-            # embedding from the same verified selfie. Persist it directly so signup
-            # does not make a second heavy face-inference round-trip.
-            face_id_enrolled = False
-            try:
-                verified_embedding = result.get("embedding")
-                if verified_embedding:
-                    store_embedding(int(pending["uid"]), verified_embedding)
-                else:
-                    # Backward-compatible fallback for an older AI deployment.
-                    enroll(int(pending["uid"]), path)
-                b_key = secrets.token_hex(32)
-                execute(
-                    """UPDATE face_profiles
-                       SET biometric_key=COALESCE(biometric_key, %s)
-                       WHERE child_id=%s AND model_name='Facenet512'""",
-                    (b_key, int(pending["uid"])),
-                )
-                face_id_enrolled = True
-            except Exception:
-                # Parent activation remains based on the completed adult check;
-                # optional Face ID enrollment can be retried later.
-                face_id_enrolled = False
-
-            execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'", (int(pending["uid"]),))
-            user = fetch_one("SELECT * FROM users WHERE user_id=%s", (int(pending["uid"]),))
-            if not user or user.get("account_status") != "ACTIVE":
-                return jsonify(error="parent_activation_failed"), 500
-            try:
-                log(
-                    int(pending["uid"]),
-                    "PARENT_LIVENESS_VERIFIED",
-                    {"method": result.get("method"), "face_id_enrolled": face_id_enrolled},
-                )
-            except Exception:
-                pass
-            return _mobile_login_response(user, "PARENT_LIVENESS")
-        except Exception as exc:
-            return jsonify(error="adult_liveness_failed", reason=str(exc)), 400
-        finally:
-            try:
-                os.remove(path)
-            except OSError:
-                pass
 
     @bp.route("/api/mobile/v1/me")
     @_require_mobile("CHILD", "PARENT", "ADMIN")

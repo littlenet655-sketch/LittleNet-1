@@ -96,29 +96,39 @@ def _install_fake_deepface(monkeypatch, faces, age):
     monkeypatch.setitem(sys.modules,'deepface',module)
 
 
-def test_mobile_guardian_verification_preserves_actionable_failure_reasons():
+def test_mobile_parent_liveness_route_removed():
+    # Parent face/liveness verification was removed from the mobile Parent
+    # flow; Android device authentication now gates Parent Mode locally.
     src=(Path(__file__).parents[1]/'mobile/api.py').read_text(encoding='utf-8')
-    block=src[src.index('def mobile_parent_verify_liveness'):src.index('@bp.route("/api/mobile/v1/me")')]
-    assert 'error="single_face_required"' in block
-    assert 'error="liveness_failed"' in block
-    assert 'error="age_estimate_ambiguous"' in block
-    assert 'error="age_verification_unavailable"' in block
+    assert 'def mobile_parent_verify_liveness' not in src
+    assert '/api/mobile/v1/auth/parent/verify-liveness' not in src
+    assert 'verify_adult_face' not in src
+    assert 'PARENT_LIVENESS_VERIFIED' not in src
+    assert 'PARENT_LIVENESS_FAILED' not in src
 
 
-def test_mobile_guardian_reuses_verified_embedding_before_fallback_inference():
+def test_mobile_parent_email_otp_activates_parent_and_returns_login():
+    # Email OTP is the final server-side parent activation step: it activates
+    # the account and returns a signed-in login response (no pending_token
+    # hop and no liveness step).
     src=(Path(__file__).parents[1]/'mobile/api.py').read_text(encoding='utf-8')
-    block=src[src.index('def mobile_parent_verify_liveness'):src.index('@bp.route("/api/mobile/v1/me")')]
-    assert 'verified_embedding = result.get("embedding")' in block
-    assert 'store_embedding(int(pending["uid"]), verified_embedding)' in block
-    assert block.index('store_embedding(int(pending["uid"]), verified_embedding)') < block.index('enroll(int(pending["uid"]), path)')
+    block=src[src.index('def mobile_parent_verify_email'):src.index('def mobile_parent_resend_email')]
+    assert "UPDATE users SET account_status='ACTIVE'" in block
+    assert '_mobile_login_response(user, "PARENT_EMAIL_OTP")' in block
+    assert '_issue_pending_parent' not in block
+    assert 'verify-liveness' not in block
+    assert 'verify_adult_face' not in block
 
 
-def test_mobile_guardian_does_not_create_empty_biometric_profile():
+def test_mobile_parent_no_face_enrollment_on_activation():
+    # Parent activation must not enroll any face embedding/profile: the
+    # mobile Parent flow performs no selfie capture at all.
     src=(Path(__file__).parents[1]/'mobile/api.py').read_text(encoding='utf-8')
-    block=src[src.index('def mobile_parent_verify_liveness'):src.index('@bp.route("/api/mobile/v1/me")')]
+    block=src[src.index('def mobile_parent_verify_email'):src.index('def mobile_parent_resend_email')]
+    assert 'store_embedding' not in block
+    assert 'face_profiles' not in block
     assert "'LocalBiometricV1'" not in block
     assert "'[]'::jsonb" not in block
-    assert "model_name='Facenet512'" in block
 
 
 def test_guardian_adult_result_reuses_same_verified_selfie_for_embedding(monkeypatch):

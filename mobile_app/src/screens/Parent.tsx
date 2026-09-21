@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Feather } from '@expo/vector-icons';
 import { createChild } from '../api/auth';
 import { useAuth } from '../auth/AuthProvider';
+import { ensureParentAuthForAction } from '../components/ParentModeGate';
 import type { ParentScreenProps } from '../navigation/types';
 import { parentKeys } from '../query/keys';
 import { Button, Card, Field, Notice, Screen, errorText } from '../ui/components';
@@ -62,6 +63,8 @@ export function CreateChildScreen({ navigation }: ParentScreenProps<'CreateChild
     }
     setFieldErrors({});
     if (!session) return;
+    // Sensitive action: require a fresh parent device authentication.
+    if (!(await ensureParentAuthForAction())) return;
     setBusy(true);
     setError('');
     try {

@@ -55,7 +55,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#FFF9F2"
         }
-      ]
+      ],
+      "./plugins/parent-device-auth"
     ],
     "owner": "anilkumar09",
     "extra": {

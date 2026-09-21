@@ -175,7 +175,11 @@ def begin_parent_registration(form):
 
 
 def verify_parent_email_otp(user_id, code):
-    """Verify email ownership but deliberately keep the parent account pending."""
+    """Verify parent email ownership and return the user row.
+
+    The caller activates the parent account after a successful OTP check
+    (device authentication now gates Parent Mode locally; there is no
+    separate liveness/selfie step)."""
     _ensure_table()
     code = (code or '').strip()
     if len(code) != 6 or not code.isdigit():

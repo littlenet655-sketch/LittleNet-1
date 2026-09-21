@@ -6,6 +6,7 @@
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "esModuleInterop": true,
+    "jsx": "react-jsx",
     "skipLibCheck": true,
     "outDir": "test-dist",
     "rootDir": ".",
@@ -15,6 +16,7 @@
   },
   "include": [
     "tests/**/*.ts",
+    "src/components/ParentModeGate.tsx",
     "src/api/**/*.ts",
     "src/auth/session.ts",
     "src/auth/backends.ts",

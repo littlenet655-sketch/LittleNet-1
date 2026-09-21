@@ -186,7 +186,7 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
 
           <Button label={busy ? 'Logging in…' : 'Log In'} onPress={submit} loading={busy} disabled={busy} />
 
-          {mode !== 'admin' ? (
+          {mode === 'kids' ? (
             <>
               <View style={styles.orDivider}>
                 <View style={styles.dividerLine} />
@@ -196,13 +196,11 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
 
               <Pressable
                 accessibilityRole="button"
-                onPress={() => navigation.navigate('FaceLogin', { mode: mode === 'parent' ? 'parent' : 'kids' })}
+                onPress={() => navigation.navigate('FaceLogin')}
                 style={styles.faceLoginPill}
               >
                 <Feather name="camera" size={18} color="#0095F6" />
-                <Text style={styles.faceLoginText}>
-                  {mode === 'kids' ? 'Kids Face ID Login' : 'Parent Face ID Login'}
-                </Text>
+                <Text style={styles.faceLoginText}>Kids Face ID Login</Text>
               </Pressable>
             </>
           ) : null}

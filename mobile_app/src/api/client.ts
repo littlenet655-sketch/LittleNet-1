@@ -46,7 +46,6 @@ export const routes = {
   parentVerifyEmail: '/api/mobile/v1/auth/parent/verify-email',
   parentResendEmail: '/api/mobile/v1/auth/parent/resend-email',
   parentEmailStatus: '/api/mobile/v1/auth/parent/email-status',
-  parentVerifyLiveness: '/api/mobile/v1/auth/parent/verify-liveness',
   forgotPassword: '/api/mobile/v1/auth/forgot-password',
   resetPassword: '/api/mobile/v1/auth/reset-password',
   childFaceEnroll: '/api/mobile/v1/kids/face/enroll',

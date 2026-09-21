@@ -76,8 +76,11 @@ export function registerParent(input: ParentRegisterInput): Promise<{ ok: boolea
   return post(routes.parentRegister, { ...input, guardian_declaration: '1' });
 }
 
-export function verifyParentEmail(pendingToken: string, otp: string): Promise<{ ok: boolean; pending_token: string }> {
-  return post(routes.parentVerifyEmail, { pending_token: pendingToken, otp });
+export function verifyParentEmail(pendingToken: string, otp: string): Promise<LoginResponse> {
+  // Email OTP is the final server-side parent activation step. On success
+  // the backend returns a signed-in session directly (parent face/liveness
+  // verification was removed; device authentication gates Parent Mode).
+  return post<LoginResponse>(routes.parentVerifyEmail, { pending_token: pendingToken, otp });
 }
 
 export function resendParentEmail(pendingToken: string): Promise<{ ok: boolean; error?: string | null; dev_code?: string }> {
@@ -99,11 +102,6 @@ export function fetchParentEmailStatus(
   pendingToken: string,
 ): Promise<{ ok: boolean; status: ParentEmailDeliveryStatus; delivery_failed: boolean }> {
   return post(routes.parentEmailStatus, { pending_token: pendingToken });
-}
-
-/** Guardian liveness/adult verification. Sends a live camera JPEG as base64 JSON. Allows 60s for serverless AI cold start. */
-export function verifyParentLiveness(pendingToken: string, photoB64: string): Promise<LoginResponse> {
-  return post<LoginResponse>(routes.parentVerifyLiveness, { pending_token: pendingToken, photo_b64: photoB64 }, undefined, 60000);
 }
 
 export function createChild(token: string, input: CreateChildInput): Promise<{ ok: boolean; child_id: number; next_steps: string[] }> {
@@ -128,10 +126,10 @@ export interface FaceChallengeResponse {
   expires_at: string;
 }
 
-/** Request a single-use interactive challenge nonce bound to the user. */
+/** Request a single-use interactive challenge nonce bound to the user (kids face login only). */
 export function requestFaceChallenge(
   identifier: string,
-  mode: Extract<LoginMode, 'kids' | 'parent'> = 'kids',
+  mode: 'kids' = 'kids',
 ): Promise<FaceChallengeResponse> {
   return post<FaceChallengeResponse>(routes.faceChallenge, { identifier, mode });
 }
@@ -142,7 +140,7 @@ export function requestFaceChallenge(
  */
 export function faceLogin(
   identifier: string,
-  mode: Extract<LoginMode, 'kids' | 'parent'>,
+  mode: 'kids',
   photoB64: string,
   challengeId: string,
   nonce: string,

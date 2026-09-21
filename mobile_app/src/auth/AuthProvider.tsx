@@ -7,6 +7,7 @@ import { invalidateLocalSession, userInitiatedSignOut } from './controller';
 import { clearSession, persistLoginResponse, persistSession, restoreSession } from './session';
 import type { PersistedSession } from './session';
 import { secureStoreBackend } from './storage';
+import { invalidateParentAuth } from '../deviceAuth/parentAuthGate';
 import { invalidateSessionQueries } from '../query/client';
 
 interface AuthState {
@@ -40,6 +41,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   /** Local-only: no network, safe to call from the centralized 401 handler. */
   const invalidateLocal = useCallback(async () => {
+    invalidateParentAuth();
     sessionRef.current = null;
     setSession(null);
     setStatus('signedOut');
@@ -47,6 +49,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    invalidateParentAuth();
     const token = sessionRef.current?.token ?? null;
     sessionRef.current = null;
     setSession(null);
@@ -83,6 +86,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           user: me.user,
           onboarding: me.onboarding ?? restored.onboarding,
         };
+        // The restored session was replaced by authoritative server state:
+        // treat it as a session change and drop any parent auth window.
+        if (next.user.user_id !== restored.user.user_id || next.token !== restored.token) {
+          invalidateParentAuth();
+        }
         sessionRef.current = next;
         setSession(next);
         await persistSession(secureStoreBackend, next);
@@ -90,6 +98,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         if (!active) return;
         if (error instanceof ApiError && error.status === 401) {
+          invalidateParentAuth();
           await clearSession(secureStoreBackend);
           sessionRef.current = null;
           setSession(null);
@@ -107,6 +116,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(
     async (response: LoginResponse) => {
+      // A new session always drops any previous parent authorization window.
+      invalidateParentAuth();
       const next = await persistLoginResponse(secureStoreBackend, response);
       applySession(next);
       setStatus('signedIn');

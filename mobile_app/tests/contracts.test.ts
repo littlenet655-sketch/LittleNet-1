@@ -5,7 +5,8 @@ import assert from 'node:assert/strict';
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://backend.test.invalid';
 
 import { ApiError, productionApiUrlProblem, setUnauthorizedHandler } from '../src/api/client';
-import { answerQuiz, createChild, enrollChildFace, faceLogin, fetchQuiz, registerParent, requestPasswordReset, resendParentEmail, resetPassword, verifyParentEmail, verifyParentLiveness } from '../src/api/auth';
+import { answerQuiz, createChild, enrollChildFace, faceLogin, fetchQuiz, registerParent, requestPasswordReset, resendParentEmail, resetPassword, verifyParentEmail } from '../src/api/auth';
+import { routes } from '../src/api/client';
 
 interface SeenRequest {
   url: string;
@@ -40,7 +41,7 @@ function bodyJson(index = 0): Record<string, unknown> {
   return JSON.parse(String(seen[index]?.init.body ?? '{}')) as Record<string, unknown>;
 }
 
-describe('parent OTP and liveness contracts', () => {
+describe('parent OTP contracts', () => {
   it('registers with guardian declaration and dob, then verifies OTP with the pending token', async () => {
     stubFetch();
     setUnauthorizedHandler(null);
@@ -52,23 +53,26 @@ describe('parent OTP and liveness contracts', () => {
     assert.equal(regBody.guardian_declaration, '1');
     assert.equal(regBody.dob, '1990-05-14');
 
-    nextPayload = { ok: true, pending_token: 'pend-2' };
-    await verifyParentEmail('pend-1', '123456');
+    // Email OTP is the final server-side parent activation step: it returns a
+    // signed-in LoginResponse directly (no parent selfie/liveness step).
+    nextPayload = { ok: true, token: 'tok-1', auth_method: 'PARENT_EMAIL_OTP', user: { user_id: 7, role: 'PARENT' } };
+    const verified = await verifyParentEmail('pend-1', '123456');
     assert.equal(seen[1]?.url, 'https://backend.test.invalid/api/mobile/v1/auth/parent/verify-email');
     assert.deepEqual(bodyJson(1), { pending_token: 'pend-1', otp: '123456' });
+    assert.equal(verified.ok, true);
+    assert.equal(verified.token, 'tok-1');
+    assert.equal(verified.auth_method, 'PARENT_EMAIL_OTP');
+    assert.equal(verified.user.role, 'PARENT');
 
     nextPayload = { ok: true, error: null };
     await resendParentEmail('pend-1');
     assert.equal(seen[2]?.url, 'https://backend.test.invalid/api/mobile/v1/auth/parent/resend-email');
   });
 
-  it('sends liveness as live photo_b64 with the pending token', async () => {
-    stubFetch();
-    nextStatus = 200;
-    nextPayload = { ok: true, token: 't', auth_method: 'PARENT_LIVENESS', user: {} };
-    await verifyParentLiveness('pend-2', 'base64photo');
-    assert.equal(seen[0]?.url, 'https://backend.test.invalid/api/mobile/v1/auth/parent/verify-liveness');
-    assert.deepEqual(bodyJson(), { pending_token: 'pend-2', photo_b64: 'base64photo' });
+  it('no longer exposes a parent liveness endpoint or client call', async () => {
+    const authModule = await import('../src/api/auth.js');
+    assert.equal('verifyParentLiveness' in authModule, false);
+    assert.equal((routes as Record<string, unknown>).parentVerifyLiveness, undefined);
   });
 
   it('surfaces duplicate username/email backend errors verbatim', async () => {

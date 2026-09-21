@@ -1,13 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { Image, Keyboard, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
-import { fetchParentEmailStatus, registerParent, resendParentEmail, verifyParentEmail, verifyParentLiveness } from '../api/auth';
-import { ApiError } from '../api/client';
+import { fetchParentEmailStatus, registerParent, resendParentEmail, verifyParentEmail } from '../api/auth';
 import { useAuth } from '../auth/AuthProvider';
-import { CameraCapture } from '../camera/CameraCapture';
-import type { CapturedPhoto } from '../camera/livePhoto';
 import type { AuthScreenProps } from '../navigation/types';
-import { Button, Card, Field, GateNotice, GuidelineChips, Notice, Screen, StepIndicator, errorText } from '../ui/components';
+import { Button, Card, Field, Notice, Screen, StepIndicator, errorText } from '../ui/components';
 import { colors, radius, spacing, type } from '../ui/tokens';
 
 export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegister'>) {
@@ -113,7 +110,7 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
           </View>
 
           <Card>
-            <StepIndicator step={1} total={3} label="Guardian Details" />
+            <StepIndicator step={1} total={2} label="Guardian Details" />
 
             <Field
               label="Full Name"
@@ -181,7 +178,7 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
             <View style={styles.flowInfoBox}>
               <Feather name="info" size={16} color="#0284C7" />
               <Text style={styles.flowInfoText}>
-                Next: LittleNet sends a 6-digit email code, followed by a quick adult selfie check.
+                Next: LittleNet sends a 6-digit email code to verify ownership of your address.
               </Text>
             </View>
 
@@ -202,7 +199,8 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
   );
 }
 
-export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerify'>) {
+export function OtpVerifyScreen({ route }: AuthScreenProps<'OtpVerify'>) {
+  const { signIn } = useAuth();
   const { pendingToken, devCode } = route.params;
   const [otp, setOtp] = useState(devCode || '');
   const [busy, setBusy] = useState(false);
@@ -265,8 +263,11 @@ export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerif
     setBusy(true);
     setError('');
     try {
+      // Email OTP is the final parent activation step: the backend returns a
+      // signed-in session directly. Sign in without a parent selfie step —
+      // device authentication gates Parent Mode locally instead.
       const response = await verifyParentEmail(pendingToken, otp.trim());
-      navigation.navigate('GuardianLiveness', { pendingToken: response.pending_token });
+      await signIn(response);
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -348,7 +349,7 @@ export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerif
           </View>
 
           <Card>
-            <StepIndicator step={2} total={3} label="Email Verification" />
+            <StepIndicator step={2} total={2} label="Email Verification" />
 
             <View style={styles.otpFieldWrap}>
               <Text style={styles.otpLabel}>6-DIGIT VERIFICATION CODE</Text>
@@ -376,87 +377,12 @@ export function OtpVerifyScreen({ navigation, route }: AuthScreenProps<'OtpVerif
             <View style={styles.flowInfoBox}>
               <Feather name="shield" size={16} color="#0284C7" />
               <Text style={styles.flowInfoText}>
-                Your account activates after email ownership and adult liveness are verified.
+                Your account activates as soon as your email ownership is verified.
               </Text>
             </View>
           </Card>
         </ScrollView>
       </KeyboardAvoidingView>
-    </Screen>
-  );
-}
-
-export function GuardianLivenessScreen({ route }: AuthScreenProps<'GuardianLiveness'>) {
-  const { signIn } = useAuth();
-  const { pendingToken } = route.params;
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<unknown>(null);
-
-  async function onCapture(photo: CapturedPhoto) {
-    setBusy(true);
-    setError(null);
-    try {
-      const response = await verifyParentLiveness(pendingToken, photo.base64);
-      await signIn(response);
-    } catch (err) {
-      setError(err);
-      throw err;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Screen>
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={true}
-        bounces={true}
-      >
-        <View style={styles.headerHero}>
-          <View style={styles.heroLogoBadge}>
-            <Image
-              source={require('../../assets/app_logo.png')}
-              style={styles.heroLogo}
-              resizeMode="cover"
-            />
-          </View>
-          <Text style={styles.heroBrandName}>LittleNet</Text>
-          <Text style={styles.heroSubtitle}>Adult verification • Live selfie check</Text>
-        </View>
-
-        <Card>
-          <StepIndicator step={3} total={3} label="Adult Check" />
-
-          <GuidelineChips
-            chips={[
-              { iconName: 'sun', text: 'Good Light' },
-              { iconName: 'user', text: 'Center Face' },
-              { iconName: 'shield', text: 'Live Camera' },
-            ]}
-          />
-
-          <Notice
-            tone="info"
-            message="Good light, look straight at the camera, one adult face only. The photo is checked for safety and discarded."
-          />
-
-          {error ? <GateNotice error={error} /> : null}
-          {error instanceof ApiError && error.status === 503 ? (
-            <Notice tone="info" message="The verification service is busy. Wait a moment and retry — your email step is saved." />
-          ) : null}
-
-          <CameraCapture
-            label="Take Live Selfie"
-            busyLabel="Verifying Adult Face…"
-            busy={busy}
-            livenessAction="BLINK"
-            instruction="Google ML Kit will automatically scan your face and prompt you to blink both eyes. Photo captures automatically upon verification."
-            onCapture={onCapture}
-          />
-        </Card>
-      </ScrollView>
     </Screen>
   );
 }

@@ -57,11 +57,11 @@ export function faceLoginFailureMessage(error: unknown): string {
   return errorText(error);
 }
 
-/** Replay-resistant face login with interactive challenge-response and role awareness. */
+/** Replay-resistant kids face login with interactive challenge-response. */
 export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogin'>) {
   const { signIn } = useAuth();
-  const mode = route.params?.mode || 'kids';
-  const isParent = mode === 'parent';
+  // Face login is kids-only. Parent access uses Android device authentication.
+  const mode = route.params?.mode ?? 'kids';
   const [identifier, setIdentifier] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -70,7 +70,7 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
   async function startChallenge() {
     const trimmed = identifier.trim();
     if (!trimmed) {
-      setError(new Error(`Enter the ${isParent ? 'parent' : 'child'} username or email first.`));
+      setError(new Error('Enter the child username or email first.'));
       return;
     }
     setBusy(true);
@@ -87,7 +87,7 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
   async function onCapture(photo: CapturedPhoto) {
     const trimmed = identifier.trim();
     if (!trimmed) {
-      throw new Error(`Enter the ${isParent ? 'parent' : 'child'} username or email first.`);
+      throw new Error('Enter the child username or email first.');
     }
     setBusy(true);
     setError(null);
@@ -124,9 +124,7 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
             />
           </View>
           <Text style={styles.heroBrandName}>LittleNet</Text>
-          <Text style={styles.heroSubtitle}>
-            {isParent ? 'Parent Face ID Login • Look at the camera' : 'Kids Face ID Login • Look at the camera'}
-          </Text>
+          <Text style={styles.heroSubtitle}>Kids Face ID Login • Look at the camera</Text>
         </View>
 
         <Card>
@@ -139,8 +137,8 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
           />
 
           <Field
-            label={isParent ? 'Parent Username or Email' : 'Child Username or Email'}
-            placeholder={isParent ? 'e.g. parent_name or parent@example.com' : 'e.g. alex_star or child@example.com'}
+            label="Child Username or Email"
+            placeholder="e.g. alex_star or child@example.com"
             autoCapitalize="none"
             autoCorrect={false}
             value={identifier}
