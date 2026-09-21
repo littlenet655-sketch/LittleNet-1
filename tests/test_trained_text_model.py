@@ -72,9 +72,10 @@ def test_trained_text_signal_mapping_respects_per_label_thresholds():
     )
 
     assert signals["adult_score"] == 0.0
-    assert signals["violence_score"] == 0.82
-    assert signals["toxicity_score"] == 0.91
-    assert signals["general_score"] == 0.91
+    # Model-space thresholds are translated to policy-space REVIEW risk.
+    assert signals["violence_score"] == 0.50
+    assert signals["toxicity_score"] == 0.50
+    assert signals["general_score"] == 0.50
     triggered = signals["model_signals"]["littlenet_trained_text"]["triggered"]
     assert triggered == {
         "nudity": False,
@@ -82,6 +83,50 @@ def test_trained_text_signal_mapping_respects_per_label_thresholds():
         "cyberbullying": True,
         "gambling": False,
     }
+    states = signals["model_signals"]["littlenet_trained_text"]["states"]
+    assert states["violence"] == "review"
+    assert states["cyberbullying"] == "review"
+
+
+def test_safe_label_never_becomes_policy_risk():
+    from safety import littlenet_trained_text as trained
+
+    metadata = {
+        "labels": ["safe", "sexual"],
+        "review_thresholds": {"safe": 0.50, "sexual": 0.80},
+        "block_thresholds": {},
+        "signal_map": {},
+        "release": "unit",
+        "format": "test",
+    }
+    signals = trained._signals_from_scores({"safe": 0.99, "sexual": 0.10}, metadata)
+    assert signals["general_score"] == 0.0
+    assert signals["adult_score"] == 0.0
+
+
+def test_custom_v2_layout_is_recognized_without_loading_torch(tmp_path, monkeypatch):
+    from safety import littlenet_trained_text as trained
+
+    monkeypatch.setenv("LITTLENET_TRAINED_TEXT_PATH", str(tmp_path))
+    (tmp_path / "metadata.json").write_text(
+        json.dumps({"labels": [
+            "sexual", "grooming", "bullying", "hate", "violence", "self_harm",
+            "drugs", "alcohol", "smoking", "gambling", "profanity",
+            "pii_request", "contact_request",
+        ]}),
+        encoding="utf-8",
+    )
+    (tmp_path / "littlenet_text_model.pt").write_bytes(b"checkpoint")
+    (tmp_path / "vocab.txt").write_text("[PAD]\n[UNK]\n", encoding="utf-8")
+    encoder = tmp_path / "encoder"
+    encoder.mkdir()
+    (encoder / "config.json").write_text("{}", encoding="utf-8")
+
+    assert trained.available() is True
+    metadata = trained._load_metadata()
+    assert metadata["format"] == "littlenet_v2_custom_distilbert"
+    assert metadata["max_length"] == 128
+    assert len(metadata["labels"]) == 13
 
 
 def test_shadow_mode_cannot_change_current_text_decision(monkeypatch):
