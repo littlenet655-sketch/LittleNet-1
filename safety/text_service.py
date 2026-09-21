@@ -293,7 +293,8 @@ def check_text(text:str):
         except Exception:
             remote_failed=True
 
-    toxicity=max(profanity,bullying,severe,self_harm,dangerous_challenge,grooming);sexual=adult;ran=0
+    toxicity=max(profanity,bullying,severe,self_harm,dangerous_challenge,grooming)
+    sexual=adult;violence=severe;weapon=0.0;trained_general=0.0;ran=0
     errors=['remote_ai_unavailable'] if remote_failed else []
     extras={}
     if text:
@@ -305,6 +306,55 @@ def check_text(text:str):
             extras['detoxify_scores']={k:float(v) for k,v in scores.items()}
         except Exception as exc:
             errors.append('detoxify_timeout' if 'timeout' in str(exc).lower() else ('detoxify_missing_sexual_head' if 'sexual_explicit' in str(exc) else 'detoxify'))
+
+        # The private LittleNet model is additive and operator-controlled.
+        # off    -> exact legacy behavior
+        # shadow -> inference diagnostics only; policy scores stay untouched
+        # enforce-> merge trained evidence; failure becomes partial safety failure
+        try:
+            from . import littlenet_trained_text as trained_text
+            trained_mode=trained_text.mode()
+            if trained_mode in {'shadow','enforce'}:
+                if not trained_text.available():
+                    if trained_mode=='enforce':
+                        errors.append('trained_text_unavailable')
+                    else:
+                        extras['trained_text_shadow']={'available':False,'error':'bundle_not_staged'}
+                else:
+                    try:
+                        trained=timed_call(
+                            'trained_text',
+                            lambda:trained_text.predict(text),
+                            timeout_seconds('trained_text',90),
+                        )
+                        trained_diag=(trained.get('model_signals') or {}).get('littlenet_trained_text',{})
+                        if trained_mode=='shadow':
+                            extras['trained_text_shadow']=trained_diag
+                        else:
+                            ran+=1
+                            sexual=max(
+                                sexual,
+                                float(trained.get('adult_score',0) or 0),
+                                float(trained.get('sexual_score',0) or 0),
+                            )
+                            toxicity=max(toxicity,float(trained.get('toxicity_score',0) or 0))
+                            violence=max(violence,float(trained.get('violence_score',0) or 0))
+                            weapon=max(weapon,float(trained.get('weapon_score',0) or 0))
+                            trained_general=max(trained_general,float(trained.get('general_score',0) or 0))
+                            extras['trained_text_release']=trained.get('trained_text_release')
+                            extras['model_signals']=trained.get('model_signals') or {}
+                    except Exception as exc:
+                        key='trained_text_timeout' if 'timeout' in str(exc).lower() else 'trained_text'
+                        if trained_mode=='enforce':
+                            errors.append(key)
+                        else:
+                            extras['trained_text_shadow']={'available':True,'error':key}
+        except Exception as exc:
+            # Import/config problems cannot affect production while the mode is off.
+            raw_mode=(os.getenv('LITTLENET_TRAINED_TEXT_MODE') or 'off').strip().lower()
+            if raw_mode=='enforce':
+                errors.append('trained_text_loader')
+
         if env_flag('LITTLENET_ENABLE_TEXT_CLASSIFIER'):
             try:
                 h=timed_call('text_classifier',lambda:_optional_hf_scores(text),timeout_seconds('text_classifier',90));ran+=1
@@ -319,13 +369,16 @@ def check_text(text:str):
     elif dangerous_challenge:category='DANGEROUS_CHALLENGE'
     elif severe:category='SEVERE_ABUSE'
     elif sexual>=.4:category='SEXUAL_LANGUAGE'
+    elif weapon>=.45:category='WEAPON'
     elif bullying>=.6:category='CYBERBULLYING'
     else:category='TEXT'
 
     deterministic=adult>0 or bullying>0 or profanity>0 or severe>0 or self_harm>0 or dangerous_challenge>0 or grooming>0
     result={
-        'adult_score':sexual,'sexual_score':sexual,'violence_score':severe,'weapon_score':0,
-        'toxicity_score':toxicity,'general_score':max(sexual,toxicity,severe),'category':category,
+        'adult_score':sexual,'sexual_score':sexual,'violence_score':violence,'weapon_score':weapon,
+        'toxicity_score':toxicity,
+        'general_score':max(sexual,toxicity,violence,weapon,trained_general),
+        'category':category,
         'deterministic_grooming':bool(grooming),'deterministic_severe_abuse':bool(severe),
         'deterministic_self_harm':bool(self_harm),
         'deterministic_dangerous_challenge':bool(dangerous_challenge),
