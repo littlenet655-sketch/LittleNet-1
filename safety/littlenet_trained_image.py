@@ -175,6 +175,10 @@ def predict(image_path: str) -> dict[str, Any]:
     else:
         category = "IMAGE"
 
+    v2_release = str(v2_ckpt.get("release") or v2_ckpt.get("version") or v2_ckpt.get("best_epoch") or paths()[0].name)
+    v3_release = str(v3_ckpt.get("release") or v3_ckpt.get("version") or v3_ckpt.get("best_epoch") or paths()[1].name)
+    release = f"v2:{v2_release}|v3:{v3_release}"[:160]
+
     return {
         "adult_score": adult_score,
         "sexual_score": adult_score,
@@ -188,6 +192,7 @@ def predict(image_path: str) -> dict[str, Any]:
         "errors": [],
         "model_signals": {
             "littlenet_trained_image": {
+                "release": release,
                 "raw_probabilities": raw,
                 "thresholds": thresholds,
                 "triggered": triggered,
@@ -198,6 +203,7 @@ def predict(image_path: str) -> dict[str, Any]:
             }
         },
         "trained_image_ensemble": True,
+        "trained_image_release": release,
     }
 
 

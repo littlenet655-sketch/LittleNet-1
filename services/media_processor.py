@@ -144,11 +144,17 @@ def _merge_signals(text_signals: dict | None, media_signals: dict | None) -> dic
     if isinstance(m.get("model_signals"), dict):
         merged_models.update(m["model_signals"])
 
+    # Preserve the historical fusion exactly for legacy models. The only new
+    # policy channel is calibrated general risk from an explicitly enforced
+    # LittleNet trained-text result; shadow/off results never set this marker.
+    trained_text_general = float(t.get("general_score") or 0.0) if t.get("trained_text_model") is True else 0.0
+
     return {
         "adult_score": max(float(t.get("adult_score") or 0.0), float(m.get("adult_score") or 0.0)),
         "violence_score": max(float(t.get("violence_score") or 0.0), float(m.get("violence_score") or 0.0)),
         "weapon_score": max(float(t.get("weapon_score") or 0.0), float(m.get("weapon_score") or 0.0)),
         "toxicity_score": max(float(t.get("toxicity_score") or 0.0), float(m.get("toxicity_score") or 0.0)),
+        "general_score": trained_text_general,
         "risk_score": max(float(t.get("risk_score") or 0.0), float(m.get("risk_score") or 0.0)),
         "partial_safety_failure": bool(t.get("partial_safety_failure") or m.get("partial_safety_failure")),
         "total_safety_failure": bool(t.get("total_safety_failure") or m.get("total_safety_failure")),

@@ -55,6 +55,10 @@ web_image = (
             "LITTLENET_USE_MODAL_TEXT_CPU": "1",
             "LITTLENET_ALLOW_TEXT_GPU_FALLBACK": "0",
             "LITTLENET_IMAGE_MODERATION_MAX_PX": "1600",
+            # Mirror the AI-side rollout state only for cache partitioning. "off"
+            # preserves the exact current cache key until trained text is enforced.
+            "LITTLENET_TRAINED_TEXT_MODE": "off",
+            "LITTLENET_TRAINED_TEXT_RELEASE": "unstaged",
             # Bumped because the trained V2/V3 image ensemble changes image evidence.
             "LITTLENET_MODERATION_CACHE_VERSION": "2026-09-20-v2-trained-image",
             "LITTLENET_MODERATION_CACHE_TTL_DAYS": "30",
