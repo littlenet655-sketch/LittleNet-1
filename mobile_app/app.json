@@ -4,7 +4,6 @@
     "slug": "littlenet",
     "version": "1.0.1",
     "orientation": "portrait",
-    "scheme": "littlenet",
     "userInterfaceStyle": "light",
     "icon": "./assets/app_logo.png",
     "splash": {

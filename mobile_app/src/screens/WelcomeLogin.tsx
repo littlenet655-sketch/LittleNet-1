@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { login } from '../api/auth';
@@ -71,29 +71,41 @@ export function LoginScreen({ navigation }: AuthScreenProps<'Login'>) {
   const [showPassword, setShowPassword] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  /**
+   * Synchronous double-tap guard: the `busy` render state does not stop a
+   * rapid second tap dispatched before re-render. This ref check-and-sets
+   * synchronously at the top of submit().
+   */
+  const submitBusyRef = useRef(false);
 
   const currentSubtitle =
     MODES.find((m) => m.value === mode)?.subtitle ?? 'A safe, AI-guided social world for children';
 
   async function submit() {
-    if (!identifier.trim() || !password) {
-      setError('Enter your username/email and password.');
-      return;
-    }
-    setBusy(true);
-    setError('');
+    if (submitBusyRef.current) return;
+    submitBusyRef.current = true;
     try {
-      const response = await login(identifier.trim(), password, mode);
-      await signIn(response);
-    } catch (err) {
-      if (err instanceof ApiError && err.code === 'parent_verification_required') {
-        const pendingToken = typeof err.details.pending_token === 'string' ? err.details.pending_token : '';
-        navigation.navigate('OtpVerify', { pendingToken });
+      if (!identifier.trim() || !password) {
+        setError('Enter your username/email and password.');
         return;
       }
-      setError(errorText(err));
+      setBusy(true);
+      setError('');
+      try {
+        const response = await login(identifier.trim(), password, mode);
+        await signIn(response);
+      } catch (err) {
+        if (err instanceof ApiError && err.code === 'parent_verification_required') {
+          const pendingToken = typeof err.details.pending_token === 'string' ? err.details.pending_token : '';
+          navigation.navigate('OtpVerify', { pendingToken });
+          return;
+        }
+        setError(errorText(err));
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      submitBusyRef.current = false;
     }
   }
 

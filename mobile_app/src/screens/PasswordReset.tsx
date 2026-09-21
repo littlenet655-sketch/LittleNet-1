@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { KeyboardAvoidingView, Platform, ScrollView } from 'react-native';
 import { requestPasswordReset, resetPassword } from '../api/auth';
 import { validateResetInput } from '../auth/resetValidation';
@@ -10,31 +10,51 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'ForgotPass
   const [identifier, setIdentifier] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
+  /**
+   * Synchronous double-tap guard: the `busy` render state does not stop a
+   * rapid second tap dispatched before re-render. This ref check-and-sets
+   * synchronously at the top of submit().
+   */
+  const submitBusyRef = useRef(false);
 
   async function submit() {
-    if (!identifier.trim()) {
-      setError('Enter your username or email.');
-      return;
-    }
-    setBusy(true);
-    setError('');
+    if (submitBusyRef.current) return;
+    submitBusyRef.current = true;
     try {
-      const response = await requestPasswordReset(identifier.trim());
-      if (!response.ok) {
-        setError(response.message || 'Could not send a reset code. Try again.');
+      if (!identifier.trim()) {
+        setError('Enter your username or email.');
         return;
       }
-      navigation.navigate('ResetPassword', {
-        userId: response.user_id,
-        maskedEmail: response.masked_email,
-        message: response.is_parent_proxy
-          ? 'For safety, the code was sent to your verified parent email.'
-          : response.message,
-      });
-    } catch (err) {
-      setError(errorText(err));
+      setBusy(true);
+      setError('');
+      setInfo('');
+      try {
+        const response = await requestPasswordReset(identifier.trim());
+        if (!response.ok) {
+          setError(response.message || 'Could not send a reset code. Try again.');
+          return;
+        }
+        if (typeof response.user_id !== 'number' || !response.masked_email) {
+          // Anti-enumeration uniform response: the server does not say
+          // whether an account matched. Show the message and stay here.
+          setInfo(response.message || 'If an account exists, a reset code was sent.');
+          return;
+        }
+        navigation.navigate('ResetPassword', {
+          userId: response.user_id,
+          maskedEmail: response.masked_email,
+          message: response.is_parent_proxy
+            ? 'For safety, the code was sent to your verified parent email.'
+            : response.message,
+        });
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      submitBusyRef.current = false;
     }
   }
 
@@ -50,6 +70,7 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'ForgotPass
           <Card>
             <Field label="Username or email" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" value={identifier} onChangeText={setIdentifier} />
             {error ? <Notice message={error} /> : null}
+            {info ? <Notice tone="info" message={info} /> : null}
             <Button label={busy ? 'Sending…' : 'Send reset code'} onPress={submit} loading={busy} disabled={busy} />
           </Card>
         </ScrollView>
@@ -67,26 +88,38 @@ export function ResetPasswordScreen({ navigation, route }: AuthScreenProps<'Rese
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState('');
+  /**
+   * Synchronous double-tap guard: the `busy` render state does not stop a
+   * rapid second tap dispatched before re-render. This ref check-and-sets
+   * synchronously at the top of submit().
+   */
+  const submitBusyRef = useRef(false);
 
   async function submit() {
-    const problem = validateResetInput(code, password, confirm);
-    if (problem) {
-      setError(problem);
-      return;
-    }
-    setBusy(true);
-    setError('');
+    if (submitBusyRef.current) return;
+    submitBusyRef.current = true;
     try {
-      const response = await resetPassword(userId, code.trim(), password);
-      if (!response.ok) {
-        setError(response.message || 'Could not reset your password. Try again.');
+      const problem = validateResetInput(code, password, confirm);
+      if (problem) {
+        setError(problem);
         return;
       }
-      setDone(response.message);
-    } catch (err) {
-      setError(errorText(err));
+      setBusy(true);
+      setError('');
+      try {
+        const response = await resetPassword(userId, code.trim(), password);
+        if (!response.ok) {
+          setError(response.message || 'Could not reset your password. Try again.');
+          return;
+        }
+        setDone(response.message);
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      submitBusyRef.current = false;
     }
   }
 

@@ -112,11 +112,11 @@ describe('parentDeviceAuth bridge', () => {
     });
   });
 
-  it('maps user_cancel distinctly from other failures', async () => {
+  it('maps USER_CANCEL (real Kotlin casing) distinctly from other failures', async () => {
     installReactNativeStub({
       authenticateParentDevice: async () => ({
         success: false,
-        error: 'user_cancel',
+        error: 'USER_CANCEL',
         message: 'Dialog dismissed',
       }),
     });
@@ -128,15 +128,31 @@ describe('parentDeviceAuth bridge', () => {
     });
   });
 
-  it('maps not_enrolled, lockout, and failure error codes through', async () => {
-    for (const code of ['not_enrolled', 'lockout', 'failure'] as const) {
+  it('maps Kotlin NOT_ENROLLED, LOCKOUT, and FAILED onto the lowercase union', async () => {
+    for (const [native, expected] of [
+      ['NOT_ENROLLED', 'not_enrolled'],
+      ['LOCKOUT', 'lockout'],
+      ['FAILED', 'failure'],
+    ] as const) {
       installReactNativeStub({
-        authenticateParentDevice: async () => ({ success: false, error: code }),
+        authenticateParentDevice: async () => ({ success: false, error: native }),
       });
       const bridge = loadBridge();
       const result = await bridge.authenticateParentDevice();
       assert.equal(result.success, false);
-      assert.equal(result.error, code);
+      assert.equal(result.error, expected);
+    }
+  });
+
+  it('falls back to failure for unknown or empty native error codes', async () => {
+    for (const native of ['NO_ACTIVITY', 'SOMETHING_ELSE', '', undefined] as const) {
+      installReactNativeStub({
+        authenticateParentDevice: async () => ({ success: false, error: native }),
+      });
+      const bridge = loadBridge();
+      const result = await bridge.authenticateParentDevice();
+      assert.equal(result.success, false);
+      assert.equal(result.error, 'failure');
     }
   });
 

@@ -102,7 +102,8 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
     case 'invalid_credentials':
       return 'That username/email and password did not match. Try again.';
     case 'wrong_mode':
-      return 'This account belongs to a different login (Kids, Parent, or Admin). Switch the login type.';
+    case 'invalid_credentials_for_mode':
+      return 'Invalid credentials for this login mode. Check you are using the right login (Kids, Parent, or Admin).';
     case 'account_inactive':
       return 'This account is not active. Finish verification or ask your parent for help.';
     case 'account_not_found':

@@ -27,12 +27,18 @@ const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
  * stale or garbage string must fall back to 'KidsTabs' instead of resetting
  * to a nonexistent route. Typed against the real param list so a typo here
  * fails typecheck.
+ *
+ * SECURITY: only routes that take NO required params may be listed here.
+ * `navigation.reset` supplies no params, so a param-required route
+ * (Chat/ChatDetails need peerId, PostDetail/ProcessingStatus need postId,
+ * OtherProfile needs targetId) would crash or soft-lock on load when reached
+ * via a tampered pending-destination value.
  */
 const KNOWN_QUIZ_DESTINATIONS: ReadonlySet<keyof ChildStackParamList> = new Set([
   'FaceEnroll', 'Quiz', 'KidsTabs', 'FeedTab', 'DiscoverTab', 'CreateTab', 'ReelsTab',
-  'ProfileTab', 'Stories', 'NotificationsTab', 'Conversations', 'Chat', 'ChatDetails',
-  'NewMessage', 'SavedContent', 'EditProfile', 'Connections', 'PostDetail',
-  'SafetyCentre', 'ReportHistory', 'OtherProfile', 'ProcessingStatus',
+  'ProfileTab', 'Stories', 'NotificationsTab', 'Conversations',
+  'NewMessage', 'SavedContent', 'EditProfile', 'Connections',
+  'SafetyCentre', 'ReportHistory',
 ]);
 
 /** Resolve a stored pending destination to a real route, else 'KidsTabs'. */

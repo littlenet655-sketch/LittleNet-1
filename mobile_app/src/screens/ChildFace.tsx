@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Image, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { enrollChildFace, faceLogin, requestFaceChallenge, skipChildFaceEnroll, type FaceChallengeResponse } from '../api/auth';
@@ -66,21 +66,33 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
   const [challenge, setChallenge] = useState<FaceChallengeResponse | null>(null);
+  /**
+   * Synchronous double-tap guard: the `busy` render state does not stop a
+   * rapid second tap dispatched before re-render. This ref check-and-sets
+   * synchronously at the top of startChallenge().
+   */
+  const challengeBusyRef = useRef(false);
 
   async function startChallenge() {
-    const trimmed = identifier.trim();
-    if (!trimmed) {
-      setError(new Error('Enter the child username or email first.'));
-      return;
-    }
-    setBusy(true);
-    setError(null);
+    if (challengeBusyRef.current) return;
+    challengeBusyRef.current = true;
     try {
-      setChallenge(await requestFaceChallenge(trimmed, mode));
-    } catch (err) {
-      setError(err);
+      const trimmed = identifier.trim();
+      if (!trimmed) {
+        setError(new Error('Enter the child username or email first.'));
+        return;
+      }
+      setBusy(true);
+      setError(null);
+      try {
+        setChallenge(await requestFaceChallenge(trimmed, mode));
+      } catch (err) {
+        setError(err);
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      challengeBusyRef.current = false;
     }
   }
 

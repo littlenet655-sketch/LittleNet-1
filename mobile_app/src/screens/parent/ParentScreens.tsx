@@ -135,7 +135,11 @@ function ChildCard({
   onActivity?: () => void;
 }) {
   const limit = child.limit?.daily_limit_minutes;
-  const usageRatio = limit ? Math.min(child.minutes_today / limit, 1) : 0;
+  // Guard: a malformed minutes_today (NaN/undefined from the server) would
+  // produce a NaN ratio and a broken "NaN%" gauge width. Coerce to 0.
+  const usageRatio = limit && Number.isFinite(child.minutes_today / limit)
+    ? Math.min(child.minutes_today / limit, 1)
+    : 0;
   const isOnline = Boolean(child.presence?.online);
   const hasReviews = (child.open_reviews || 0) > 0;
   const isLocked = Boolean(child.limit?.strict_mode && limit && child.minutes_today >= limit);
@@ -810,7 +814,10 @@ export function ParentChildSummaryScreen({ navigation, route }: ParentScreenProp
   if (!child) return <Screen><EmptyState title="Child unavailable" body="This child is not linked to your active parent account." /></Screen>;
 
   const limitMinutes = child.limit?.daily_limit_minutes ?? 60;
-  const usageRatio = Math.min(child.minutes_today / Math.max(limitMinutes, 1), 1);
+  // Guard: malformed minutes_today would produce a NaN ratio and a broken
+  // "NaN%" gauge width. Coerce to 0.
+  const rawUsageRatio = Math.min(child.minutes_today / Math.max(limitMinutes, 1), 1);
+  const usageRatio = Number.isFinite(rawUsageRatio) ? rawUsageRatio : 0;
   const isOnline = Boolean(child.presence?.online);
 
   return (
@@ -1405,7 +1412,10 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
 
   const valid = Number.isInteger(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 1440;
   const limit = Number(minutes);
-  const usage = Math.min(child.minutes_today / Math.max(limit, 1), 1);
+  // Guard: malformed minutes_today would produce a NaN ratio and a broken
+  // "NaN%" gauge width. Coerce to 0.
+  const rawUsage = Math.min(child.minutes_today / Math.max(limit, 1), 1);
+  const usage = Number.isFinite(rawUsage) ? rawUsage : 0;
   const isLimitReached = Boolean(child.limit?.strict_mode && child.minutes_today >= limit);
   const presets = ['30', '45', '60', '90', '120'];
 

@@ -89,6 +89,41 @@ function freshGate(): void {
   gate.__resetParentGate();
 }
 
+/**
+ * Load the gate against the REAL bridge module (src/deviceAuth/parentDeviceAuth)
+ * instead of the bridge mock, with a native-module stub that uses the real
+ * Kotlin error casings ("USER_CANCEL", ...). This proves the full
+ * native→bridge→gate path: the Kotlin module settles uppercase codes, the
+ * bridge normalizes them onto the lowercase ParentAuthErrorCode union, and
+ * the gate recognizes the cancellation. The bridge mock above stands in for
+ * bridge output (already lowercase), so it cannot exercise this path.
+ */
+function freshGateWithRealBridge(nativeModule: unknown): void {
+  appStateListeners = [];
+  const rnStub = {
+    NativeModules: { ParentDeviceAuth: nativeModule },
+    Platform: { OS: 'android' },
+    AppState: {
+      addEventListener: (_event: string, handler: (status: string) => void) => {
+        appStateListeners.push(handler);
+        return {
+          remove: () => {
+            appStateListeners = appStateListeners.filter((h) => h !== handler);
+          },
+        };
+      },
+    },
+  };
+  NodeModule._load = function (request: string, parent: unknown, isMain: unknown): unknown {
+    if (request === 'react-native') return rnStub;
+    return originalLoad.call(this, request, parent, isMain);
+  };
+  const bridgePath: string = require.resolve('../src/deviceAuth/parentDeviceAuth');
+  delete require.cache[bridgePath];
+  gate = loadGate();
+  gate.__resetParentGate();
+}
+
 beforeEach(() => {
   NodeModule._load = originalLoad;
 });
@@ -185,13 +220,23 @@ describe('parentAuthGate authorization window', () => {
     assert.equal(gate.isParentAuthorized(), false);
   });
 
-  it('surfaces user cancellation distinctly from failure', async () => {
-    freshGate();
-    bridge.authenticateParentDevice = async () => {
-      bridge.calls.authenticate++;
-      return { success: false, error: 'user_cancel' };
-    };
+  it('surfaces user cancellation distinctly from failure (real Kotlin casing end-to-end)', async () => {
+    let authenticateCalls = 0;
+    freshGateWithRealBridge({
+      checkParentDeviceAuth: async () => ({
+        biometricAvailable: true,
+        biometricEnrolled: true,
+        deviceCredentialAvailable: true,
+        canAuthenticate: true,
+      }),
+      authenticateParentDevice: async () => {
+        authenticateCalls++;
+        // Real Kotlin casing: ParentDeviceAuthModule settles "USER_CANCEL".
+        return { success: false, error: 'USER_CANCEL', message: 'Dialog dismissed' };
+      },
+    });
     assert.deepStrictEqual(await gate.requireParentAuth(), { ok: false, reason: 'cancelled' });
+    assert.equal(authenticateCalls, 1);
     assert.equal(gate.isParentAuthorized(), false);
   });
 

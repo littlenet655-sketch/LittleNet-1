@@ -161,8 +161,14 @@ export function NewMessageScreen({ navigation }: ChildScreenProps<'NewMessage'>)
 }
 
 export function ChatDetailsScreen({ route, navigation }: ChildScreenProps<'ChatDetails'>) {
-  const { session } = useAuth(); const peerId = route.params.peerId; const [muted, setMuted] = useState(false); const [message, setMessage] = useState('');
+  const { session } = useAuth();
+  const peerId = Number((route.params as { peerId?: number } | undefined)?.peerId ?? 0);
+  const [muted, setMuted] = useState(false); const [message, setMessage] = useState('');
   const act = (fn: (token: string) => Promise<unknown>, done: string, nextMuted?: boolean) => { if (!session) return; fn(session.token).then(() => { setMessage(done); if (nextMuted !== undefined) setMuted(nextMuted); }).catch(() => setMessage('That safety action could not be completed.')); };
+  // Missing/invalid param (e.g. deep-link tampering): the old code did
+  // `route.params.peerId`, which hard-crashes when params are undefined.
+  // Show a recoverable state instead of crashing or hanging.
+  if (!peerId) return <Screen><EmptyState title="Chat unavailable" body="We couldn't open these chat details because they are missing their details. Go back and choose the conversation again." /><Button label="Back" variant="secondary" onPress={() => navigation.goBack()} /></Screen>;
   return <Screen><ScrollView><Text style={styles.heading}>Chat details</Text><Card><Text style={styles.sub}>Your conversation is private and protected by LittleNet safety checks.</Text><Button label="Open chat" onPress={() => navigation.navigate('Chat', { peerId })} /></Card><Card><Text style={styles.section}>Safety controls</Text><Button label={muted ? 'Unmute friend' : 'Mute notifications'} variant="secondary" onPress={() => act((t) => muteUser(t, peerId, muted ? 'UNMUTE' : 'MUTE'), muted ? 'Notifications on.' : 'Notifications muted.', !muted)} /><Button label="Block friend" variant="secondary" onPress={() => act((t) => blockUser(t, peerId, 'BLOCK'), 'Friend blocked.')} /><Button label="Report conversation" variant="secondary" onPress={() => act((t) => submitReport(t, 'USER', peerId, 'Unsafe behavior'), 'Report sent for safety review.')} />{message ? <Notice tone="info" message={message} /> : null}</Card></ScrollView></Screen>;
 }
 

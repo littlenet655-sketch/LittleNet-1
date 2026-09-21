@@ -1,9 +1,9 @@
-import { useEffect, useState } from 'react';
-import { FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, Image, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useQuery } from '@tanstack/react-query';
-import { searchDiscover, type KidSummary } from '../../api/kidsProfiles';
-import { toggleFollow } from '../../api/kidsSocial';
+import { searchDiscover, type CuratedSearchItem, type KidSummary } from '../../api/kidsProfiles';
+import { toggleFollow, type PostDetail } from '../../api/kidsSocial';
 import { useAuth } from '../../auth/AuthProvider';
 import type { ChildScreenProps } from '../../navigation/types';
 import { queryClient, useIsOnline } from '../../query/client';
@@ -14,6 +14,103 @@ import { ApiError } from '../../api/client';
 import { useDebouncedSearch } from '../../kids/useSearch';
 import { colors } from '../../ui/tokens';
 
+/**
+ * Memoized discover rows: typing in the search box re-renders the screen on
+ * every keystroke; these keep already-rendered rows from re-rendering unless
+ * their own data changes.
+ */
+const PersonRow = memo(function PersonRow({
+  kid,
+  busy,
+  onFollow,
+  onOpenProfile,
+}: {
+  kid: KidSummary;
+  busy: boolean;
+  onFollow: (kid: KidSummary) => void;
+  onOpenProfile: (userId: number) => void;
+}) {
+  const displayName = kid.full_name || kid.username;
+  const statusLabel = busy ? '…' : kid.is_following ? 'Following' : kid.is_pending ? 'Requested' : 'Connect';
+  return (
+    <Pressable
+      style={styles.personCard}
+      onPress={() => onOpenProfile(kid.user_id)}
+    >
+      <Avatar uri={kid.avatar_url} name={displayName} size={48} />
+      <View style={styles.personMeta}>
+        <Text style={styles.personName} numberOfLines={1}>
+          {displayName}
+        </Text>
+        <Text style={styles.personSub} numberOfLines={1}>
+          @{kid.username || 'friend'}
+        </Text>
+      </View>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={kid.is_following || kid.is_pending ? `Unfollow ${displayName}` : `Follow ${displayName}`}
+        disabled={busy}
+        hitSlop={6}
+        onPress={(e) => {
+          e.stopPropagation();
+          onFollow(kid);
+        }}
+        style={[styles.personActionBtn, (kid.is_following || kid.is_pending) && styles.personActionBtnMuted]}
+      >
+        <Text style={[styles.personActionText, (kid.is_following || kid.is_pending) && styles.personActionTextMuted]}>
+          {statusLabel}
+        </Text>
+      </Pressable>
+    </Pressable>
+  );
+}, (prev, next) => prev.kid === next.kid && prev.busy === next.busy);
+
+const ExploreGridCell = memo(function ExploreGridCell({
+  post,
+  onOpenPost,
+}: {
+  post: PostDetail;
+  onOpenPost: (postId: number) => void;
+}) {
+  const hasVideo = post.media_type?.toUpperCase() === 'VIDEO' || post.is_reel;
+  const imgUri = hasVideo ? post.poster_url || post.media_url : post.media_url;
+  return (
+    <Pressable
+      style={styles.gridItem}
+      onPress={() => onOpenPost(post.post_id)}
+    >
+      {imgUri ? (
+        <Image source={{ uri: imgUri }} style={styles.gridThumb} resizeMode="cover" fadeDuration={0} />
+      ) : (
+        <View style={styles.gridPlaceholder}>
+          <Feather name={hasVideo ? 'film' : 'file-text'} size={24} color="#94A3B8" />
+        </View>
+      )}
+      {hasVideo ? (
+        <View style={styles.videoBadge}>
+          <Feather name="play" size={11} color="#FFFFFF" />
+        </View>
+      ) : null}
+    </Pressable>
+  );
+}, (prev, next) => prev.post === next.post);
+
+const CuratedRowCard = memo(function CuratedRowCard({ item }: { item: CuratedSearchItem }) {
+  const imgUri = item.poster_url || item.media_url;
+  return (
+    <View style={styles.curatedCard}>
+      {imgUri ? (
+        <Image source={{ uri: imgUri }} style={styles.curatedThumb} resizeMode="cover" fadeDuration={0} />
+      ) : (
+        <View style={styles.curatedPlaceholder}>
+          <Feather name="book-open" size={24} color="#94A3B8" />
+        </View>
+      )}
+      <Text style={styles.curatedCaption} numberOfLines={2}>{item.title || item.caption || 'Learning pick'}</Text>
+    </View>
+  );
+}, (prev, next) => prev.item === next.item);
+
 export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const { session } = useAuth();
   const online = useIsOnline();
@@ -23,7 +120,8 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const [followBusy, setFollowBusy] = useState<number | null>(null);
   const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
   const token = session?.token ?? 'signed-out';
-  const queryKey = [...kidsKeys.discover(debounced), token];
+  // Memoized: a fresh array identity every render would churn the query key.
+  const queryKey = useMemo(() => [...kidsKeys.discover(debounced), token], [debounced, token]);
 
   const query = useQuery({
     queryKey,
@@ -47,7 +145,7 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   }, [query.data, debounced]);
 
   /** Follow/unfollow toggle with optimistic label and authoritative rollback. */
-  async function onFollowKid(kid: KidSummary) {
+  const onFollowKid = useCallback(async (kid: KidSummary) => {
     if (!session || followBusy) return;
     setFollowBusy(kid.user_id);
     const wasActive = Boolean(kid.is_following || kid.is_pending);
@@ -72,17 +170,52 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
       setFollowBusy(null);
       await queryClient.invalidateQueries({ queryKey: kidsKeys.discover(debounced) });
     }
-  }
+  }, [session, followBusy, queryKey, debounced]);
+
+  // Stable navigation callbacks for the memoized rows.
+  const openProfile = useCallback((userId: number) => nav.navigate('OtherProfile', { targetId: userId }), [nav]);
+  const openPost = useCallback((postId: number) => nav.navigate('PostDetail', { postId }), [nav]);
+
+  const filteredPosts = useMemo(() => posts.filter((p) => {
+    if (kind === 'Learn') return String(p.content_category ?? '').toLowerCase().includes('learn');
+    if (kind === 'Reels') return Boolean(p.is_reel);
+    return true;
+  }), [posts, kind]);
+
+  const renderPerson = useCallback(({ item }: { item: KidSummary }) => (
+    <PersonRow
+      kid={item}
+      busy={followBusy === item.user_id}
+      onFollow={(k) => void onFollowKid(k)}
+      onOpenProfile={openProfile}
+    />
+  ), [followBusy, onFollowKid, openProfile]);
+
+  const renderGridCell = useCallback(({ item }: { item: PostDetail }) => (
+    <ExploreGridCell post={item} onOpenPost={openPost} />
+  ), [openPost]);
+
+  const renderCurated = useCallback(({ item }: { item: CuratedSearchItem }) => (
+    <CuratedRowCard item={item} />
+  ), []);
+
+  // 3-column explore grid: container padding 2 on each side, 2pt column gaps,
+  // 2pt paddingBottom per row wrapper — exact cell math for getItemLayout so
+  // the list can jump/scroll without measuring every row.
+  const { width: windowWidth } = useWindowDimensions();
+  const gridCell = (windowWidth - 8) / 3;
+  const gridRowHeight = gridCell + 2;
+  const gridItemLayout = useCallback(
+    (_data: ArrayLike<PostDetail> | null | undefined, index: number) => {
+      const row = Math.floor(index / 3);
+      return { length: gridRowHeight, offset: row * gridRowHeight, index };
+    },
+    [gridRowHeight],
+  );
 
   if (error instanceof ApiError && error.code === 'disabled_by_parent') {
     return <DisabledFeature feature="Discover" />;
   }
-
-  const filteredPosts = posts.filter((p) => {
-    if (kind === 'Learn') return String(p.content_category ?? '').toLowerCase().includes('learn');
-    if (kind === 'Reels') return Boolean(p.is_reel);
-    return true;
-  });
 
   return (
     <View style={styles.container}>
@@ -180,42 +313,12 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           keyExtractor={(k) => `kid:${k.user_id}`}
           contentContainerStyle={styles.peopleList}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item }) => {
-            const displayName = item.full_name || item.username;
-            const busy = followBusy === item.user_id;
-            const statusLabel = busy ? '…' : item.is_following ? 'Following' : item.is_pending ? 'Requested' : 'Connect';
-            return (
-              <Pressable
-                style={styles.personCard}
-                onPress={() => nav.navigate('OtherProfile', { targetId: item.user_id })}
-              >
-                <Avatar uri={item.avatar_url} name={displayName} size={48} />
-                <View style={styles.personMeta}>
-                  <Text style={styles.personName} numberOfLines={1}>
-                    {displayName}
-                  </Text>
-                  <Text style={styles.personSub} numberOfLines={1}>
-                    @{item.username || 'friend'}
-                  </Text>
-                </View>
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={item.is_following || item.is_pending ? `Unfollow ${displayName}` : `Follow ${displayName}`}
-                  disabled={busy}
-                  hitSlop={6}
-                  onPress={(e) => {
-                    e.stopPropagation();
-                    void onFollowKid(item);
-                  }}
-                  style={[styles.personActionBtn, (item.is_following || item.is_pending) && styles.personActionBtnMuted]}
-                >
-                  <Text style={[styles.personActionText, (item.is_following || item.is_pending) && styles.personActionTextMuted]}>
-                    {statusLabel}
-                  </Text>
-                </Pressable>
-              </Pressable>
-            );
-          }}
+          windowSize={5}
+          maxToRenderPerBatch={10}
+          initialNumToRender={10}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews
+          renderItem={renderPerson}
         />
       ) : null}
 
@@ -229,21 +332,11 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
             keyExtractor={(c) => `curated:${c.source_id}`}
             contentContainerStyle={styles.curatedRow}
             showsHorizontalScrollIndicator={false}
-            renderItem={({ item: c }) => {
-              const imgUri = c.poster_url || c.media_url;
-              return (
-                <View style={styles.curatedCard}>
-                  {imgUri ? (
-                    <Image source={{ uri: imgUri }} style={styles.curatedThumb} resizeMode="cover" />
-                  ) : (
-                    <View style={styles.curatedPlaceholder}>
-                      <Feather name="book-open" size={24} color="#94A3B8" />
-                    </View>
-                  )}
-                  <Text style={styles.curatedCaption} numberOfLines={2}>{c.title || c.caption || 'Learning pick'}</Text>
-                </View>
-              );
-            }}
+            windowSize={3}
+            initialNumToRender={4}
+            maxToRenderPerBatch={4}
+            removeClippedSubviews
+            renderItem={renderCurated}
           />
         </View>
       ) : null}
@@ -257,29 +350,13 @@ export function DiscoverScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
           contentContainerStyle={styles.gridContainer}
           columnWrapperStyle={styles.gridRow}
           showsVerticalScrollIndicator={false}
-          renderItem={({ item: p }) => {
-            const hasVideo = p.media_type?.toUpperCase() === 'VIDEO' || p.is_reel;
-            const imgUri = hasVideo ? p.poster_url || p.media_url : p.media_url;
-            return (
-              <Pressable
-                style={styles.gridItem}
-                onPress={() => nav.navigate('PostDetail', { postId: p.post_id })}
-              >
-                {imgUri ? (
-                  <Image source={{ uri: imgUri }} style={styles.gridThumb} resizeMode="cover" />
-                ) : (
-                  <View style={styles.gridPlaceholder}>
-                    <Feather name={hasVideo ? 'film' : 'file-text'} size={24} color="#94A3B8" />
-                  </View>
-                )}
-                {hasVideo ? (
-                  <View style={styles.videoBadge}>
-                    <Feather name="play" size={11} color="#FFFFFF" />
-                  </View>
-                ) : null}
-              </Pressable>
-            );
-          }}
+          windowSize={5}
+          initialNumToRender={12}
+          maxToRenderPerBatch={9}
+          updateCellsBatchingPeriod={50}
+          removeClippedSubviews
+          getItemLayout={gridItemLayout}
+          renderItem={renderGridCell}
         />
       ) : null}
     </View>

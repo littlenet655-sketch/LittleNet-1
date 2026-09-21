@@ -7,7 +7,7 @@ import { VideoMedia } from '../../kids/VideoMedia';
 import type { ChildScreenProps } from '../../navigation/types';
 import { invalidateSocialCaches } from '../../query/keys';
 import { Avatar } from '../../ui/social';
-import { Button, Card, Field, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
+import { Button, Card, EmptyState, Field, GateNotice, LoadingState, Notice, Screen } from '../../ui/components';
 import { colors } from '../../ui/tokens';
 
 export function PostDetailScreen({ route, navigation }: ChildScreenProps<'PostDetail'>) {
@@ -45,6 +45,19 @@ export function PostDetailScreen({ route, navigation }: ChildScreenProps<'PostDe
   }
 
   useEffect(() => { void load(); }, [session?.token, postId]);
+  // Missing/invalid param (e.g. deep-link tampering): never hang on the
+  // loading spinner — show a recoverable state with a way back.
+  if (!postId) {
+    return (
+      <Screen>
+        <EmptyState
+          title="Post unavailable"
+          body="We couldn't open this post because it is missing its details. Go back and choose it again."
+        />
+        <Button label="Back" variant="secondary" onPress={() => nav.goBack()} />
+      </Screen>
+    );
+  }
   if (!post) return <Screen><LoadingState message="Loading post…" /></Screen>;
   if (hidden) return <Screen><Notice tone="ok" message="This post is hidden on this device." /><Button label="Back to post" variant="secondary" onPress={() => setHidden(false)} /></Screen>;
 

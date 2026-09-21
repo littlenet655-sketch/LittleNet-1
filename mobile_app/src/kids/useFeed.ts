@@ -13,12 +13,21 @@ export function useFeed(kind: 'feed' | 'reels', limit = 10, mode: 'for_you' | 'f
     queryKey: [...(kind === 'feed' ? [...kidsKeys.feed, mode] : kidsKeys.reels), session?.token ?? 'signed-out'],
     enabled: Boolean(session),
     initialPageParam: { cursor: 0 },
-    queryFn: ({ pageParam, signal }) => {
+    queryFn: async ({ pageParam, signal }): Promise<FeedPage> => {
       if (!session) throw new Error('Sign in required.');
-      if (kind === 'feed') {
-        return fetchFeedV2(session.token, pageParam.cursor, limit, pageParam.sessionId, mode, signal);
+      // The fetch helpers are typed FeedPage, but the runtime payload is
+      // server JSON: treat it as unknown and coerce before caching.
+      const raw: unknown = kind === 'feed'
+        ? await fetchFeedV2(session.token, pageParam.cursor, limit, pageParam.sessionId, mode, signal)
+        : await fetchReelsV2(session.token, pageParam.cursor, limit, pageParam.sessionId, signal);
+      // Coerce a malformed payload (null, non-object, or non-array `items`)
+      // to an empty page HERE in queryFn: getNextPageParam reads
+      // `last.has_more`, so a malformed page cached raw would crash
+      // pagination as well as render.
+      if (!raw || typeof raw !== 'object' || !Array.isArray((raw as { items?: unknown }).items)) {
+        return { ok: true, items: [], next_cursor: 0, has_more: false, session_id: '' };
       }
-      return fetchReelsV2(session.token, pageParam.cursor, limit, pageParam.sessionId, signal);
+      return raw as FeedPage;
     },
     getNextPageParam: (last) => last.has_more
       ? { cursor: last.next_cursor, sessionId: last.session_id || undefined }
@@ -26,7 +35,10 @@ export function useFeed(kind: 'feed' | 'reels', limit = 10, mode: 'for_you' | 'f
   });
 
   return {
-    items: mergeFeedPages(query.data?.pages.map((page) => page.items) ?? []),
+    // Belt-and-braces: queryFn already coerces malformed pages, but a page
+    // cached by an older client build could still be malformed. Coerce again
+    // here so downstream dedupe/render only ever sees arrays.
+    items: mergeFeedPages((query.data?.pages ?? []).map((p) => (p && Array.isArray(p.items) ? p.items : []))),
     sessionId: query.data?.pages[0]?.session_id,
     loading: query.isPending,
     loadingMore: query.isFetchingNextPage,

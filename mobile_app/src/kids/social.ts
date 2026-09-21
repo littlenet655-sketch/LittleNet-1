@@ -12,11 +12,14 @@ export function feedKey(item: KeyedItem): string {
   return `${t}:${id}`;
 }
 
-/** Deduplicate by authoritative post identity, preserving first order. */
+/** Deduplicate by authoritative post identity, preserving first order.
+ * Skips null/non-object entries defensively: malformed server payloads used
+ * to crash render here (`item.source_type` on null/undefined). */
 export function dedupeFeed<T extends KeyedItem>(items: T[]): T[] {
   const seen = new Set<string>();
   const out: T[] = [];
   for (const item of items) {
+    if (!item || typeof item !== 'object') continue;
     const key = feedKey(item);
     if (seen.has(key)) continue;
     seen.add(key);

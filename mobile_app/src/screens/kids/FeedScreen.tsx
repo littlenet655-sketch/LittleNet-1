@@ -1,5 +1,5 @@
 import { FlatList, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ViewToken } from 'react-native';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIsFocused } from '@react-navigation/native';
 import { Feather } from '@expo/vector-icons';
 import { ApiError } from '../../api/client';
@@ -118,13 +118,100 @@ function StoriesTray({
   );
 }
 
+type FeedTab = 'For You' | 'Friends' | 'Learn';
+
+/**
+ * Memoized list header: the feed re-renders on every scroll tick (viewability)
+ * and every optimistic like/save, but the header subtree (stories tray, tabs)
+ * only re-renders when its own inputs change.
+ */
+const FeedListHeader = memo(function FeedListHeader({
+  token,
+  myId,
+  myName,
+  tab,
+  onTabChange,
+  onOpenStories,
+  online,
+  error,
+}: {
+  token?: string;
+  myId?: number;
+  myName?: string;
+  tab: FeedTab;
+  onTabChange: (tab: FeedTab) => void;
+  onOpenStories: () => void;
+  online: boolean;
+  error: unknown;
+}) {
+  return (
+    <>
+      <BrandHeader title="LittleNet" subtitle="Kind posts from friends." />
+      <StoriesTray token={token} myId={myId} myName={myName} onOpen={onOpenStories} />
+      <View style={styles.tabs}>
+        {(['For You', 'Friends', 'Learn'] as const).map((item) => (
+          <Pressable
+            key={item}
+            onPress={() => onTabChange(item)}
+            style={styles.tabHit}
+            accessibilityRole="tab"
+            accessibilityState={{ selected: tab === item }}
+          >
+            <Text style={[styles.tabLabel, tab === item && styles.tabLabelActive]}>{item}</Text>
+            <View style={[styles.tabIndicator, tab === item && styles.tabIndicatorActive]} />
+          </Pressable>
+        ))}
+      </View>
+      <OfflineBanner online={online} />
+      {error ? <GateNotice error={error} /> : null}
+    </>
+  );
+});
+
+/**
+ * Memoized feed row: parent renders on every viewability tick and every
+ * optimistic cache update re-rendered ALL PostCards before; now a row only
+ * re-renders when its item identity, its own video-active flag, or the tab
+ * (which controls the Not Interested affordance) changes.
+ */
+const FeedRow = memo(function FeedRow({
+  item,
+  videoActive,
+  tab,
+  nav,
+  onNotInterestedItem,
+}: {
+  item: FeedItem;
+  videoActive: boolean;
+  tab: FeedTab;
+  nav: { navigate: (r: string, p: object) => void };
+  onNotInterestedItem: (sourceType: 'SOCIAL' | 'CURATED', sourceId: number) => void;
+}) {
+  const post = socialPostTarget(item);
+  const profile = socialProfileTarget(item);
+  return (
+    <PostCard
+      item={item}
+      onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}
+      onProfile={profile ? () => nav.navigate('OtherProfile', profile) : undefined}
+      onNotInterested={tab === 'Friends' ? undefined : () => onNotInterestedItem(item.source_type, item.source_id)}
+      inlineVideoPlayback
+      videoActive={videoActive}
+    />
+  );
+}, (prev, next) =>
+  prev.item === next.item &&
+  prev.videoActive === next.videoActive &&
+  prev.tab === next.tab,
+);
+
 export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const online = useIsOnline();
   const focused = useIsFocused();
   const foreground = useIsForeground();
   const { session } = useAuth();
   const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
-  const [tab, setTab] = useState<'For You' | 'Friends' | 'Learn'>('For You');
+  const [tab, setTab] = useState<FeedTab>('For You');
   const [hiddenKeys, setHiddenKeys] = useState<Set<string>>(new Set());
   const [activeVideoKey, setActiveVideoKey] = useState<string | null>(null);
   const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 60, minimumViewTime: 250 }).current;
@@ -139,7 +226,21 @@ export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const feedMode = tab === 'Friends' ? 'friends' : tab === 'Learn' ? 'learn' : 'for_you';
   const feed = useFeed('feed', 10, feedMode);
 
-  async function notInterested(sourceType: 'SOCIAL' | 'CURATED', sourceId: number) {
+  // Stable: the memoized header/rows must not see a new callback identity per render.
+  const onTabChange = useCallback((next: FeedTab) => {
+    setActiveVideoKey(null);
+    setTab(next);
+  }, []);
+  const onOpenStories = useCallback(() => nav.navigate('Stories', {}), [nav]);
+
+  // Memoized so FlatList doesn't get a new data array (forcing a full re-diff)
+  // on every parent render — e.g. every viewability tick.
+  const visibleItems = useMemo(
+    () => feed.items.filter((it) => !hiddenKeys.has(feedKey(it))),
+    [feed.items, hiddenKeys],
+  );
+
+  const notInterested = useCallback(async (sourceType: 'SOCIAL' | 'CURATED', sourceId: number) => {
     if (!session) return;
     const key = `${sourceType}:${sourceId}`;
     setHiddenKeys((current) => {
@@ -160,7 +261,33 @@ export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         return next;
       });
     }
-  }
+  }, [session]);
+
+  const listHeader = useMemo(() => (
+    <FeedListHeader
+      token={session?.token}
+      myId={session?.user.user_id}
+      myName={session?.user.full_name}
+      tab={tab}
+      onTabChange={onTabChange}
+      onOpenStories={onOpenStories}
+      online={online}
+      error={feed.error}
+    />
+  ), [session?.token, session?.user.user_id, session?.user.full_name, tab, onTabChange, onOpenStories, online, feed.error]);
+
+  const renderFeedItem = useCallback(({ item }: { item: FeedItem }) => {
+    const key = feedKey(item);
+    return (
+      <FeedRow
+        item={item}
+        videoActive={focused && foreground && activeVideoKey === key}
+        tab={tab}
+        nav={nav}
+        onNotInterestedItem={notInterested}
+      />
+    );
+  }, [focused, foreground, activeVideoKey, tab, nav, notInterested]);
 
   if (feed.loading) return <Screen><BrandHeader title="LittleNet" /><Skeleton lines={5} /><LoadingState message="Loading your feed…" /></Screen>;
   if (feed.error instanceof ApiError && feed.error.code === 'disabled_by_parent') return <Screen><DisabledFeature feature="Feed" /></Screen>;
@@ -169,35 +296,12 @@ export function FeedScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   return (
     <Screen>
       <FlatList
-        data={feed.items.filter((it) => !hiddenKeys.has(feedKey(it)))}
+        data={visibleItems}
         keyExtractor={(it) => feedKey(it)}
         refreshControl={<RefreshControl refreshing={feed.refreshing} onRefresh={feed.refresh} />}
-        ListHeaderComponent={<><BrandHeader title="LittleNet" subtitle="Kind posts from friends." /><StoriesTray token={session?.token} myId={session?.user.user_id} myName={session?.user.full_name} onOpen={() => nav.navigate('Stories', {})} /><View style={styles.tabs}>{(['For You', 'Friends', 'Learn'] as const).map((item) => (
-          <Pressable
-            key={item}
-            onPress={() => { setActiveVideoKey(null); setTab(item); }}
-            style={styles.tabHit}
-            accessibilityRole="tab"
-            accessibilityState={{ selected: tab === item }}
-          >
-            <Text style={[styles.tabLabel, tab === item && styles.tabLabelActive]}>{item}</Text>
-            <View style={[styles.tabIndicator, tab === item && styles.tabIndicatorActive]} />
-          </Pressable>
-        ))}</View><OfflineBanner online={online} />{feed.error ? <GateNotice error={feed.error} /> : null}</>}
+        ListHeaderComponent={listHeader}
         ListEmptyComponent={<EmptyState title="Nothing here yet" body="When friends share kind posts, they will appear here." />}
-        renderItem={({ item }) => {
-          const post = socialPostTarget(item);
-          const profile = socialProfileTarget(item);
-          const key = feedKey(item);
-          return <PostCard
-            item={item}
-            onOpen={post ? () => nav.navigate('PostDetail', post) : undefined}
-            onProfile={profile ? () => nav.navigate('OtherProfile', profile) : undefined}
-            onNotInterested={tab === 'Friends' ? undefined : () => void notInterested(item.source_type, item.source_id)}
-            inlineVideoPlayback
-            videoActive={focused && foreground && activeVideoKey === key}
-          />;
-        }}
+        renderItem={renderFeedItem}
         onViewableItemsChanged={onViewableItemsChanged}
         viewabilityConfig={viewabilityConfig}
         windowSize={5}

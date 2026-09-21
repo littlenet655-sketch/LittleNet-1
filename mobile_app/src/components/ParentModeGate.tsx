@@ -88,7 +88,9 @@ export function ParentModeGate({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     mounted.current = true;
-    installParentGateInvalidation();
+    // installParentGateInvalidation returns an AppState-subscription cleanup;
+    // the old code discarded it, leaking one subscription per mount.
+    const uninstallGateInvalidation = installParentGateInvalidation();
     void runAuth();
     const sub = AppState.addEventListener('change', (next) => {
       // Re-check when returning to the foreground: backgrounding
@@ -98,6 +100,7 @@ export function ParentModeGate({ children }: { children: ReactNode }) {
     return () => {
       mounted.current = false;
       sub.remove();
+      uninstallGateInvalidation();
     };
   }, [runAuth]);
 

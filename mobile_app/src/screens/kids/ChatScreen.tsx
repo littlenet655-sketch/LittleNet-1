@@ -167,6 +167,19 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [session?.token, peerId, postId]);
 
+  // Missing/invalid param (e.g. deep-link tampering): never hang on the
+  // loading spinner — show a recoverable state with a way back.
+  if (!peerId) {
+    return (
+      <Screen>
+        <EmptyState
+          title="Chat unavailable"
+          body="We couldn't open this conversation because it is missing its details. Go back and choose it again."
+        />
+        <Button label="Back" variant="secondary" onPress={() => nav.goBack()} />
+      </Screen>
+    );
+  }
   if (loading) return <Screen><LoadingState message="Loading chat…" /></Screen>;
   if (error instanceof ApiError && error.code === 'disabled_by_parent') return <Screen><DisabledFeature feature="Messages" /></Screen>;
   if (error instanceof ApiError && error.status === 403) {

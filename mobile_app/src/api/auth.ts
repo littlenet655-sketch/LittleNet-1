@@ -154,7 +154,7 @@ export function faceLogin(
   );
 }
 
-export function requestPasswordReset(identifier: string): Promise<{ ok: boolean; user_id: number; masked_email: string; is_parent_proxy: boolean; message: string }> {
+export function requestPasswordReset(identifier: string): Promise<{ ok: boolean; user_id?: number; masked_email?: string; is_parent_proxy?: boolean; message: string }> {
   return post(routes.forgotPassword, { identifier });
 }
 

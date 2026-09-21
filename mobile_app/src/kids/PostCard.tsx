@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Feather, FontAwesome } from '@expo/vector-icons';
 import type { InfiniteData } from '@tanstack/react-query';
@@ -128,6 +128,10 @@ export function PostCard({
   const isVideo = item.media_type?.toUpperCase() === 'VIDEO';
   // Hook runs unconditionally; the visibility gate below only affects rendering.
   const posterAspect = useRemoteAspect(isVideo ? item.poster_url : undefined, item.aspect_ratio);
+  // Per-post in-flight guard: rapid double-taps on like/save used to fire
+  // duplicate toggle requests (double optimistic flips, out-of-order server
+  // replies). Keys are action-scoped so a like in flight never blocks a save.
+  const toggleBusyRef = useRef<Set<string>>(new Set());
   if (!isPubliclyVisible(item)) return null;
   const socialTarget = socialPostTarget(item);
   const previewUrl = isVideo ? item.poster_url : item.media_url;
@@ -135,28 +139,38 @@ export function PostCard({
   async function onLike() {
     if (!session || !socialTarget) return;
     const postId = socialTarget.postId;
-    const update = (old: InfiniteData<FeedPage> | undefined, liked: boolean, likes: number) => old ? ({
-      ...old,
-      pages: old.pages.map((page) => ({ ...page, items: page.items.map((post) => post.source_type === 'SOCIAL' && post.post_id === postId ? { ...post, viewer_liked: liked, likes } : post) })),
-    }) : old;
-    const optimisticLiked = !item.viewer_liked;
-    const optimisticLikes = (item.likes ?? 0) + (item.viewer_liked ? -1 : 1);
-    queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.feed }, (old) => update(old, optimisticLiked, optimisticLikes));
-    queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) => update(old, optimisticLiked, optimisticLikes));
+    const busyKey = `${postId}:like`;
+    if (toggleBusyRef.current.has(busyKey)) return;
+    toggleBusyRef.current.add(busyKey);
     try {
-      const result = await runSocialPostAction(item, (id) => toggleLike(session.token, id));
-      if (!result) return;
-      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.feed }, (old) => update(old, result.liked, result.likes));
-      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) => update(old, result.liked, result.likes));
-      await invalidateSocialCaches([postId]);
-    } catch {
-      await queryClient.invalidateQueries({ queryKey: kidsKeys.feed });
+      const update = (old: InfiniteData<FeedPage> | undefined, liked: boolean, likes: number) => old ? ({
+        ...old,
+        pages: old.pages.map((page) => ({ ...page, items: page.items.map((post) => post.source_type === 'SOCIAL' && post.post_id === postId ? { ...post, viewer_liked: liked, likes } : post) })),
+      }) : old;
+      const optimisticLiked = !item.viewer_liked;
+      const optimisticLikes = (item.likes ?? 0) + (item.viewer_liked ? -1 : 1);
+      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.feed }, (old) => update(old, optimisticLiked, optimisticLikes));
+      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) => update(old, optimisticLiked, optimisticLikes));
+      try {
+        const result = await runSocialPostAction(item, (id) => toggleLike(session.token, id));
+        if (!result) return;
+        queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.feed }, (old) => update(old, result.liked, result.likes));
+        queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) => update(old, result.liked, result.likes));
+        await invalidateSocialCaches([postId]);
+      } catch {
+        await queryClient.invalidateQueries({ queryKey: kidsKeys.feed });
+      }
+    } finally {
+      toggleBusyRef.current.delete(busyKey);
     }
   }
 
   async function onSave() {
     if (!session || !socialTarget) return;
     const postId = socialTarget.postId;
+    const busyKey = `${postId}:save`;
+    if (toggleBusyRef.current.has(busyKey)) return;
+    toggleBusyRef.current.add(busyKey);
     try {
       const result = await runSocialPostAction(item, (id) => toggleSave(session.token, id));
       if (!result) return;
@@ -169,6 +183,8 @@ export function PostCard({
       await invalidateSocialCaches([postId]);
     } catch {
       await queryClient.invalidateQueries({ queryKey: kidsKeys.saved });
+    } finally {
+      toggleBusyRef.current.delete(busyKey);
     }
   }
 

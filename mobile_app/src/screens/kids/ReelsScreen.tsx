@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -31,6 +31,193 @@ import { colors, shadow } from '../../ui/tokens';
 import { ReelPlayer } from '../../video/ReelPlayer';
 import type { ImpressionEventPayload } from '../../video/types';
 
+interface ReelCellProps {
+  item: FeedItem;
+  index: number;
+  activeIndex: number;
+  active: boolean;
+  nearby: boolean;
+  paused: boolean;
+  token?: string;
+  reelHeight: number;
+  windowWidth: number;
+  bottomInset: number;
+  nav: { navigate: (r: string, p: object) => void };
+  onLike: (item: FeedItem) => void;
+  onSave: (item: FeedItem) => void;
+  onOpenSheet: (item: FeedItem) => void;
+  onTogglePause: () => void;
+  onMetricsFlush: (payload: ImpressionEventPayload) => void;
+}
+
+/**
+ * Memoized reel row: the parent re-renders on every activeIndex/paused change
+ * and on every optimistic like/save cache update, but a row only re-renders
+ * when its own item identity, playback window flags, or the shared paused
+ * state change. This keeps like-taps and scroll ticks from re-rendering (and
+ * re-running the playback hook of) every mounted video cell.
+ */
+const ReelCell = memo(function ReelCell({
+  item,
+  index,
+  activeIndex,
+  active,
+  nearby,
+  paused,
+  token,
+  reelHeight,
+  windowWidth,
+  bottomInset,
+  nav,
+  onLike,
+  onSave,
+  onOpenSheet,
+  onTogglePause,
+  onMetricsFlush,
+}: ReelCellProps) {
+  const post = socialPostTarget(item);
+  const profile = socialProfileTarget(item);
+
+  return (
+    <View style={[styles.reelPage, { height: reelHeight, width: windowWidth }]}>
+      {/* Full-bleed Video Background */}
+      <View style={StyleSheet.absoluteFill}>
+        <ReelPlayer
+          item={item}
+          active={active}
+          nearby={nearby}
+          paused={paused}
+          onTogglePlay={() => {
+            if (index === activeIndex) onTogglePause();
+          }}
+          token={token}
+          onMetricsFlush={onMetricsFlush}
+        />
+      </View>
+
+      {/* Bottom readability gradient — two stacked scrims, no new deps */}
+      <View style={styles.bottomScrim} pointerEvents="none">
+        <View style={styles.bottomScrimUpper} />
+        <View style={styles.bottomScrimLower} />
+      </View>
+
+      {/* Pause Indicator overlay in center */}
+      {paused && index === activeIndex ? (
+        <View style={styles.pauseOverlay} pointerEvents="none">
+          <View style={styles.pauseIconCircle}>
+            <Feather name="pause" size={32} color="#FFFFFF" />
+          </View>
+        </View>
+      ) : null}
+
+      {/* Floating Right Action Column (Instagram Reels style) */}
+      <View style={[styles.rightActionsColumn, { bottom: bottomInset + 80 }]}>
+        {/* Like Button */}
+        <Pressable
+          style={styles.actionBtn}
+          onPress={() => onLike(item)}
+          accessibilityRole="button"
+          accessibilityLabel={item.viewer_liked ? 'Unlike' : 'Like'}
+          hitSlop={8}
+        >
+          <View style={[styles.actionIconCircle, item.viewer_liked && styles.actionIconLiked]}>
+            <Feather
+              name="heart"
+              size={24}
+              color={item.viewer_liked ? '#EF4444' : '#FFFFFF'}
+            />
+          </View>
+          <Text style={styles.actionLabel}>{item.likes ?? 0}</Text>
+        </Pressable>
+
+        {/* Comment Button */}
+        {post ? (
+          <Pressable
+            style={styles.actionBtn}
+            onPress={() => nav.navigate('PostDetail', post)}
+            accessibilityRole="button"
+            accessibilityLabel="Comments"
+            hitSlop={8}
+          >
+            <View style={styles.actionIconCircle}>
+              <Feather name="message-circle" size={24} color="#FFFFFF" />
+            </View>
+            <Text style={styles.actionLabel}>{item.comments_count ?? 0}</Text>
+          </Pressable>
+        ) : null}
+
+        {/* Bookmark / Save Button */}
+        <Pressable
+          style={styles.actionBtn}
+          onPress={() => onSave(item)}
+          accessibilityRole="button"
+          accessibilityLabel={item.viewer_saved ? 'Saved' : 'Save'}
+          hitSlop={8}
+        >
+          <View style={styles.actionIconCircle}>
+            <Feather
+              name="bookmark"
+              size={23}
+              color={item.viewer_saved ? colors.brand : '#FFFFFF'}
+            />
+          </View>
+          <Text style={styles.actionLabel}>Save</Text>
+        </Pressable>
+
+        {/* More / Safety Options */}
+        <Pressable
+          style={styles.actionBtn}
+          onPress={() => onOpenSheet(item)}
+          accessibilityRole="button"
+          accessibilityLabel="Options"
+          hitSlop={8}
+        >
+          <View style={styles.actionIconCircle}>
+            <Feather name="more-horizontal" size={22} color="#FFFFFF" />
+          </View>
+        </Pressable>
+      </View>
+
+      {/* Floating Bottom Metadata (Author, Caption, Audio tag) */}
+      <View style={[styles.bottomMetaContainer, { bottom: bottomInset + 18 }]} pointerEvents="box-none">
+        {/* Creator Row */}
+        <Pressable
+          style={styles.creatorRow}
+          onPress={() => profile && nav.navigate('OtherProfile', profile)}
+          disabled={!profile}
+        >
+          <Avatar uri={item.avatar_url} name={item.full_name ?? 'F'} size={38} />
+          <View style={styles.creatorInfo}>
+            <Text style={styles.creatorName} numberOfLines={1}>
+              {item.full_name ?? 'Friend'}
+            </Text>
+          </View>
+        </Pressable>
+
+        {/* Caption */}
+        {item.caption ? (
+          <Text style={styles.reelCaption} numberOfLines={2}>
+            {item.caption}
+          </Text>
+        ) : null}
+
+        {/* Safe Audio Tag */}
+        <View style={styles.audioTagRow}>
+          <Feather name="music" size={13} color="#CBD5E1" />
+          <Text style={styles.audioTagText}>Safe Sound • Kid Approved</Text>
+        </View>
+      </View>
+    </View>
+  );
+}, (prev, next) =>
+  prev.item === next.item &&
+  prev.activeIndex === next.activeIndex &&
+  prev.active === next.active &&
+  prev.nearby === next.nearby &&
+  prev.paused === next.paused &&
+  prev.token === next.token,
+);
+
 export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const insets = useSafeAreaInsets();
   const { session } = useAuth();
@@ -47,6 +234,10 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
   const flatListRef = useRef<FlatList<FeedItem>>(null);
   const impressionBatchRef = useRef<ImpressionEventPayload[]>([]);
   const badgeAnim = useRef(new Animated.Value(1)).current;
+  // Per-post in-flight guard for like/save: rapid double-taps used to fire
+  // duplicate toggle requests. Keys are action-scoped so a like in flight
+  // never blocks a save.
+  const toggleBusyRef = useRef<Set<string>>(new Set());
 
   // Pulse the AI GUARDED badge
   useEffect(() => {
@@ -118,34 +309,23 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
     };
   }, [flushBatch]);
 
-  async function handleLike(item: FeedItem) {
+  // Stable callbacks: the memoized ReelCell only re-renders when its own
+  // playback flags or item identity change, not when these are recreated.
+  const togglePause = useCallback(() => setPaused((v) => !v), []);
+
+  const handleLike = useCallback(async (item: FeedItem) => {
     if (!session) return;
     const socialTarget = socialPostTarget(item);
     if (!socialTarget) return;
     const postId = socialTarget.postId;
-    const optimisticLiked = !item.viewer_liked;
-    const optimisticLikes = (item.likes ?? 0) + (item.viewer_liked ? -1 : 1);
-
-    const update = (old: InfiniteData<FeedPage> | undefined) =>
-      old
-        ? {
-            ...old,
-            pages: old.pages.map((page) => ({
-              ...page,
-              items: page.items.map((post) =>
-                post.source_type === 'SOCIAL' && post.post_id === postId
-                  ? { ...post, viewer_liked: optimisticLiked, likes: optimisticLikes }
-                  : post,
-              ),
-            })),
-          }
-        : old;
-
-    queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, update);
+    const busyKey = `${postId}:like`;
+    if (toggleBusyRef.current.has(busyKey)) return;
+    toggleBusyRef.current.add(busyKey);
     try {
-      const result = await runSocialPostAction(item, (id) => toggleLike(session.token, id));
-      if (!result) return;
-      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) =>
+      const optimisticLiked = !item.viewer_liked;
+      const optimisticLikes = (item.likes ?? 0) + (item.viewer_liked ? -1 : 1);
+
+      const update = (old: InfiniteData<FeedPage> | undefined) =>
         old
           ? {
               ...old,
@@ -153,58 +333,118 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
                 ...page,
                 items: page.items.map((post) =>
                   post.source_type === 'SOCIAL' && post.post_id === postId
-                    ? { ...post, viewer_liked: result.liked, likes: result.likes }
+                    ? { ...post, viewer_liked: optimisticLiked, likes: optimisticLikes }
                     : post,
                 ),
               })),
             }
-          : old,
-      );
-      await invalidateSocialCaches([postId]);
-    } catch {
-      await queryClient.invalidateQueries({ queryKey: kidsKeys.reels });
-    }
-  }
+          : old;
 
-  async function handleSave(item: FeedItem) {
+      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, update);
+      try {
+        const result = await runSocialPostAction(item, (id) => toggleLike(session.token, id));
+        if (!result) return;
+        queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, (old) =>
+          old
+            ? {
+                ...old,
+                pages: old.pages.map((page) => ({
+                  ...page,
+                  items: page.items.map((post) =>
+                    post.source_type === 'SOCIAL' && post.post_id === postId
+                      ? { ...post, viewer_liked: result.liked, likes: result.likes }
+                      : post,
+                  ),
+                })),
+              }
+            : old,
+        );
+        await invalidateSocialCaches([postId]);
+      } catch {
+        await queryClient.invalidateQueries({ queryKey: kidsKeys.reels });
+      }
+    } finally {
+      toggleBusyRef.current.delete(busyKey);
+    }
+  }, [session]);
+
+  const handleSave = useCallback(async (item: FeedItem) => {
     if (!session) return;
     const socialTarget = socialPostTarget(item);
     if (!socialTarget) return;
     const postId = socialTarget.postId;
-    const optimisticSaved = !item.viewer_saved;
-
-    const update = (old: InfiniteData<FeedPage> | undefined) =>
-      old
-        ? {
-            ...old,
-            pages: old.pages.map((page) => ({
-              ...page,
-              items: page.items.map((post) =>
-                post.source_type === 'SOCIAL' && post.post_id === postId
-                  ? { ...post, viewer_saved: optimisticSaved }
-                  : post,
-              ),
-            })),
-          }
-        : old;
-
-    queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, update);
+    const busyKey = `${postId}:save`;
+    if (toggleBusyRef.current.has(busyKey)) return;
+    toggleBusyRef.current.add(busyKey);
     try {
-      const result = await runSocialPostAction(item, (id) => toggleSave(session.token, id));
-      if (!result) return;
-      await invalidateSocialCaches([postId]);
-    } catch {
-      await queryClient.invalidateQueries({ queryKey: kidsKeys.reels });
-    }
-  }
+      const optimisticSaved = !item.viewer_saved;
 
-  /** Same report action the old Alert menu ran — now invoked from the action sheet. */
-  function performReport(item: FeedItem) {
+      const update = (old: InfiniteData<FeedPage> | undefined) =>
+        old
+          ? {
+              ...old,
+              pages: old.pages.map((page) => ({
+                ...page,
+                items: page.items.map((post) =>
+                  post.source_type === 'SOCIAL' && post.post_id === postId
+                    ? { ...post, viewer_saved: optimisticSaved }
+                    : post,
+                ),
+              })),
+            }
+          : old;
+
+      queryClient.setQueriesData<InfiniteData<FeedPage>>({ queryKey: kidsKeys.reels }, update);
+      try {
+        const result = await runSocialPostAction(item, (id) => toggleSave(session.token, id));
+        if (!result) return;
+        await invalidateSocialCaches([postId]);
+      } catch {
+        await queryClient.invalidateQueries({ queryKey: kidsKeys.reels });
+      }
+    } finally {
+      toggleBusyRef.current.delete(busyKey);
+    }
+  }, [session]);
+
+  const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
+
+  // Stable renderItem: combined with the memoized ReelCell, parent renders
+  // (scroll ticks, like-taps, pause toggles) no longer re-render every cell.
+  const renderReelItem = useCallback(({ item, index }: { item: FeedItem; index: number }) => (
+    <ReelCell
+      item={item}
+      index={index}
+      activeIndex={activeIndex}
+      active={shouldPlayReel(index, activeIndex, foreground && focused)}
+      nearby={shouldLoadReel(index, activeIndex)}
+      paused={paused}
+      token={session?.token}
+      reelHeight={REEL_HEIGHT}
+      windowWidth={windowWidth}
+      bottomInset={insets.bottom}
+      nav={nav}
+      onLike={(it) => void handleLike(it)}
+      onSave={(it) => void handleSave(it)}
+      onOpenSheet={setSheetItem}
+      onTogglePause={togglePause}
+      onMetricsFlush={handleMetricsFlush}
+    />
+  ), [activeIndex, foreground, focused, paused, session?.token, REEL_HEIGHT, windowWidth, insets.bottom, nav, handleLike, handleSave, togglePause, handleMetricsFlush]);
+
+  /** Same report action the old Alert menu ran — now invoked from the action sheet.
+   * Awaits the submission: the success confirmation must only show when the
+   * server actually accepted the report (fire-and-forget lied on failure). */
+  async function performReport(item: FeedItem) {
     if (!session) return;
     const post = socialPostTarget(item);
     if (!post) return;
-    void submitReport(session.token, 'post', post.postId, 'inappropriate');
-    Alert.alert('Reported', 'Thank you. Our safety team will review this video promptly.');
+    try {
+      await submitReport(session.token, 'post', post.postId, 'inappropriate');
+      Alert.alert('Reported', 'Thank you. Our safety team will review this video promptly.');
+    } catch {
+      Alert.alert('Could not report', 'Your report could not be sent. Check your connection and try again.');
+    }
   }
 
   /** Same not-interested action the old Alert menu ran — now invoked from the action sheet. */
@@ -322,145 +562,7 @@ export function ReelsScreen({ navigation }: ChildScreenProps<'KidsTabs'>) {
         pagingEnabled
         decelerationRate="fast"
         getItemLayout={(_, index) => ({ length: REEL_HEIGHT, offset: REEL_HEIGHT * index, index })}
-        renderItem={({ item, index }) => {
-          const post = socialPostTarget(item);
-          const profile = socialProfileTarget(item);
-          const nav = navigation as unknown as { navigate: (r: string, p: object) => void };
-          const isItemActive = shouldPlayReel(index, activeIndex, foreground && focused);
-          const isNearby = shouldLoadReel(index, activeIndex);
-
-          return (
-            <View style={[styles.reelPage, { height: REEL_HEIGHT, width: windowWidth }]}>
-              {/* Full-bleed Video Background */}
-              <View style={StyleSheet.absoluteFill}>
-                <ReelPlayer
-                  item={item}
-                  active={isItemActive}
-                  nearby={isNearby}
-                  paused={paused}
-                  onTogglePlay={() => {
-                    if (index === activeIndex) setPaused((v) => !v);
-                  }}
-                  token={session?.token}
-                  onMetricsFlush={handleMetricsFlush}
-                />
-              </View>
-
-              {/* Bottom readability gradient — two stacked scrims, no new deps */}
-              <View style={styles.bottomScrim} pointerEvents="none">
-                <View style={styles.bottomScrimUpper} />
-                <View style={styles.bottomScrimLower} />
-              </View>
-
-              {/* Pause Indicator overlay in center */}
-              {paused && index === activeIndex ? (
-                <View style={styles.pauseOverlay} pointerEvents="none">
-                  <View style={styles.pauseIconCircle}>
-                    <Feather name="pause" size={32} color="#FFFFFF" />
-                  </View>
-                </View>
-              ) : null}
-
-              {/* Floating Right Action Column (Instagram Reels style) */}
-              <View style={[styles.rightActionsColumn, { bottom: insets.bottom + 80 }]}>
-                {/* Like Button */}
-                <Pressable
-                  style={styles.actionBtn}
-                  onPress={() => void handleLike(item)}
-                  accessibilityRole="button"
-                  accessibilityLabel={item.viewer_liked ? 'Unlike' : 'Like'}
-                  hitSlop={8}
-                >
-                  <View style={[styles.actionIconCircle, item.viewer_liked && styles.actionIconLiked]}>
-                    <Feather
-                      name="heart"
-                      size={24}
-                      color={item.viewer_liked ? '#EF4444' : '#FFFFFF'}
-                    />
-                  </View>
-                  <Text style={styles.actionLabel}>{item.likes ?? 0}</Text>
-                </Pressable>
-
-                {/* Comment Button */}
-                {post ? (
-                  <Pressable
-                    style={styles.actionBtn}
-                    onPress={() => nav.navigate('PostDetail', post)}
-                    accessibilityRole="button"
-                    accessibilityLabel="Comments"
-                    hitSlop={8}
-                  >
-                    <View style={styles.actionIconCircle}>
-                      <Feather name="message-circle" size={24} color="#FFFFFF" />
-                    </View>
-                    <Text style={styles.actionLabel}>{item.comments_count ?? 0}</Text>
-                  </Pressable>
-                ) : null}
-
-                {/* Bookmark / Save Button */}
-                <Pressable
-                  style={styles.actionBtn}
-                  onPress={() => void handleSave(item)}
-                  accessibilityRole="button"
-                  accessibilityLabel={item.viewer_saved ? 'Saved' : 'Save'}
-                  hitSlop={8}
-                >
-                  <View style={styles.actionIconCircle}>
-                    <Feather
-                      name="bookmark"
-                      size={23}
-                      color={item.viewer_saved ? colors.brand : '#FFFFFF'}
-                    />
-                  </View>
-                  <Text style={styles.actionLabel}>Save</Text>
-                </Pressable>
-
-                {/* More / Safety Options */}
-                <Pressable
-                  style={styles.actionBtn}
-                  onPress={() => setSheetItem(item)}
-                  accessibilityRole="button"
-                  accessibilityLabel="Options"
-                  hitSlop={8}
-                >
-                  <View style={styles.actionIconCircle}>
-                    <Feather name="more-horizontal" size={22} color="#FFFFFF" />
-                  </View>
-                </Pressable>
-              </View>
-
-              {/* Floating Bottom Metadata (Author, Caption, Audio tag) */}
-              <View style={[styles.bottomMetaContainer, { bottom: insets.bottom + 18 }]} pointerEvents="box-none">
-                {/* Creator Row */}
-                <Pressable
-                  style={styles.creatorRow}
-                  onPress={() => profile && nav.navigate('OtherProfile', profile)}
-                  disabled={!profile}
-                >
-                  <Avatar uri={item.avatar_url} name={item.full_name ?? 'F'} size={38} />
-                  <View style={styles.creatorInfo}>
-                    <Text style={styles.creatorName} numberOfLines={1}>
-                      {item.full_name ?? 'Friend'}
-                    </Text>
-                  </View>
-                </Pressable>
-
-                {/* Caption */}
-                {item.caption ? (
-                  <Text style={styles.reelCaption} numberOfLines={2}>
-                    {item.caption}
-                  </Text>
-                ) : null}
-
-                {/* Safe Audio Tag */}
-                <View style={styles.audioTagRow}>
-                  <Feather name="music" size={13} color="#CBD5E1" />
-                  <Text style={styles.audioTagText}>Safe Sound • Kid Approved</Text>
-                </View>
-              </View>
-            </View>
-          );
-        }}
+        renderItem={renderReelItem}
       />
 
       {/* Instagram-style bottom action sheet — same actions as the old Alert menu */}
