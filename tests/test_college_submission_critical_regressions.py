@@ -94,6 +94,23 @@ def _install_fake_deepface(monkeypatch, faces, age):
     monkeypatch.setitem(sys.modules,'deepface',module)
 
 
+def test_mobile_guardian_verification_preserves_actionable_failure_reasons():
+    src=(Path(__file__).parents[1]/'mobile/api.py').read_text(encoding='utf-8')
+    block=src[src.index('def mobile_parent_verify_liveness'):src.index('@bp.route("/api/mobile/v1/me")')]
+    assert 'error="single_face_required"' in block
+    assert 'error="liveness_failed"' in block
+    assert 'error="age_estimate_ambiguous"' in block
+    assert 'error="age_verification_unavailable"' in block
+
+
+def test_mobile_guardian_does_not_create_empty_biometric_profile():
+    src=(Path(__file__).parents[1]/'mobile/api.py').read_text(encoding='utf-8')
+    block=src[src.index('def mobile_parent_verify_liveness'):src.index('@bp.route("/api/mobile/v1/me")')]
+    assert "'LocalBiometricV1'" not in block
+    assert "'[]'::jsonb" not in block
+    assert "model_name='Facenet512'" in block
+
+
 def test_guardian_empty_face_evidence_cannot_pass(monkeypatch):
     import safety.remote_client as remote
     from safety.face_service import verify_adult_face

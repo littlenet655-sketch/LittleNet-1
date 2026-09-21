@@ -32,6 +32,13 @@ describe('backend gate parsing', () => {
     }
   });
 
+  it('explains guardian verification retry reasons distinctly', () => {
+    assert.match(userMessageFor(422, 'single_face_required', {}), /one face/i);
+    assert.match(userMessageFor(422, 'liveness_failed', {}), /blink/i);
+    assert.match(userMessageFor(422, 'age_estimate_ambiguous', {}), /confidently/i);
+    assert.match(userMessageFor(503, 'age_verification_unavailable', {}), /temporarily/i);
+  });
+
   it('explains face-login failure reasons distinctly', () => {
     const spoof = userMessageFor(401, 'face_login_failed', { reason: 'spoof' });
     const missing = userMessageFor(404, 'face_login_failed', { reason: 'not_enrolled' });

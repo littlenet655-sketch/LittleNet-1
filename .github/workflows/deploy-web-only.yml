@@ -1,0 +1,49 @@
+name: Deploy LittleNet Web Only
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  LIVE_URL: ${{ vars.LITTLENET_LIVE_URL || 'https://netlittle2--littlenet-web-web.modal.run' }}
+
+jobs:
+  deploy-web:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[deploy-web]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+      MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: python -m pip install --upgrade "modal>=1.5,<2"
+      - name: Validate Modal credentials
+        run: |
+          test -n "$MODAL_TOKEN_ID"
+          test -n "$MODAL_TOKEN_SECRET"
+          modal token info
+      - name: Deploy web backend only
+        run: modal deploy modal_web.py
+      - name: Verify public web and mobile health
+        run: |
+          set -euo pipefail
+          URL="${LIVE_URL%/}"
+          curl --connect-timeout 10 --max-time 30 --fail-with-body -sS "$URL/healthz" | tee healthz.json
+          curl --connect-timeout 10 --max-time 30 --fail-with-body -sS "$URL/api/mobile/v1/health" | tee mobile-health.json
+          python - <<'PY'
+          import json
+          health=json.load(open('healthz.json',encoding='utf-8'))
+          mobile=json.load(open('mobile-health.json',encoding='utf-8'))
+          if health.get('status') not in {'ok','healthy'} and health.get('ok') is not True:
+              raise SystemExit(f'Web health failed: {health}')
+          if mobile.get('ok') is not True:
+              raise SystemExit(f'Mobile API health failed: {mobile}')
+          PY

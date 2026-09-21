@@ -73,6 +73,21 @@ export function CameraCapture({
   const autoCapturedRef = useRef(false);
   const blinkStageRef = useRef<BlinkStage>('WAITING_FOR_OPEN');
 
+  function resetLivenessState() {
+    blinkStageRef.current = 'WAITING_FOR_OPEN';
+    autoCapturedRef.current = false;
+    setLiveness({
+      action: livenessAction,
+      step: 1,
+      statusText: 'Scanning for face…',
+      detailText: 'Center your face inside the oval',
+      isAligned: false,
+      isComplete: false,
+      ovalColor: '#94A3B8',
+      stage: 'WAITING_FOR_OPEN',
+    });
+  }
+
   async function submit(photo: CapturedPhoto) {
     const network = await NetInfo.fetch();
     if (network.isConnected === false) {
@@ -110,10 +125,12 @@ export function CameraCapture({
       setError(err);
       if (typeof setTimeout !== 'undefined') {
         setTimeout(() => {
-          autoCapturedRef.current = false;
-        }, 3000);
+          // A failed server decision must require a fresh local blink instead of
+          // reusing the previous VERIFIED state on the next automatic scan.
+          resetLivenessState();
+        }, 1200);
       } else {
-        autoCapturedRef.current = false;
+        resetLivenessState();
       }
     } finally {
       setWorking(false);
@@ -145,7 +162,7 @@ export function CameraCapture({
       let tempUri: string | undefined;
       try {
         const frame = await cameraRef.current.takePictureAsync({
-          quality: 0.25,
+          quality: 0.15,
           skipProcessing: true,
           shutterSound: false,
         });
@@ -179,7 +196,7 @@ export function CameraCapture({
         }
         isScanningRef.current = false;
       }
-    }, 450);
+    }, 250);
 
     return () => {
       isSubscribed = false;
@@ -334,14 +351,23 @@ export function CameraCapture({
         <>
           <Notice tone="info" message="Your checked photo is saved on this device. Reconnect to finish verification." />
           <Button label={loading ? 'Retrying…' : 'Retry verification'} onPress={() => void retrySubmission()} loading={loading} disabled={loading} />
-          <Button label="Take a new photo" variant="secondary" onPress={() => { setPendingPhoto(null); setError(null); }} disabled={loading} />
+          <Button
+            label="Take a new photo"
+            variant="secondary"
+            onPress={() => {
+              setPendingPhoto(null);
+              setError(null);
+              resetLivenessState();
+            }}
+            disabled={loading}
+          />
         </>
       ) : (
         <Button
           label={loading ? (busyLabel ?? 'Checking…') : liveness.isComplete ? 'Liveness Verified! Submitting…' : label}
-          onPress={() => void capture(false)}
+          onPress={() => void capture(autoScan && liveness.isComplete)}
           loading={loading}
-          disabled={loading || !cameraReady}
+          disabled={loading || !cameraReady || (autoScan && !liveness.isComplete)}
         />
       )}
     </>

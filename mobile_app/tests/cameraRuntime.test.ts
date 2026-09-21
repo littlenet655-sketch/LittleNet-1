@@ -184,6 +184,17 @@ test('Google ML Kit automated liveness scanner tracks eye-blink cycle to verific
   assert.equal(step1.stage, 'WAITING_FOR_BLINK');
   assert.equal(step1.statusText, 'Blink Both Eyes');
 
+  // Slightly conservative ML Kit open-eye probabilities must not leave a
+  // straight-facing user stuck waiting for the scanner.
+  const normalOpenFace = {
+    ...face,
+    leftEyeOpenProbability: 0.48,
+    rightEyeOpenProbability: 0.47,
+  };
+  const normalOpen = precheck.evaluateLivenessFrame(image, [normalOpenFace], 'BLINK', 'WAITING_FOR_OPEN');
+  assert.equal(normalOpen.stage, 'WAITING_FOR_BLINK');
+  assert.equal(normalOpen.isAligned, true);
+
   // 3. User blinks (eyes close) -> advances to WAITING_FOR_REOPEN
   const eyesClosedFace = {
     ...face,
