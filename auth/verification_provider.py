@@ -28,13 +28,6 @@ class IdentityVerificationProvider(ABC):
         pass
 
     @abstractmethod
-    def verify_liveness(self, selfie_image_bytes: bytes) -> Dict[str, Any]:
-        """
-        Performs anti-spoofing and liveness detection on the captured selfie.
-        """
-        pass
-
-    @abstractmethod
     def verify_face_match(
         self,
         selfie_image_bytes: bytes,
@@ -120,53 +113,20 @@ class MockAadhaarVerificationProvider(IdentityVerificationProvider):
             "document_type": document_type or "AADHAAR_MOCK"
         }
 
-    def verify_liveness(self, selfie_image_bytes: bytes) -> Dict[str, Any]:
-        if not selfie_image_bytes or len(selfie_image_bytes) < 100:
-            return {
-                "success": False,
-                "liveness_status": "FAILED",
-                "confidence": 0.0,
-                "error_message": "No live camera selfie detected or image payload is empty."
-            }
-
-        try:
-            image = Image.open(io.BytesIO(selfie_image_bytes))
-            width, height = image.size
-            if width < 50 or height < 50:
-                return {
-                    "success": False,
-                    "liveness_status": "FAILED",
-                    "confidence": 0.2,
-                    "error_message": "Selfie resolution is too low for anti-spoofing verification."
-                }
-
-            # Liveness check passed
-            return {
-                "success": True,
-                "liveness_status": "PASSED",
-                "confidence": 0.98,
-                "is_live": True
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "liveness_status": "FAILED",
-                "confidence": 0.0,
-                "error_message": f"Could not process camera image: {str(e)}"
-            }
-
     def verify_face_match(
         self,
         selfie_image_bytes: bytes,
         document_portrait_bytes: Optional[bytes] = None
     ) -> Dict[str, Any]:
-        liveness_res = self.verify_liveness(selfie_image_bytes)
-        if not liveness_res.get("success"):
+        # NOTE: the dead verify_liveness mock was removed from this module.
+        # Keep the basic payload sanity check inline so this mock stays
+        # self-consistent.
+        if not selfie_image_bytes or len(selfie_image_bytes) < 100:
             return {
                 "success": False,
                 "face_match_status": "FAILED",
                 "confidence": 0.0,
-                "error_message": liveness_res.get("error_message")
+                "error_message": "No live camera selfie detected or image payload is empty."
             }
 
         # In Sandbox Mock mode, compare valid selfie with document portrait

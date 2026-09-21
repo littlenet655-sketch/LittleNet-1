@@ -241,8 +241,10 @@ def verify_parent_email_otp(user_id, code):
                 conn.rollback()
                 return False, 'Verification request not found. Please register again.', None
             if row.get('verified_at'):
-                conn.commit()
-                return True, None, fetch_one('SELECT * FROM users WHERE user_id=%s', (user_id,))
+                # Replay: this OTP was already consumed. Fail closed instead
+                # of returning success again.
+                conn.rollback()
+                return False, 'This code has already been used. Request a new code if needed.', None
             if row['attempts'] >= OTP_MAX_ATTEMPTS:
                 conn.rollback()
                 return False, 'Too many incorrect attempts. Request a new code.', None
@@ -256,7 +258,10 @@ def verify_parent_email_otp(user_id, code):
                 return False, 'That code has expired. Request a new code.', None
 
             if not hmac.compare_digest(row['code_hash'], _otp_hash(user_id, code)):
-                cur.execute('UPDATE parent_email_otps SET attempts=attempts+1 WHERE user_id=%s', (user_id,))
+                # The attempts < OTP_MAX_ATTEMPTS predicate keeps parallel
+                # wrong guesses from pushing the counter past the cap: once
+                # capped, further increments are no-ops.
+                cur.execute('UPDATE parent_email_otps SET attempts=attempts+1 WHERE user_id=%s AND attempts < %s', (user_id, OTP_MAX_ATTEMPTS))
                 conn.commit()
                 return False, 'Incorrect verification code.', None
 
@@ -281,7 +286,10 @@ def resend_parent_email_otp(user_id, with_code=False):
            WHERE u.user_id=%s""",
         (user_id,),
     )
-    if not user or user.get('role') != 'PARENT' or user.get('account_status') == 'ACTIVE':
+    if not user or user.get('role') != 'PARENT' or user.get('account_status') not in ('PENDING_APPROVAL',):
+        # Only a genuinely pending parent may be sent (or re-sent) a code:
+        # SUSPENDED / REJECTED / DEACTIVATED accounts must not be able to
+        # restart verification on their own.
         err = 'No pending parent verification was found.'
         return (False, err, None) if with_code else (False, err)
     if user.get('verified_at'):
@@ -289,9 +297,40 @@ def resend_parent_email_otp(user_id, with_code=False):
         return (False, err, None) if with_code else (False, err)
 
     code = _new_code()
+    code_hash = _otp_hash(user_id, code)
     conn = get_db_connection()
     try:
         with conn.cursor() as cur:
+            # Serialize concurrent resends for this user with a
+            # transaction-scoped advisory lock. A SELECT ... FOR UPDATE on
+            # the OTP row alone is NOT enough: on a first-ever resend the row
+            # does not exist yet, so the SELECT locks nothing and two
+            # parallel first resends could both INSERT — the second silently
+            # killing the first code ("dead on arrival"). The advisory lock
+            # always exists, so the second resend blocks here, then sees the
+            # first one's fresh sent_at and is refused by the cooldown below.
+            # (Advisory, not a users-row lock, to avoid row lock-ordering
+            # deadlocks with the verify path's FOR UPDATE join.)
+            cur.execute("SELECT pg_advisory_xact_lock(%s, %s)", (842101, int(user_id)))
+            cur.execute(
+                "SELECT sent_at, verified_at FROM parent_email_otps WHERE user_id=%s FOR UPDATE",
+                (user_id,),
+            )
+            existing = cur.fetchone()
+            if existing and existing.get('verified_at'):
+                conn.rollback()
+                err = 'Email is already verified.'
+                return (False, err, None) if with_code else (False, err)
+            if existing:
+                # DB-side resend cooldown, evaluated inside the row lock.
+                cur.execute(
+                    "SELECT 1 FROM parent_email_otps WHERE user_id=%s AND sent_at > NOW() - INTERVAL '60 seconds'",
+                    (user_id,),
+                )
+                if cur.fetchone():
+                    conn.rollback()
+                    err = 'A code was just sent. Please wait a minute before requesting another.'
+                    return (False, err, None) if with_code else (False, err)
             cur.execute(
                 """
                 INSERT INTO parent_email_otps(user_id,code_hash,expires_at,attempts,sent_at,verified_at)
@@ -299,12 +338,14 @@ def resend_parent_email_otp(user_id, with_code=False):
                 ON CONFLICT(user_id) DO UPDATE SET
                     code_hash=EXCLUDED.code_hash,
                     expires_at=EXCLUDED.expires_at,
-                    attempts=0,
                     sent_at=NOW(),
                     verified_at=NULL
                 """,
-                (user_id, _otp_hash(user_id, code)),
+                (user_id, code_hash),
             )
+            # NOTE: attempts are deliberately NOT reset here. Resetting them
+            # on every resend let an attacker mint unlimited guesses by
+            # spamming resend; the guess budget now survives resends.
         conn.commit()
     except Exception:
         conn.rollback()
@@ -312,6 +353,9 @@ def resend_parent_email_otp(user_id, with_code=False):
     finally:
         conn.close()
 
+    # Only the committed code is ever emailed: it is generated above, written
+    # in the transaction just committed, and no second resend can have
+    # overwritten it without passing the in-lock cooldown.
     sent = _send_code(user_id, user['email'], user['full_name'], code)
     dev_code = code if Config.ENABLE_DEV_OTP and not Config._PRODUCTION else None
     if not sent and not dev_code:

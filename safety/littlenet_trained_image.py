@@ -15,6 +15,7 @@ deploy safely before the private model artifacts are staged.
 from __future__ import annotations
 
 import os
+import math
 import threading
 from pathlib import Path
 from typing import Any
@@ -145,10 +146,13 @@ def _scores(model, checkpoint: dict[str, Any], tensor) -> dict[str, float]:
 
 def _threshold(checkpoint: dict[str, Any], label: str, fallback: float) -> float:
     raw = (checkpoint.get("thresholds") or {}).get(label, fallback)
-    try:
-        value = float(raw)
-    except (TypeError, ValueError):
+    # Reject non-numeric or non-finite checkpoint values BEFORE clamping:
+    # min(NaN, fallback) is NaN, and the outer min(0.99, NaN) then yields
+    # 0.99 — silently loosening the policy threshold to its weakest value.
+    if not isinstance(raw, (int, float)) or not math.isfinite(raw):
         value = fallback
+    else:
+        value = float(raw)
     # Tighten-only: a checkpoint may lower the policy default (stricter
     # blocking) but never raise it (looser blocking). ``fallback`` is the
     # policy default for the label.

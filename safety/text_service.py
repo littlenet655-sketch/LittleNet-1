@@ -58,11 +58,28 @@ GROOMING_PATTERNS=(
 
 _DETOX=None;_DETOX_NAME=None;_HF_TEXT=None
 
+# Confusable-skeleton fold: Cyrillic/Greek lookalikes that survive NFKC and
+# evade the Latin term/pattern lists (proven: "send nudеs" with Cyrillic е
+# scored clean). Applied inside _normalized_text -- i.e. only to the copy
+# used for deterministic matching; the original text passed to ML/audit is
+# untouched. Covers lowercase forms because _normalized_text lowercases first.
+_CONFUSABLES=str.maketrans({
+    # Cyrillic -> Latin
+    'а':'a','с':'c','е':'e','ё':'e','і':'i','ј':'j','о':'o','р':'p',
+    'х':'x','у':'y','к':'k','м':'m','н':'h','т':'t','в':'b','п':'n',
+    'ш':'w','ѕ':'s','ґ':'g',
+    # Greek -> Latin
+    'α':'a','β':'b','ε':'e','ζ':'z','η':'n','ι':'i','κ':'k','μ':'u',
+    'ν':'v','ο':'o','ρ':'p','ς':'s','σ':'o','τ':'t','υ':'u','χ':'x',
+    'ω':'w','δ':'d',
+})
+
 
 def _normalized_text(text):
     """Canonicalize common evasion without changing the text sent to ML."""
     value=unicodedata.normalize('NFKC',text or '').lower()
     value=''.join(ch for ch in value if unicodedata.category(ch) not in {'Cf','Mn'})
+    value=value.translate(_CONFUSABLES)
     value=value.translate(str.maketrans({'0':'o','1':'i','3':'e','4':'a','5':'s','7':'t','@':'a','$':'s'}))
     value=re.sub(r'(?<=\w)[._*~`|/\\-]+(?=\w)','',value)
     value=re.sub(r'(.)\1{2,}',r'\1\1',value)

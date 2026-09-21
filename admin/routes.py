@@ -119,7 +119,7 @@ def user_action(user_id):
             # UI hiding is not security.
             _admin_audit('USER_ACTIVATE_BLOCKED','USER',user_id,{'role':row['role'],'status':row['account_status'],'reason':'parent_verification_incomplete'})
             return ('Parent identity verification is incomplete: activation blocked. The parent must complete email OTP verification first.',403)
-        execute('UPDATE users SET account_status=%s WHERE user_id=%s',(new,user_id))
+        execute('UPDATE users SET account_status=%s, session_version = COALESCE(session_version, 1) + 1 WHERE user_id=%s',(new,user_id))
         _admin_audit('USER_'+action,'USER',user_id,{'from':row['account_status'],'to':new})
     return redirect(request.referrer or '/admin/users/')
 

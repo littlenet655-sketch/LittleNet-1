@@ -1,4 +1,5 @@
 import os, uuid, base64
+import logging
 from flask import Blueprint, render_template, request, redirect, session, jsonify, flash, url_for
 from auth.service import (
     approve_child_account,
@@ -17,6 +18,8 @@ from database.connection import fetch_one, execute
 from extensions import limiter, csrf
 from decorators import child_required, login_required
 from services.i18n import set_language, LANGUAGES
+
+logger = logging.getLogger(__name__)
 
 auth_bp = Blueprint('auth', __name__, template_folder='templates')
 
@@ -321,7 +324,8 @@ def register_parent_direct_page():
             session['pending_parent_delivery_error'] = not bool(res.get('email_sent'))
             return redirect('/verify-parent-email/')
         except Exception as exc:
-            return render_template('parent_register_direct.html', error=str(exc)), 400
+            logger.exception("Parent registration failed")
+            return render_template('parent_register_direct.html', error="Could not complete parent registration. Please try again."), 400
     return render_template('parent_register_direct.html')
 
 

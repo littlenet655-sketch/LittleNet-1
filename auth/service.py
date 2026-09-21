@@ -1,4 +1,5 @@
 import os, uuid, secrets, re
+import logging
 from datetime import datetime, timezone, timedelta
 import bcrypt
 from jinja2 import Template
@@ -6,6 +7,8 @@ from database.connection import fetch_one, fetch_all, execute, get_db_connection
 from mailg.send_email import send_email
 from config import Config
 from services.identity import validate_username, validate_name
+
+logger = logging.getLogger(__name__)
 
 def hash_password(password):
     return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
@@ -15,143 +18,6 @@ def check_password(password, hashed):
         return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
     except Exception:
         return False
-
-def register_child(form):
-    """
-    Registers a new child in PENDING_APPROVAL status.
-    Generates a secure parent verification token and sends an invitation email.
-    Prevents self-approval (child_email == parent_email).
-    """
-    username = (form.get('username') or '').strip()
-    if not validate_username(username):
-        err = 'Username must be 3-30 characters (letters, numbers, underscores) and contain no inappropriate words.'
-        return {"success": False, "error": err}
-        
-    full_name = (form.get('full_name') or '').strip()
-    if not full_name or not validate_name(full_name):
-        full_name = username.capitalize()
-        
-    parent_name = (form.get('parent_name') or '').strip()
-    if not parent_name or not validate_name(parent_name):
-        parent_name = "Parent Guardian"
-        
-    try:
-        age = int(form.get('age') or '10')
-    except (TypeError, ValueError):
-        age = 10
-        
-    if not 4 <= age <= 18:
-        age = 10
-        
-    password = form.get('password', '')
-    if len(password) < 8:
-        return {"success": False, "error": "Password must be at least 8 characters long."}
-
-    child_email = (form.get('email') or '').strip().lower()
-    if not child_email or '@' not in child_email:
-        child_email = f"{username.lower()}@kids.littlenet.internal"
-
-    parent_email = (form.get('parent_email') or '').strip().lower()
-    if not parent_email or '@' not in parent_email:
-        return {"success": False, "error": "Please provide your parent or guardian's email address."}
-
-    # Strict Self-Approval Rejection
-    if child_email == parent_email:
-        return {"success": False, "error": "Self-approval is strictly prevented. Child email cannot be the same as parent email."}
-
-    token = str(uuid.uuid4())
-    conn=get_db_connection()
-    try:
-        cur = conn.cursor()
-        # Check duplicate username or email
-        cur.execute("SELECT user_id, email, username FROM users WHERE LOWER(email)=%s OR LOWER(username)=%s", (child_email, username.lower()))
-        existing = cur.fetchone()
-        if existing:
-            if existing['email'].lower() == child_email:
-                return {"success": False, "error": "An account with this email address already exists. Please log in."}
-            return {"success": False, "error": f"The username '{username}' is already taken. Please choose another one."}
-
-        cur.execute(
-            """INSERT INTO users(username, full_name, email, password_hash, role, age, account_status)
-               VALUES(%s, %s, %s, %s, 'CHILD', %s, 'PENDING_APPROVAL') RETURNING user_id""",
-            (username, full_name, child_email, hash_password(password), age)
-        )
-        child_id = cur.fetchone()['user_id']
-
-        # Check existing parent
-        cur.execute("SELECT user_id FROM users WHERE LOWER(email)=%s AND role='PARENT'", (parent_email,))
-        existing_p = cur.fetchone()
-        parent_id = existing_p['user_id'] if existing_p else None
-
-        # Auto-create child profile so child is not blocked by a 101-question setup form!
-        cur.execute(
-            """INSERT INTO child_profiles(child_id, parent_id, full_name, bio)
-               VALUES(%s, %s, %s, %s)
-               ON CONFLICT (child_id) DO UPDATE SET full_name=EXCLUDED.full_name""",
-            (child_id, parent_id, full_name, "Hey! I'm on LittleNet 🌟")
-        )
-
-        cur.execute(
-            """INSERT INTO parent_child_map(
-                   child_id, parent_id, parent_name, parent_email,
-                   approval_token, verification_token, approval_status, approved, is_token_used
-               ) VALUES(%s, %s, %s, %s, %s, %s, 'PENDING_PARENT_VERIFICATION', FALSE, FALSE)
-               RETURNING map_id""",
-            (child_id, parent_id, parent_name, parent_email, token, token)
-        )
-        conn.commit()
-    except Exception as exc:
-        conn.rollback()
-        err_msg = str(exc).lower()
-        if 'unique' in err_msg or 'duplicate' in err_msg:
-            if 'username' in err_msg:
-                return {"success": False, "error": f"The username '{username}' is already taken."}
-            if 'email' in err_msg:
-                return {"success": False, "error": "An account with this email address already exists."}
-        return {"success": False, "error": f"Database error: {exc}"}
-    finally:
-        conn.close()
-
-    base_url = Config.BASE_URL.rstrip('/')
-    verification_url = f"{base_url}/verify-parent/{token}/"
-    
-    # Try rendering rich HTML invitation template
-    email_body = f"""
-    <h2>LittleNet Parent Verification</h2>
-    <p>Child <strong>{full_name}</strong> (@{username}, age {age}) has registered on LittleNet and listed you as their supervising parent.</p>
-    <p>To keep our child community safe, parents must complete a 1-minute live verification to approve their child:</p>
-    <p><a href="{verification_url}" style="display:inline-block;padding:12px 24px;background:#6366f1;color:#ffffff;text-decoration:none;border-radius:8px;font-weight:bold;">Complete Parent Verification & Approve</a></p>
-    <p>Or copy this link into your browser: {verification_url}</p>
-    """
-    try:
-        with open("mailg/templates/parent_invitation.html", "r", encoding="utf-8") as f:
-            template_content = f.read()
-        email_body = Template(template_content).render(
-            parent_name=parent_name,
-            child_name=full_name,
-            child_username=username,
-            child_age=age,
-            child_email=child_email,
-            verification_url=verification_url
-        )
-    except Exception as e:
-        print(f"[MAIL TEMPLATE WARN] {e}")
-
-    send_email(
-        parent_email,
-        f"LittleNet: Action Required - Verify Parent Identity for {full_name}",
-        email_body
-    )
-
-    return {
-        "success": True,
-        "token": token,
-        "verification_token": token,
-        "approval_token": token,
-        "child_id": child_id,
-        "child_name": full_name,
-        "parent_email": parent_email
-    }
 
 def get_parent_verification_data(token):
     """
@@ -263,6 +129,10 @@ def ensure_token_parent_pending(token, form_data):
         if row and row.get("account_status") == "ACTIVE":
             return {"success": True, "already_active": True, "parent_id": row["user_id"]}
         if row:
+            if row.get("account_status") != "PENDING_APPROVAL":
+                # Suspended/rejected (or otherwise non-approved) accounts must
+                # not self-reactivate through the invitation flow.
+                return {"success": False, "error": "This account cannot be verified through this link. Please contact support."}
             parent_id = row["user_id"]
             cur.execute("UPDATE users SET full_name=%s WHERE user_id=%s", (valid["parent_name"], parent_id))
         else:
@@ -282,7 +152,8 @@ def ensure_token_parent_pending(token, form_data):
             conn.rollback()
         except Exception:
             pass
-        return {"success": False, "error": f"Database error: {e}"}
+        logger.exception("Database error while creating pending parent record")
+        return {"success": False, "error": "Database error while processing verification."}
     finally:
         conn.close()
     return {"success": True, "already_active": False, "parent_id": parent_id}
@@ -327,10 +198,30 @@ def process_parent_verification(token, form_data):
 
         if parent_user:
             parent_id = parent_user["user_id"]
-            cur.execute(
-                "UPDATE users SET full_name=%s, account_status='ACTIVE' WHERE user_id=%s",
-                (parent_name, parent_id),
-            )
+            prior_status = parent_user.get("account_status")
+            if prior_status == "ACTIVE":
+                # Already-verified parent (e.g. approving another child via the
+                # already_active branch): update the name only, never touch
+                # account_status here.
+                cur.execute(
+                    "UPDATE users SET full_name=%s WHERE user_id=%s",
+                    (parent_name, parent_id),
+                )
+            elif prior_status == "PENDING_APPROVAL":
+                # Activate only from PENDING_APPROVAL: the status predicate
+                # makes a suspended/rejected account unable to self-reactivate
+                # even if the status changed between the SELECT and this UPDATE.
+                cur.execute(
+                    "UPDATE users SET full_name=%s, account_status='ACTIVE' WHERE user_id=%s AND account_status='PENDING_APPROVAL'",
+                    (parent_name, parent_id),
+                )
+                if cur.rowcount == 0:
+                    conn.rollback()
+                    return {"success": False, "error": "This account cannot be verified through this link. Please contact support."}
+            else:
+                # SUSPENDED / REJECTED / DEACTIVATED / unknown: refuse.
+                conn.rollback()
+                return {"success": False, "error": "This account cannot be verified through this link. Please contact support."}
         else:
             raw_pw = form_data.get("password", "")
             if not raw_pw or len(raw_pw) < 8:
@@ -410,7 +301,8 @@ def process_parent_verification(token, form_data):
         conn.commit()
     except Exception as e:
         conn.rollback()
-        return {"success": False, "error": f"Database error: {e}"}
+        logger.exception("Database error while processing parent verification")
+        return {"success": False, "error": "Database error while processing verification."}
     finally:
         conn.close()
 
@@ -624,7 +516,8 @@ def process_child_decision(approval_token, logged_in_parent_id, decision, reject
             return {"success": True, "action": "DECLINED", "child_name": child_name}
     except Exception as e:
         conn.rollback()
-        return {"success": False, "error": str(e)}
+        logger.exception("Database error while processing child decision")
+        return {"success": False, "error": "Database error while processing decision."}
     finally:
         conn.close()
 

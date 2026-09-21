@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import logging
 import os
 import random
 import secrets
@@ -25,6 +26,7 @@ from auth.parent_email_otp import (
     verify_parent_email_otp,
 )
 from auth.password_reset import (
+    UNIFORM_RESET_MESSAGE,
     parent_reset_child_password,
     request_password_reset,
     verify_and_reset_password,
@@ -104,6 +106,26 @@ _TOKEN_TTL = int(os.getenv("LITTLENET_MOBILE_TOKEN_TTL_SECONDS", "86400"))
 _PENDING_TTL = 30 * 60
 
 
+class _InvalidJsonBody(Exception):
+    """Raised when a JSON request body is present but is not an object."""
+
+
+def _json_dict():
+    """Return the request JSON body as a dict.
+
+    Missing/empty bodies yield {}. A present-but-non-object JSON body
+    (array, string, number, …) raises _InvalidJsonBody, which the mobile
+    blueprint turns into a 400 — handlers never operate on a shape they
+    did not expect.
+    """
+    data = request.get_json(silent=True)
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise _InvalidJsonBody()
+    return data
+
+
 def _serializer(salt: str) -> URLSafeTimedSerializer:
     return URLSafeTimedSerializer(Config.SECRET_KEY, salt=salt)
 
@@ -172,7 +194,11 @@ def _load_claims():
 
 
 def _mobile_token_revoked(token: str) -> bool:
-    """Check the dedicated revocation store independently of route data lookups."""
+    """Check the dedicated revocation store independently of route data lookups.
+
+    Fail-closed: a revocation-store outage must deny the request (True =
+    treated as revoked → 401), never silently admit a possibly-revoked token.
+    """
     if not token:
         return False
     from database.connection import fetch_one as db_fetch_one
@@ -185,8 +211,9 @@ def _mobile_token_revoked(token: str) -> bool:
                 (thash,),
             )
         )
-    except Exception:
-        return False
+    except Exception as exc:
+        logging.getLogger(__name__).exception("revocation-store lookup failed: %s", exc)
+        return True
 
 
 def _require_mobile(*roles):
@@ -403,7 +430,7 @@ def _save_request_image(prefix: str):
                 pass
             return None
         return path
-    data = request.get_json(silent=True) or {}
+    data = _json_dict()
     raw = str(data.get("photo_b64") or data.get("selfie_data") or "").strip()
     if not raw:
         return None
@@ -466,9 +493,11 @@ def _mobile_login_response(user, method="PASSWORD"):
         "auth_method": method,
         "user": _mobile_user_payload(user),
     }
-    face_prof = fetch_one("SELECT biometric_key FROM face_profiles WHERE child_id=%s", (user["user_id"],))
-    if face_prof and face_prof.get("biometric_key"):
-        response["biometric_key"] = face_prof["biometric_key"]
+    # NOTE: biometric_key (the face-challenge HMAC secret) is intentionally
+    # NOT returned on ordinary login. The client receives it once at face
+    # enrollment (enrollChildFace) and uses it to sign challenges;
+    # re-sending the signing secret on every login widened exposure for
+    # zero client consumers (2026-09-22 hardener review).
     if user["role"] == "CHILD":
         uid = int(user["user_id"])
         response["onboarding"] = _onboarding_state(uid)
@@ -774,6 +803,10 @@ def _resolve_parent_review(
 
 
 def register_mobile_api(bp):
+    @bp.errorhandler(_InvalidJsonBody)
+    def _invalid_json_body(_exc):
+        return jsonify(ok=False, error="invalid_request_body"), 400
+
     @bp.route("/api/mobile/v1/health")
     def mobile_health():
         return jsonify(ok=True, client="react-native", framework="expo", webview=False, api_versions=[1, 2])
@@ -782,7 +815,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @limiter.limit("30 per minute")
     def mobile_login():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         identifier = str(data.get("identifier") or data.get("email") or data.get("username") or "").strip()
         password = str(data.get("password") or "")
         mode = str(data.get("mode") or "kids").strip().lower()
@@ -791,7 +824,8 @@ def register_mobile_api(bp):
             return jsonify(error="invalid_credentials"), 401
         expected = {"kids": "CHILD", "parent": "PARENT", "admin": "ADMIN"}.get(mode, "CHILD")
         if user.get("role") != expected:
-            return jsonify(error="wrong_mode", actual_role=user.get("role")), 403
+            # Generic response: never reveal the account's actual role.
+            return jsonify(error="invalid_credentials_for_mode"), 401
         if user.get("role") == "PARENT" and user.get("account_status") == "PENDING_APPROVAL":
             return jsonify(
                 error="parent_verification_required",
@@ -809,13 +843,24 @@ def register_mobile_api(bp):
         if token:
             thash = hashlib.sha256(token.encode()).hexdigest()
             uid = (g.mobile_claims or {}).get("uid")
+            # Fail closed: if the revocation store cannot record this logout,
+            # do not tell the client it is logged out.
             try:
                 execute(
                     "INSERT INTO mobile_token_revocations (token_hash, user_id, revoked_at) VALUES (%s, %s, NOW()) ON CONFLICT (token_hash) DO NOTHING",
                     (thash, uid),
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logging.getLogger(__name__).exception("logout: revocation-store insert failed: %s", exc)
+                return jsonify(error="logout_failed"), 503
+            # Atomic kill switch: bump session_version so every bearer token
+            # for this user dies even if a revocation-row write raced.
+            if uid:
+                try:
+                    _revoke_all_user_sessions(int(uid))
+                except Exception as exc:
+                    logging.getLogger(__name__).exception("logout: session_version bump failed: %s", exc)
+                    return jsonify(error="logout_failed"), 503
         key = (g.mobile_claims or {}).get("usage_session_key")
         if key:
             try:
@@ -828,7 +873,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @limiter.limit("10 per minute")
     def mobile_face_login():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         identifier = str(data.get("identifier") or request.form.get("identifier") or "").strip().lower()
         mode = str(data.get("mode") or request.form.get("mode") or "kids").strip().lower()
         if mode == "parent":
@@ -1040,7 +1085,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @limiter.limit("20 per hour")
     def mobile_parent_register():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         try:
             result = begin_parent_registration(data)
         except ValueError as exc:
@@ -1060,7 +1105,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @limiter.limit("20 per minute")
     def mobile_parent_verify_email():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         pending = _load_pending_parent(str(data.get("pending_token") or ""))
         if not pending:
             return jsonify(error="pending_verification_expired"), 401
@@ -1071,10 +1116,15 @@ def register_mobile_api(bp):
         # registration flow (device authentication now gates Parent Mode
         # locally). Email OTP ownership is the final server-side step:
         # activate the parent account here and return a signed-in session.
-        execute(
-            "UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'",
+        # The status predicate is load-bearing: a SUSPENDED/REJECTED parent
+        # must not self-reactivate by completing an OTP for a stale pending
+        # row. Fail closed when no PENDING_APPROVAL row was flipped.
+        activated = execute_count(
+            "UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT' AND account_status='PENDING_APPROVAL'",
             (int(user["user_id"]),),
         )
+        if activated != 1:
+            return jsonify(error="parent_activation_failed"), 403
         user = fetch_one("SELECT * FROM users WHERE user_id=%s", (int(user["user_id"]),))
         if not user or user.get("account_status") != "ACTIVE":
             return jsonify(error="parent_activation_failed"), 500
@@ -1088,7 +1138,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @limiter.limit("10 per 15 minutes")
     def mobile_parent_resend_email():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         pending = _load_pending_parent(str(data.get("pending_token") or ""))
         if not pending:
             return jsonify(error="pending_verification_expired"), 401
@@ -1102,7 +1152,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @limiter.limit("60 per 15 minutes")
     def mobile_parent_email_status():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         pending = _load_pending_parent(str(data.get("pending_token") or ""))
         if not pending:
             return jsonify(error="pending_verification_expired"), 401
@@ -1137,24 +1187,28 @@ def register_mobile_api(bp):
     @csrf.exempt
     @limiter.limit("10 per 15 minutes")
     def mobile_forgot_password():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         identifier = str(data.get("identifier") or "").strip()
-        ok, error, details = request_password_reset(identifier)
+        ok, message, details = request_password_reset(identifier)
         if not ok:
-            return jsonify(ok=False, error=error), 400
+            return jsonify(ok=False, error=message), 400
+        if not details:
+            # Anti-enumeration: no account matched (or no code could be
+            # sent), but the response is indistinguishable from success.
+            return jsonify(ok=True, message=UNIFORM_RESET_MESSAGE)
         return jsonify(
             ok=True,
             user_id=details["user_id"],
             masked_email=details["masked_email"],
             is_parent_proxy=details["is_parent_proxy"],
-            message=f"Verification code sent to {details['masked_email']}.",
+            message=message or UNIFORM_RESET_MESSAGE,
         )
 
     @bp.route("/api/mobile/v1/auth/reset-password", methods=["POST"])
     @csrf.exempt
     @limiter.limit("10 per 15 minutes")
     def mobile_reset_password():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         try:
             user_id = int(data.get("user_id"))
         except (TypeError, ValueError):
@@ -1328,7 +1382,7 @@ def register_mobile_api(bp):
             return gate
         uid = int(g.mobile_user["user_id"])
         if request.method == "PUT":
-            data = request.get_json(silent=True) or {}
+            data = _json_dict()
             current = get_child_profile(uid) or {}
             merged = dict(current)
             for key in ("full_name", "school_name", "location", "current_class", "bio", "date_of_birth"):
@@ -1384,7 +1438,7 @@ def register_mobile_api(bp):
         # only, idempotent. Reuses the same notifications table as the web
         # child surface (child/routes.py notifications_read).
         uid = int(g.mobile_user["user_id"])
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         raw_ids = data.get("notification_ids", None)
         if raw_ids is None:
             execute("UPDATE notifications SET is_read=TRUE WHERE user_id=%s", (uid,))
@@ -1461,7 +1515,7 @@ def register_mobile_api(bp):
                 out.append(_clean(item))
             return jsonify(ok=True, peer=_clean(peer), messages=out)
 
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         text = str(data.get("message_text") or "").strip()
         if not text:
             return jsonify(error="empty_message"), 400
@@ -1698,7 +1752,7 @@ def register_mobile_api(bp):
                 item["avatar_url"] = _asset_url(item.pop("profile_picture", None))
                 out.append(_clean(item))
             return jsonify(ok=True, comments=out)
-        text = str((request.get_json(silent=True) or {}).get("text") or "").strip()
+        text = str((_json_dict()).get("text") or "").strip()
         if not text:
             return jsonify(error="empty_comment"), 400
         pii = scan_pii(text)
@@ -2240,7 +2294,7 @@ def register_mobile_api(bp):
         allowed = {x["challenge_id"] for x in learning_challenges(uid)}
         if challenge_id not in allowed:
             return jsonify(error="challenge_not_available"), 403
-        response = str((request.get_json(silent=True) or {}).get("response") or "").strip()
+        response = str((_json_dict()).get("response") or "").strip()
         expected = str(challenge.get("expected_answer") or "").strip()
         correct = True if not expected else response.casefold() == expected.casefold()
         points = int(challenge.get("points") or 0) if correct else 0
@@ -2294,7 +2348,7 @@ def register_mobile_api(bp):
     @_require_mobile("CHILD")
     def mobile_quiz_answer(quiz_id):
         uid = int(g.mobile_user["user_id"])
-        answer = str((request.get_json(silent=True) or {}).get("answer") or "").strip()
+        answer = str((_json_dict()).get("answer") or "").strip()
         if not answer:
             return jsonify(error="answer_required"), 400
 
@@ -2373,7 +2427,7 @@ def register_mobile_api(bp):
         uid = int(g.mobile_user["user_id"])
         if target_id == uid:
             return jsonify(error="cannot_block_self"), 400
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         action = str(data.get("action") or "block").lower()
         if action == "unblock":
             execute("DELETE FROM blocked_users WHERE blocker_id=%s AND blocked_id=%s", (uid, target_id))
@@ -2410,7 +2464,7 @@ def register_mobile_api(bp):
         uid = int(g.mobile_user["user_id"])
         if target_id == uid:
             return jsonify(error="cannot_mute_self"), 400
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         action = str(data.get("action") or "mute").lower()
         if action == "unmute":
             execute("DELETE FROM muted_users WHERE muter_id=%s AND muted_id=%s", (uid, target_id))
@@ -2424,7 +2478,7 @@ def register_mobile_api(bp):
     @_require_mobile("CHILD")
     def mobile_kids_report():
         uid = int(g.mobile_user["user_id"])
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         kind = str(data.get("target_type") or "").upper()
         try:
             tid = int(data.get("target_id", 0))
@@ -2520,7 +2574,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("PARENT")
     def mobile_parent_create_child():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         try:
             child_id = create_child_for_verified_parent(int(g.mobile_user["user_id"]), data)
         except ValueError as exc:
@@ -2587,7 +2641,7 @@ def register_mobile_api(bp):
         pid = int(g.mobile_user["user_id"])
         if not owns(pid, child_id):
             return jsonify(error="child_not_found"), 404
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         action = str(data.get("action") or "").lower()
         if action not in {"approve", "reject"}:
             return jsonify(error="invalid_action"), 400
@@ -2619,7 +2673,7 @@ def register_mobile_api(bp):
         if not owns(pid, child_id):
             return jsonify(error="child_not_found"), 404
         if request.method == "PUT":
-            data = request.get_json(silent=True) or {}
+            data = _json_dict()
             flags = {
                 "allow_reels", "allow_stories", "allow_messaging", "allow_posting", "allow_discover",
                 "quiet_hours_enabled", "educational_only_feed",
@@ -2675,7 +2729,7 @@ def register_mobile_api(bp):
     @_require_mobile("PARENT")
     def mobile_parent_reset_child_password(child_id):
         pid = int(g.mobile_user["user_id"])
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         new_password = str(data.get("new_password") or "")
         ok, msg = parent_reset_child_password(pid, child_id, new_password)
         if not ok:
@@ -2703,7 +2757,7 @@ def register_mobile_api(bp):
         pid = int(g.mobile_user["user_id"])
         if not owns(pid, child_id):
             return jsonify(error="child_not_found"), 404
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         try:
             minutes = int(data.get("daily_limit_minutes"))
         except (TypeError, ValueError):
@@ -2739,7 +2793,7 @@ def register_mobile_api(bp):
         pid = int(g.mobile_user["user_id"])
         if not owns(pid, child_id):
             return jsonify(error="child_not_found"), 404
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         try:
             extra = int(data.get("additional_minutes", 30))
         except (TypeError, ValueError):
@@ -2809,7 +2863,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("PARENT")
     def mobile_parent_review(event_id):
-        action = str((request.get_json(silent=True) or {}).get("action") or "").upper()
+        action = str((_json_dict()).get("action") or "").upper()
         ok, result = _resolve_parent_review(int(g.mobile_user["user_id"]), event_id, action)
         status = 200 if ok else 403 if result == "forbidden" else 404 if result == "not_found" else 400
         return jsonify(ok=ok, result=result), status
@@ -2823,7 +2877,7 @@ def register_mobile_api(bp):
     @csrf.exempt
     @_require_mobile("PARENT")
     def mobile_parent_follow_action():
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         try:
             child_id = int(data.get("child_id"))
             target_id = int(data.get("target_id"))
@@ -3114,7 +3168,7 @@ def register_mobile_api(bp):
         from services.social import story_visible_to
         if not story_visible_to(uid, story_id):
             return jsonify(ok=False, error="story_not_found_or_forbidden"), 404
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         try:
             ratio = min(1.0, max(0.0, float(data.get("completion_ratio", 1.0))))
         except (TypeError, ValueError):
@@ -3157,7 +3211,7 @@ def register_mobile_api(bp):
     @_require_mobile()
     def mobile_device_register():
         uid = int(g.mobile_user["user_id"])
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         token = str(data.get("push_token") or data.get("token") or "").strip()
         platform = str(data.get("platform") or "android").strip()
         device_id = data.get("device_identifier")
@@ -3190,7 +3244,7 @@ def register_mobile_api(bp):
         if gate:
             return gate
         uid = int(g.mobile_user["user_id"])
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         session_id = str(data.get("session_id") or "").strip()
         source_type = str(data.get("source_type") or "POST").strip().upper()
         try:
@@ -3250,7 +3304,7 @@ def register_mobile_api(bp):
         if gate:
             return gate
         uid = int(g.mobile_user["user_id"])
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         events = data.get("events") or []
         if not isinstance(events, list):
             return jsonify(error="invalid_events_format"), 400
@@ -3308,7 +3362,7 @@ def register_mobile_api(bp):
         if gate:
             return gate
         uid = int(g.mobile_user["user_id"])
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         action = str(data.get("action") or "").upper()
         source_type = str(data.get("source_type") or "SOCIAL").upper()
         try:

@@ -253,7 +253,6 @@ def parent_registration_email_gate():
 
 
 @api_bp.route('/api/login/',methods=['POST'])
-@csrf.exempt
 @limiter.limit('10 per minute')
 def api_login():
     d=request.get_json(silent=True) or {}; u=login_user(d.get('email',''),d.get('password',''))

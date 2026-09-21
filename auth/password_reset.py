@@ -21,6 +21,11 @@ from mailg.send_email import send_email
 OTP_TTL_MINUTES = 15
 OTP_MAX_ATTEMPTS = 5
 
+# Uniform anti-enumeration response for password-reset requests. Returned
+# whether or not an account matched (and whether or not a code was sent),
+# so the response never reveals account existence or suspension status.
+UNIFORM_RESET_MESSAGE = "If an account exists with that username or email, a reset code was sent."
+
 
 def _ensure_table():
     conn = get_db_connection()
@@ -63,7 +68,13 @@ def _mask_email(email: str) -> str:
 
 
 def request_password_reset(identifier: str):
-    """Request a password reset OTP for a username or email."""
+    """Request a password reset OTP for a username or email.
+
+    Anti-enumeration: unknown identifiers, suspended accounts, and accounts
+    with no usable email all receive the same success-shaped uniform
+    response. The caller must never branch on existence/suspension pre-auth,
+    so no code is sent in those cases but the response is indistinguishable.
+    """
     _ensure_table()
     ident = (identifier or "").strip()
     if not ident:
@@ -79,10 +90,13 @@ def request_password_reset(identifier: str):
         (ident, ident),
     )
     if not user:
-        return False, "No LittleNet account found matching that username or email.", None
+        # Unknown identifier: uniform response, no code sent.
+        return True, UNIFORM_RESET_MESSAGE, None
 
     if user.get("account_status") == "SUSPENDED":
-        return False, "This account is suspended. Please contact safety support.", None
+        # Suspended: uniform response, no code sent. (Suspension is enforced
+        # again at code-verification time; nothing here reveals it.)
+        return True, UNIFORM_RESET_MESSAGE, None
 
     # Determine recipient email
     target_email = (user.get("email") or "").strip()
@@ -106,9 +120,10 @@ def request_password_reset(identifier: str):
 
 
     if not target_email or "@" not in target_email:
-        if user.get("role") == "CHILD":
-            return False, "No parent email found for this child account. Ask your parent to reset your password from Parent Mode.", None
-        return False, "No valid email address registered for this account.", None
+        # No usable email: uniform response, no code sent. The distinct
+        # "no parent email" / "no valid email" messages used to confirm the
+        # account exists.
+        return True, UNIFORM_RESET_MESSAGE, None
 
     code = f"{secrets.randbelow(1_000_000):06d}"
     code_hash = _otp_hash(user["user_id"], code)
@@ -165,7 +180,7 @@ def request_password_reset(identifier: str):
 
     sent = send_email(target_email, subject, body)
 
-    return True, None, {
+    return True, UNIFORM_RESET_MESSAGE, {
         "user_id": user["user_id"],
         "username": user["username"],
         "masked_email": _mask_email(target_email),
@@ -220,7 +235,15 @@ def verify_and_reset_password(user_id: int, code: str, new_password: str):
                 conn.commit()
                 return False, "Incorrect verification code. Please check your email and try again."
 
-            # Code valid: update password hash and increment session_version to invalidate prior bearer tokens
+            # Code valid: refuse suspended accounts even if the code was issued
+            # before the suspension (post-auth check — reveals nothing
+            # pre-auth since a valid code is required to reach here).
+            cur.execute("SELECT account_status FROM users WHERE user_id=%s", (user_id,))
+            acct = cur.fetchone()
+            if not acct or acct.get("account_status") == "SUSPENDED":
+                conn.rollback()
+                return False, "This account is suspended. Please contact safety support."
+            # Update password hash and increment session_version to invalidate prior bearer tokens
             new_hash = bcrypt.hashpw(new_pwd.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
             cur.execute("UPDATE users SET password_hash = %s, session_version = COALESCE(session_version, 1) + 1 WHERE user_id = %s", (new_hash, user_id))
             cur.execute("DELETE FROM password_reset_otps WHERE user_id = %s", (user_id,))

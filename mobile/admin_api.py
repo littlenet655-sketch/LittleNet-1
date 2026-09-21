@@ -7,7 +7,7 @@ from flask import g, jsonify, request
 from database.connection import fetch_all, fetch_one, get_db_connection
 from auth.service import parent_verification_complete
 from extensions import csrf, limiter
-from mobile.api import _asset_url, _clean, _require_mobile, _resolve_parent_review
+from mobile.api import _asset_url, _clean, _json_dict, _require_mobile, _resolve_parent_review
 from mobile.stitch_api import register_mobile_stitch_api
 
 
@@ -68,7 +68,7 @@ def register_mobile_admin_api(bp):
                     preview['poster_url'] = _asset_url(poster_ref)
             return jsonify(ok=True, event=_clean(event), preview=_clean(preview))
 
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         requested = str(data.get('action') or '').upper()
         if requested not in {'APPROVE', 'BLOCK', 'ESCALATE'}:
             return jsonify(error='invalid_action'), 400
@@ -139,7 +139,7 @@ def register_mobile_admin_api(bp):
     @limiter.limit('30 per minute')
     @_require_mobile('ADMIN')
     def mobile_admin_user_status(target_user_id):
-        data = request.get_json(silent=True) or {}
+        data = _json_dict()
         new_status = str(data.get('status') or '').upper()
         if new_status not in {'ACTIVE', 'SUSPENDED'}:
             return jsonify(error='invalid_status'), 400
