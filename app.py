@@ -40,6 +40,11 @@ def create_app():
             raise RuntimeError('AI_SHARED_SECRET is required when AI_SERVICE_URL is configured')
 
     csrf.init_app(app);limiter.init_app(app)
+    try:
+        from services.analytics import init_analytics
+        init_analytics()
+    except Exception:
+        pass
     from flask_wtf.csrf import CSRFError
 
     @app.errorhandler(CSRFError)

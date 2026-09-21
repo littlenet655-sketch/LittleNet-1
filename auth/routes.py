@@ -359,6 +359,11 @@ def verify_parent_email_page():
             active = fetch_one('SELECT * FROM users WHERE user_id=%s', (parent['user_id'],))
             if active and active.get('account_status') == 'ACTIVE':
                 _set_session(active)
+                try:
+                    from services.analytics import capture as analytics_capture
+                    analytics_capture(parent['user_id'], 'parent_registered', {})
+                except Exception:
+                    pass
             return redirect('/parent/dashboard/')
         return render_template('parent_email_verify.html', masked_email=_mask_email(parent['email']), error=error, delivery_error=delivery_error), 400
     return render_template('parent_email_verify.html', masked_email=_mask_email(parent['email']), delivery_error=delivery_error)

@@ -51,10 +51,21 @@ export function fetchConversations(token: string): Promise<{ ok: boolean; conver
   return get(routes.conversations, token);
 }
 
-export function fetchChat(token: string, peerId: number, limit = 30, beforeId?: number): Promise<{ ok: boolean; peer: Record<string, unknown>; messages: ChatMessage[] }> {
+export function fetchChat(token: string, peerId: number, limit = 30, beforeId?: number): Promise<{ ok: boolean; peer: Record<string, unknown>; messages: ChatMessage[]; peer_typing?: boolean }> {
   const p = new URLSearchParams({ limit: String(limit) });
   if (beforeId) p.set('before_id', String(beforeId));
   return get(`${routes.chat(peerId)}?${p.toString()}`, token);
+}
+
+/** Poll for messages newer than afterId plus the peer typing flag. */
+export function fetchChatUpdates(token: string, peerId: number, afterId: number): Promise<{ ok: boolean; messages: ChatMessage[]; peer_typing?: boolean }> {
+  const p = new URLSearchParams({ after_id: String(afterId), limit: '50' });
+  return get(`${routes.chat(peerId)}?${p.toString()}`, token);
+}
+
+/** Typing heartbeat; server enforces the TTL. Fire-and-forget safe. */
+export function sendTyping(token: string, peerId: number): Promise<{ ok: boolean }> {
+  return postJson(`${routes.chat(peerId)}/typing`, {}, token);
 }
 
 export function sendChatText(token: string, peerId: number, messageText: string): Promise<{ ok: boolean; status: string }> {

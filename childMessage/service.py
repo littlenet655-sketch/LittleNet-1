@@ -16,7 +16,7 @@ def conversation(a,b):
         return r['conversation_id'] if r and can_interact(a,b) else None
 
 
-def messages(cid, viewer, limit=None, before_id=None):
+def messages(cid, viewer, limit=None, before_id=None, after_id=None):
     """Read messages only for an authorized participant pair using fixed SQL."""
     conv = fetch_one(
         'SELECT child1_id,child2_id FROM child_conversations WHERE conversation_id=%s AND (child1_id=%s OR child2_id=%s)',
@@ -35,8 +35,43 @@ def messages(cid, viewer, limit=None, before_id=None):
            WHERE m.conversation_id = %s AND m.is_deleted = FALSE
              AND (m.moderation_status = 'ALLOWED' OR m.sender_child_id = %s)
              AND (%s::bigint IS NULL OR m.child_message_id < %s::bigint)
+             AND (%s::bigint IS NULL OR m.child_message_id > %s::bigint)
            ORDER BY m.sent_at DESC, m.child_message_id DESC
            LIMIT %s""",
-        (cid, viewer, before_id, before_id, safe_limit),
+        (cid, viewer, before_id, before_id, after_id, after_id, safe_limit),
     )
     return list(reversed(rows))
+
+
+TYPING_TTL_SECONDS = 6
+
+
+def set_typing(cid, user_id):
+    """Record a typing heartbeat. Ephemeral: validity is decided at read time."""
+    execute(
+        """INSERT INTO chat_typing(conversation_id, user_id, updated_at)
+           VALUES(%s, %s, NOW())
+           ON CONFLICT (conversation_id, user_id)
+           DO UPDATE SET updated_at = NOW()""",
+        (cid, user_id),
+    )
+    # Opportunistic cleanup of stale heartbeats; cheap indexed delete.
+    try:
+        execute(
+            "DELETE FROM chat_typing WHERE updated_at < NOW() - (%s || ' seconds')::interval",
+            (TYPING_TTL_SECONDS * 4,),
+        )
+    except Exception:
+        pass
+
+
+def is_peer_typing(cid, viewer):
+    """True if the other participant's typing heartbeat is fresh."""
+    row = fetch_one(
+        """SELECT 1 FROM chat_typing
+           WHERE conversation_id = %s AND user_id != %s
+             AND updated_at > NOW() - (%s || ' seconds')::interval
+           LIMIT 1""",
+        (cid, viewer, TYPING_TTL_SECONDS),
+    )
+    return bool(row)

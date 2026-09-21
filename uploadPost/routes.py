@@ -82,6 +82,14 @@ def _create(content_type,payload,caption,category,is_story=False,is_reel=False,p
         from services.publication_lifecycle import refresh_publication_visibility
         refresh_publication_visibility(row['post_id'], session['user_id'], is_reel=is_reel)
     log(session['user_id'],'POST_CREATED',{'post_id':row['post_id'],'status':d.action,'type':content_type})
+    try:
+        from services.analytics import capture as analytics_capture
+        analytics_capture(session['user_id'], 'post_created', {
+            'post_id': row['post_id'], 'status': d.action,
+            'kind': 'story' if is_story else ('reel' if is_reel else 'post'),
+        })
+    except Exception:
+        pass
     return row['post_id'],d
 
 @upload_bp.route('/feed/')

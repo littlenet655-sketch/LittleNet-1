@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { FlatList, Keyboard, KeyboardAvoidingView, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useIsFocused } from '@react-navigation/native';
-import { fetchChat, sendChatText, sharePostToChat, type ChatMessage } from '../../api/kidsChat';
+import { fetchChat, fetchChatUpdates, sendChatText, sendTyping, sharePostToChat, type ChatMessage } from '../../api/kidsChat';
 import { ApiError } from '../../api/client';
 import { useAuth } from '../../auth/AuthProvider';
 import { CHAT_BLOCKED_COPY, dedupeChat, isChatMessagePending } from '../../kids/social';
@@ -58,6 +58,13 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
   const [shareNotice, setShareNotice] = useState('');
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [peerTyping, setPeerTyping] = useState(false);
+  const lastTypingSent = useRef(0);
+  // Ref mirror so the poll interval always reads the latest messages.
+  const messagesRef = useRef(messages);
+  useEffect(() => {
+    messagesRef.current = messages;
+  }, [messages]);
   const flatListRef = useRef<FlatList>(null);
   const nav = navigation as unknown as { goBack: () => void; navigate: (r: string, p: object) => void };
 
@@ -117,6 +124,39 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
   useEffect(() => {
     if (focused && foreground && messages.length > 0) void load('silent');
   }, [focused, foreground]);
+
+  // Real-time v1: while the chat is open and visible, poll for new messages
+  // every few seconds and refresh the peer typing flag. Cheap indexed query;
+  // the server stays authoritative and polling never clobbers the list.
+  useEffect(() => {
+    if (!session || !peerId || !focused || !foreground || !online || loading) return;
+    const timer = setInterval(() => {
+      void (async () => {
+        try {
+          const maxId = messagesRef.current.reduce((m, x) => Math.max(m, x.child_message_id), 0);
+          if (!maxId) return;
+          const res = await fetchChatUpdates(session.token, peerId, maxId);
+          if (res.messages?.length) {
+            setMessages((prev) => dedupeChat([...prev, ...res.messages]));
+          }
+          setPeerTyping(!!res.peer_typing);
+        } catch {
+          // Silent: transient poll failures must not disturb the chat.
+        }
+      })();
+    }, 4000);
+    return () => clearInterval(timer);
+  }, [session, peerId, focused, foreground, online, loading]);
+
+  // Typing heartbeat: throttled, fire-and-forget. The server owns the TTL.
+  const onChangeText = useCallback((value: string) => {
+    setText(value);
+    if (!session || !peerId || !online || !value.trim()) return;
+    const now = Date.now();
+    if (now - lastTypingSent.current < 3000) return;
+    lastTypingSent.current = now;
+    void sendTyping(session.token, peerId).catch(() => {});
+  }, [session, peerId, online]);
 
   useEffect(() => {
     if (messages.length > 0) {
@@ -205,7 +245,10 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
         style={styles.keyboardWrap}
       >
         <View style={styles.peerRow}>
-          <Text style={styles.peer}>{peerName}</Text>
+          <View style={styles.peerCol}>
+            <Text style={styles.peer}>{peerName}</Text>
+            {peerTyping ? <Text style={styles.typingLabel}>typing…</Text> : null}
+          </View>
           <Button label="Details" variant="secondary" onPress={() => nav.navigate('ChatDetails', { peerId })} />
         </View>
         {!online ? <OfflineBanner online={online} /> : null}
@@ -270,7 +313,7 @@ export function ChatScreen({ route, navigation }: ChildScreenProps<'Chat'>) {
           <TextInput
             style={styles.chatInput}
             value={text}
-            onChangeText={setText}
+            onChangeText={onChangeText}
             placeholder="Message…"
             placeholderTextColor={colors.muted}
             multiline={false}
@@ -307,6 +350,8 @@ const styles = StyleSheet.create({
     borderBottomColor: '#EFEFEF',
   },
   peer: { flex: 1, fontWeight: '800', color: colors.ink, fontSize: 17 },
+  peerCol: { flex: 1 },
+  typingLabel: { fontSize: 12, color: colors.muted, fontStyle: 'italic', marginTop: 1 },
   keyboardWrap: { flex: 1 },
   listContent: { paddingHorizontal: 12, paddingBottom: 16, paddingTop: 8, flexGrow: 1 },
   dayDivider: {

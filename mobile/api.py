@@ -47,7 +47,7 @@ from child.service import (
     replace_profile_tags,
     unfollow_child,
 )
-from childMessage.service import conversation, messages
+from childMessage.service import conversation, is_peer_typing, messages, set_typing
 from config import Config
 from database.connection import execute, execute_count, fetch_all, fetch_one, get_db_connection
 from extensions import csrf, limiter
@@ -1504,16 +1504,17 @@ def register_mobile_api(bp):
         if request.method == "GET":
             limit = request.args.get("limit", type=int)
             before_id = request.args.get("before_id", type=int)
+            after_id = request.args.get("after_id", type=int)
             execute("UPDATE child_messages SET is_seen=TRUE,seen_at=NOW(),delivered_at=COALESCE(delivered_at,NOW()) WHERE conversation_id=%s AND receiver_child_id=%s AND moderation_status='ALLOWED'", (cid, uid))
             peer = fetch_one("SELECT user_id,username,full_name FROM users WHERE user_id=%s", (peer_id,)) or {}
-            rows = messages(cid, uid, limit=limit, before_id=before_id)
+            rows = messages(cid, uid, limit=limit, before_id=before_id, after_id=after_id)
             out = []
             for row in rows:
                 item = dict(row)
                 item["media_url"] = _asset_url(item.get("media_path"))
                 item.pop("media_path", None)
                 out.append(_clean(item))
-            return jsonify(ok=True, peer=_clean(peer), messages=out)
+            return jsonify(ok=True, peer=_clean(peer), messages=out, peer_typing=is_peer_typing(cid, uid))
 
         data = _json_dict()
         text = str(data.get("message_text") or "").strip()
@@ -1556,6 +1557,11 @@ def register_mobile_api(bp):
             returning=True,
         )
         record(uid, "MESSAGE", row["child_message_id"], signals, final_decision)
+        try:
+            from services.analytics import capture as analytics_capture
+            analytics_capture(uid, "message_sent", {"status": final_decision.action})
+        except Exception:
+            pass
         if final_decision.action == "REVIEW":
             parent_notify(uid, "REVIEW_REQUIRED", "A message needs safety review", "/parent/safety/")
         else:
@@ -1567,6 +1573,23 @@ def register_mobile_api(bp):
             except Exception:
                 pass
         return jsonify(ok=True, status=final_decision.action)
+
+    @bp.route("/api/mobile/v1/kids/chat/<int:peer_id>/typing", methods=["POST"])
+    @csrf.exempt
+    @limiter.limit("20 per minute")
+    @_require_mobile("CHILD")
+    def mobile_kids_chat_typing(peer_id):
+        # Typing heartbeat: ephemeral presence only. Requires the same approved
+        # connection as messaging; the TTL is enforced server-side at read time.
+        gate = _child_gate("messaging")
+        if gate:
+            return gate
+        uid = int(g.mobile_user["user_id"])
+        cid = conversation(uid, peer_id)
+        if not cid:
+            return jsonify(error="approved_connection_required"), 403
+        set_typing(cid, uid)
+        return jsonify(ok=True)
 
     @bp.route("/api/mobile/v1/kids/follow/<int:child_id>", methods=["POST"])
     @csrf.exempt
