@@ -126,13 +126,6 @@ def _tokenizer_exists(root: Path) -> bool:
     ))
 
 
-def _hf_weights_exist(root: Path) -> bool:
-    return any((root / name).is_file() and (root / name).stat().st_size > 0 for name in (
-        "model.safetensors",
-        "pytorch_model.bin",
-    ))
-
-
 def _custom_bundle_available(root: Path) -> bool:
     return bool(
         (root / _CUSTOM_MODEL).is_file()
@@ -144,18 +137,9 @@ def _custom_bundle_available(root: Path) -> bool:
     )
 
 
-def _hf_bundle_available(root: Path) -> bool:
-    return bool(
-        (root / "config.json").is_file()
-        and _metadata_path(root).is_file()
-        and _hf_weights_exist(root)
-        and _tokenizer_exists(root)
-    )
-
-
 def available() -> bool:
     root = bundle_dir()
-    return root.is_dir() and (_custom_bundle_available(root) or _hf_bundle_available(root))
+    return root.is_dir() and _custom_bundle_available(root)
 
 
 def _clean_label(value: Any) -> str:
@@ -299,11 +283,9 @@ def _load_metadata() -> dict[str, Any]:
     labels = _extract_labels(raw)
     review_thresholds, block_thresholds = _threshold_maps(root, raw, labels)
 
-    fmt = str(raw.get("format") or "").strip().lower()
-    if _custom_bundle_available(root):
-        fmt = "littlenet_v2_custom_distilbert"
-    elif not fmt:
-        fmt = "huggingface_sequence_classification"
+    if not _custom_bundle_available(root):
+        raise RuntimeError("trained_text_final_v2_bundle_incomplete")
+    fmt = "littlenet_v2_custom_distilbert"
 
     try:
         max_length = int(raw.get("max_length") or (128 if fmt == "littlenet_v2_custom_distilbert" else 256))
@@ -374,17 +356,14 @@ def _state_dict_from_checkpoint(checkpoint: Any) -> dict[str, Any]:
 def _build_custom_runtime(root: Path, metadata: dict[str, Any]):
     import torch
     import torch.nn as nn
-    from transformers import AutoModel, AutoTokenizer
+    from transformers import DistilBertConfig, DistilBertModel, DistilBertTokenizerFast
 
     class LittleNetTextSafetyModel(nn.Module):
         def __init__(self):
             super().__init__()
-            self.encoder = AutoModel.from_pretrained(
-                str(root / _CUSTOM_ENCODER_DIR),
-                local_files_only=True,
-                revision="local",
-            )
-            hidden = int(getattr(self.encoder.config, "hidden_size", 0) or getattr(self.encoder.config, "dim", 0))
+            config = DistilBertConfig.from_json_file(str(root / _CUSTOM_ENCODER_DIR / "config.json"))
+            self.encoder = DistilBertModel(config)
+            hidden = int(getattr(config, "dim", 0) or getattr(config, "hidden_size", 0))
             if hidden <= 0:
                 raise RuntimeError("trained_text_hidden_size_missing")
             self.dropout = nn.Dropout(float(metadata["dropout"]))
@@ -395,11 +374,20 @@ def _build_custom_runtime(root: Path, metadata: dict[str, Any]):
             first_token = outputs.last_hidden_state[:, 0, :]
             return self.classifier(self.dropout(first_token))
 
-    tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True, revision="local")
+    vocab = root / "vocab.txt"
+    tokenizer_json = root / "tokenizer.json"
+    if not vocab.is_file():
+        raise RuntimeError("trained_text_vocab_missing")
+    tokenizer = DistilBertTokenizerFast(
+        vocab_file=str(vocab),
+        tokenizer_file=str(tokenizer_json) if tokenizer_json.is_file() else None,
+        do_lower_case=False,
+        model_max_length=int(metadata["max_length"]),
+    )
     model = LittleNetTextSafetyModel()
+
     # Final V2 is a plain checkpoint dictionary containing tensors plus simple
-    # metadata. Production accepts only PyTorch's restricted weights-only loader;
-    # an incompatible artifact fails preflight instead of enabling pickle code.
+    # metadata. Production accepts only PyTorch's restricted weights-only loader.
     checkpoint = torch.load(root / _CUSTOM_MODEL, map_location="cpu", weights_only=True)
     state_dict = _state_dict_from_checkpoint(checkpoint)
 
@@ -420,25 +408,6 @@ def _build_custom_runtime(root: Path, metadata: dict[str, Any]):
     model.eval()
     return tokenizer, model
 
-
-def _build_hf_runtime(root: Path, metadata: dict[str, Any]):
-    from transformers import AutoModelForSequenceClassification, AutoTokenizer
-
-    tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True, revision="local")
-    model = AutoModelForSequenceClassification.from_pretrained(
-        str(root),
-        local_files_only=True,
-        revision="local",
-    )
-    model.eval()
-    num_labels = int(getattr(model.config, "num_labels", 0) or 0)
-    if num_labels != len(metadata["labels"]):
-        raise RuntimeError(
-            f"trained_text_label_count_mismatch:model={num_labels}:metadata={len(metadata['labels'])}"
-        )
-    return tokenizer, model
-
-
 def _runtime():
     global _RUNTIME
     if _RUNTIME is not None:
@@ -449,12 +418,7 @@ def _runtime():
         if _RUNTIME is None:
             root = bundle_dir()
             metadata = _load_metadata()
-            if metadata["format"] == "littlenet_v2_custom_distilbert":
-                tokenizer, model = _build_custom_runtime(root, metadata)
-            elif metadata["format"] == "huggingface_sequence_classification":
-                tokenizer, model = _build_hf_runtime(root, metadata)
-            else:
-                raise RuntimeError(f"trained_text_format_unsupported:{metadata['format']}")
+            tokenizer, model = _build_custom_runtime(root, metadata)
             _RUNTIME = (tokenizer, model, metadata)
     return _RUNTIME
 
@@ -605,7 +569,6 @@ def preflight() -> dict[str, Any]:
         "path": str(root),
         "available": available(),
         "custom_v2_layout": _custom_bundle_available(root) if root.is_dir() else False,
-        "hf_layout": _hf_bundle_available(root) if root.is_dir() else False,
         "metadata_exists": _metadata_path(root).is_file() if root.is_dir() else False,
         "loadable": False,
     }
