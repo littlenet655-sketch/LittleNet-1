@@ -101,15 +101,17 @@ export function useReelPlayback({
     }
   }, [nearby, currentSource, requestFreshPlayback]);
 
-  // Preemptive Credential Expiry Check
+  // Preemptive Credential Expiry Check for both social and curated Reels.
   const checkCredentialExpiry = useCallback(async () => {
-    if (item.source_type !== 'SOCIAL' || !currentExpiryAt || !token) return;
+    if (!currentExpiryAt || !token) return;
     const nowSec = Math.floor(Date.now() / 1000);
     const remainingSec = currentExpiryAt - nowSec;
     if (remainingSec <= PREEMPTIVE_REFRESH_WINDOW_SEC) {
       const postId = item.post_id || item.source_id;
       try {
-        const res = await refreshReelPlayback(token, postId);
+        const res = item.source_type === 'CURATED'
+          ? await refreshCuratedReelPlayback(token, postId)
+          : await refreshReelPlayback(token, postId);
         if (res.ok && res.playback_url && isMountedRef.current) {
           setCurrentSource(res.playback_url);
           setCurrentExpiryAt(res.playback_expires_at ?? null);
