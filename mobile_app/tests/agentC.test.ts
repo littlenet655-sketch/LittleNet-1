@@ -1,6 +1,7 @@
 /// <reference types="node" />
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 process.env.EXPO_PUBLIC_API_BASE_URL = 'https://backend.test.invalid';
 
@@ -119,6 +120,13 @@ describe('agentC feed pagination/dedupe/refresh', () => {
     assert.ok(seen[0]?.url.endsWith('/api/mobile/v1/kids/posts/7/like'));
     assert.deepEqual(socialPostTarget(social), { postId: 7 });
     assert.deepEqual(socialProfileTarget(social), { targetId: 9 });
+  });
+
+  it('preemptively refreshes expiring credentials for curated as well as social Reels', () => {
+    const source = readFileSync('src/video/useReelPlayback.ts', 'utf8');
+    assert.ok(!source.includes("item.source_type !== 'SOCIAL'"));
+    assert.ok(source.includes("item.source_type === 'CURATED'"));
+    assert.ok(source.includes('refreshCuratedReelPlayback(token, postId)'));
   });
 
   it('selects one foreground reel and bounds adjacent loading', () => {
