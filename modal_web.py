@@ -14,6 +14,14 @@ import modal
 ROOT = Path(__file__).resolve().parent
 app = modal.App("littlenet-web")
 uploads = modal.Volume.from_name("littlenet-uploads", create_if_missing=True)
+# Private trained-moderation checkpoints (littlenet_core_safety_v2.pth,
+# littlenet_weapons_violence_v3.pth, littlenet_text_safety/). Mounted on the
+# media workers so the trained 18+/weapons/violence ensemble runs inside the
+# quarantine worker instead of only the legacy detector stack. When the
+# checkpoints are absent, safety.littlenet_trained_image.available() stays
+# False and moderation fails closed to the legacy stack — mounting the
+# volume never weakens moderation.
+model_cache = modal.Volume.from_name("littlenet-model-cache", create_if_missing=True)
 web_secret = modal.Secret.from_name(
     "littlenet-web-secrets",
     required_keys=["DATABASE_URL", "SECRET_KEY", "AI_SERVICE_URL", "AI_SHARED_SECRET"],
@@ -154,6 +162,7 @@ def web_secret_preflight():
     cpu=1.0,
     memory=2048,
     secrets=[web_secret, email_secret, r2_secret],
+    volumes={"/cache": model_cache},
     timeout=600,
     scaledown_window=int(os.getenv("MODAL_IMAGE_WORKER_SCALEDOWN_WINDOW", "20")),
     min_containers=0,
@@ -183,6 +192,7 @@ def process_image_job_background(
     cpu=2.0,
     memory=4096,
     secrets=[web_secret, email_secret, r2_secret],
+    volumes={"/cache": model_cache},
     timeout=900,
     scaledown_window=int(os.getenv("MODAL_MEDIA_WORKER_SCALEDOWN_WINDOW", "30")),
     min_containers=0,

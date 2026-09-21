@@ -306,6 +306,65 @@ def _yolo_objects(path):
     return {'weapon':max(weapon_score,danger_score),'danger':danger_score,'detections':detections[:25]}
 
 
+def _merge_yolo_into_trained(path, trained):
+    """Defense in depth on the trained-ensemble path.
+
+    The EfficientNet V2/V3 ensemble replaces NudeNet/FalconsAI/CLIP for 18+
+    detection, but YOLO dangerous-object detection still runs: its detections
+    merge into ``model_signals`` so ``yolo_policy.classify_signals``
+    (per-family BLOCK/REVIEW from ``config/safety_policy.yaml``) keeps firing,
+    and the weapon score takes the max of both detectors. A YOLO failure is
+    recorded as partial safety evidence (REVIEW at most) — never a bypass of
+    the trained ensemble result.
+    """
+    errors = trained.get('errors')
+    if not isinstance(errors, list):
+        errors = trained['errors'] = list(errors or [])
+    try:
+        y = timed_call('yolo', lambda: _yolo_objects(path), timeout_seconds('yolo', 90))
+    except Exception as exc:
+        errors.append('yolo_timeout' if 'timeout' in str(exc).lower() else 'yolo')
+        trained['partial_safety_failure'] = True
+        return
+    try:
+        trained['weapon_score'] = max(float(trained.get('weapon_score', 0) or 0),
+                                      float(y.get('weapon', 0) or 0))
+        trained['general_score'] = max(float(trained.get('general_score', 0) or 0),
+                                        float(trained.get('weapon_score', 0) or 0))
+    except (TypeError, ValueError):
+        pass
+    signals = trained.get('model_signals')
+    if isinstance(signals, dict):
+        signals['yolo'] = y
+    if errors:
+        trained['partial_safety_failure'] = True
+
+
+def _apply_ocr_stage(result, path, ocr, ran):
+    """Burned-in text screening shared by the trained and legacy image paths.
+
+    ``ocr``: None (default) honors LITTLENET_ENABLE_OCR; True/False forces the
+    OCR stage on/off. OCR evidence can only strengthen the visual decision:
+    scores merge by max, hard-block text flags propagate, and any OCR failure
+    becomes partial safety evidence (REVIEW at most), never a bypass.
+    """
+    if ocr is None:
+        ocr = env_flag('LITTLENET_ENABLE_OCR')
+    if not ocr:
+        return result
+    ocr_text, ocr_error = _ocr_extract_text(path)
+    if ocr_error:
+        result['errors'].append(ocr_error)
+    elif ocr_text:
+        signals = result.get('model_signals')
+        if isinstance(signals, dict):
+            signals['ocr'] = {'backend': _OCR_BACKEND_NAME, 'text_chars': len(ocr_text)}
+        _apply_ocr_evidence(result, ocr_text)
+    if ran > 0 and result['errors']:
+        result['partial_safety_failure'] = True
+    return result
+
+
 def check_image(path, *, ocr=None):
     """Moderate an image through the local visual stack plus optional OCR.
 
@@ -347,9 +406,11 @@ def check_image(path, *, ocr=None):
 
     # Preferred local path once the private V2/V3 checkpoints are staged on the
     # persistent Modal model-cache volume. Two EfficientNet-B0 specialists are
-    # much lighter than running NudeNet + FalconsAI + YOLO + CLIP for every
-    # ordinary image. If either checkpoint is missing or inference fails, the
-    # existing detector stack remains the fail-safe fallback.
+    # much lighter than running NudeNet + FalconsAI + CLIP for every ordinary
+    # image; YOLO dangerous-object detection and the OCR burned-in-text stage
+    # still run on this path (defense in depth). If either checkpoint is
+    # missing or inference fails, the existing detector stack remains the
+    # fail-safe fallback.
     trained_error=None
     try:
         from . import littlenet_trained_image
@@ -357,6 +418,8 @@ def check_image(path, *, ocr=None):
             try:
                 trained=littlenet_trained_image.predict(path)
                 trained['compute_tier']='trained_cpu' if _runtime_device()=='cpu' else 'trained_gpu'
+                _merge_yolo_into_trained(path, trained)
+                _apply_ocr_stage(trained, path, ocr, 1)
                 return normalize_signals(trained,category='IMAGE')
             except Exception as exc:
                 trained_error=f'trained_image:{type(exc).__name__}'
@@ -385,20 +448,8 @@ def check_image(path, *, ocr=None):
             s=float(timed_call('extra_nsfw',lambda:_extra_hf_nsfw(path),timeout_seconds('extra_nsfw',90)));ran+=1;adult=max(adult,s);sexual=max(sexual,s);details['extra_nsfw']=s
         except Exception as exc:errors.append('extra_nsfw_timeout' if 'timeout' in str(exc) else 'extra_nsfw')
     result={'adult_score':adult,'sexual_score':sexual,'violence_score':violence,'weapon_score':weapon,'toxicity_score':0,'general_score':max(general,adult,sexual,violence,weapon),'category':'ADULT' if max(adult,sexual)>=.4 else ('WEAPON' if weapon>=.45 else 'IMAGE'),'total_safety_failure':ran==0,'partial_safety_failure':ran>0 and bool(errors),'errors':errors,'model_signals':details}
-    if ocr is None:
-        ocr = env_flag('LITTLENET_ENABLE_OCR')
-    if ocr:
-        # Burned-in text screening. OCR evidence can only strengthen the
-        # visual decision; OCR failure is partial safety evidence, never a
-        # bypass of the visual models above.
-        ocr_text, ocr_error = _ocr_extract_text(path)
-        if ocr_error:
-            result['errors'].append(ocr_error)
-        elif ocr_text:
-            details['ocr'] = {'backend': _OCR_BACKEND_NAME, 'text_chars': len(ocr_text)}
-            _apply_ocr_evidence(result, ocr_text)
-        if ran > 0 and result['errors']:
-            result['partial_safety_failure'] = True
+    # Burned-in text screening (shared stage; see _apply_ocr_stage).
+    _apply_ocr_stage(result, path, ocr, ran)
     return normalize_signals(result,category='IMAGE')
 
 

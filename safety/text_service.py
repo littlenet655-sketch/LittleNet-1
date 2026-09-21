@@ -313,6 +313,28 @@ def check_text(text:str):
                     sexual=max(sexual,float(h.get('sexual',0)))
                     extras['text_classifier_scores']=h.get('labels',{})
             except Exception as exc:errors.append('text_classifier_timeout' if 'timeout' in str(exc).lower() else 'text_classifier')
+        # LittleNet-trained 18+ text classifier (user-staged artifact). Runs
+        # last in the local tier so its sexual/violence/toxicity evidence
+        # merges by max over deterministic rules, Detoxify, and the optional
+        # HF classifier above. Absent artifact (or load failure) degrades to
+        # the existing stack, never a bypass.
+        try:
+            from . import littlenet_trained_text as _trained_text
+            if _trained_text.available():
+                try:
+                    tts = timed_call('trained_text', lambda: _trained_text.predict(text), timeout_seconds('trained_text', 60))
+                    sexual = max(sexual, float(tts.get('sexual_score', 0) or 0))
+                    toxicity = max(toxicity, float(tts.get('toxicity_score', 0) or 0))
+                    severe = max(severe, float(tts.get('violence_score', 0) or 0))
+                    extras['trained_text'] = (tts.get('model_signals') or {}).get('littlenet_trained_text', {})
+                    extras['trained_text_model'] = True
+                    ran += 1
+                except Exception as exc:
+                    errors.append('trained_text_timeout' if 'timeout' in str(exc).lower() else 'trained_text')
+        except Exception:
+            # Trained-text module unavailable: deterministic + Detoxify stack
+            # above remains the fail-safe.
+            pass
 
     if grooming:category='GROOMING'
     elif self_harm:category='SELF_HARM'

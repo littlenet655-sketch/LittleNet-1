@@ -1,8 +1,12 @@
 """LittleNet's trained four-category image-safety ensemble.
 
-The two checkpoints are staged on the persistent Modal model cache volume:
-- V2: nudity + sexy (other V2 outputs are intentionally ignored)
-- V3: weapons + violence
+The two checkpoints are staged on the persistent Modal model cache volume
+(``/cache/models/``), overridable per checkpoint with
+``LITTLENET_TRAINED_IMAGE_V2_PATH`` / ``LITTLENET_TRAINED_IMAGE_V3_PATH``, or
+dropped into ``<repo>/models/`` for local development:
+
+- V2: ``littlenet_core_safety_v2.pth`` — nudity + sexy (other V2 outputs ignored)
+- V3: ``littlenet_weapons_violence_v3.pth`` — weapons + violence
 
 The ensemble is auto-enabled only when BOTH checkpoint files exist. If either
 file is absent, callers fall back to the legacy detector stack. This lets code
@@ -17,6 +21,9 @@ from typing import Any
 
 _DEFAULT_V2 = "/cache/models/littlenet_core_safety_v2.pth"
 _DEFAULT_V3 = "/cache/models/littlenet_weapons_violence_v3.pth"
+# Local-dev staging: <repo>/models/<name> (also ./models/<name>), so dropping
+# the private checkpoints into models/ enables the ensemble without env vars.
+_REPO_ROOT = Path(__file__).resolve().parent.parent
 
 _LOCK = threading.Lock()
 _MODELS: tuple[Any, dict[str, Any], Any, dict[str, Any]] | None = None
@@ -29,10 +36,38 @@ def _flag(name: str, default: bool = True) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on", "auto"}
 
 
+def _candidates(env_name: str, default: str, repo_name: str) -> list[Path]:
+    raw = (os.getenv(env_name) or "").strip()
+    if raw:
+        return [Path(raw)]
+    return [
+        Path(default),
+        _REPO_ROOT / "models" / repo_name,
+        Path("models") / repo_name,
+    ]
+
+
+def _resolve(env_name: str, default: str, repo_name: str) -> Path:
+    for candidate in _candidates(env_name, default, repo_name):
+        try:
+            if candidate.is_file() and candidate.stat().st_size > 0:
+                return candidate
+        except OSError:
+            continue
+    return Path(default)
+
+
 def paths() -> tuple[Path, Path]:
+    """Resolve both checkpoint locations: first existing candidate wins.
+
+    Order per checkpoint: explicit ``LITTLENET_TRAINED_IMAGE_{V2,V3}_PATH``,
+    the Modal cache-volume default, ``<repo>/models/<name>``, then
+    ``./models/<name>``. When nothing is staged, the defaults are returned so
+    ``available()`` stays fail-closed (False) and callers fall back.
+    """
     return (
-        Path(os.getenv("LITTLENET_TRAINED_IMAGE_V2_PATH", _DEFAULT_V2)),
-        Path(os.getenv("LITTLENET_TRAINED_IMAGE_V3_PATH", _DEFAULT_V3)),
+        _resolve("LITTLENET_TRAINED_IMAGE_V2_PATH", _DEFAULT_V2, "littlenet_core_safety_v2.pth"),
+        _resolve("LITTLENET_TRAINED_IMAGE_V3_PATH", _DEFAULT_V3, "littlenet_weapons_violence_v3.pth"),
     )
 
 

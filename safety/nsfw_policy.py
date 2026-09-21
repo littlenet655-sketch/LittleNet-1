@@ -77,6 +77,13 @@ _DEFAULTS = {
     'clip': (0.40, 0.65),
     'opennsfw2': (0.35, 0.70),
     'extra_nsfw': (0.40, 0.75),
+    # LittleNet's trained EfficientNet ensemble. Its per-class thresholds are
+    # already applied inside littlenet_trained_image.predict(); here a
+    # triggered class counts as full-strength (1.0) evidence so the per-model
+    # BLOCK path fires with the same fail-closed semantics as the legacy
+    # models. Sub-threshold classes contribute no evidence here — they are
+    # already capped below the global block threshold by predict().
+    'trained_image': (0.50, 0.80),
 }
 
 
@@ -115,6 +122,13 @@ def _score_from_node(model: str, node: dict):
         clip = node.get('clip')
         if isinstance(clip, dict):
             return max(float(clip.get('adult', 0) or 0), float(clip.get('sexual', 0) or 0))
+        return None
+    if model == 'trained_image':
+        sub = node.get('littlenet_trained_image')
+        if isinstance(sub, dict):
+            triggered = sub.get('triggered') or {}
+            if any(triggered.values()):
+                return 1.0
         return None
     value = node.get(model)
     if isinstance(value, (int, float)):
