@@ -37,7 +37,7 @@ from typing import Any
 _DEFAULT_DIR = "/cache/models/littlenet_text_safety"
 _METADATA_NAME = "littlenet_metadata.json"
 _VALID_MODES = {"off", "shadow", "enforce"}
-_VALID_SIGNALS = {"adult", "sexual", "violence", "weapon", "toxicity", "general"}
+_VALID_SIGNALS = {"adult", "sexual", "violence", "weapon", "toxicity", "general", "ignore"}
 
 _LOCK = threading.Lock()
 _RUNTIME: tuple[Any, Any, dict[str, Any]] | None = None
@@ -183,6 +183,8 @@ def _runtime():
 
 def _default_signal(label: str) -> str:
     low = _clean_label(label)
+    if low in {"safe", "clean", "benign", "neutral", "appropriate", "normal"}:
+        return "ignore"
     if any(term in low for term in ("nudity", "nude", "sexual", "sex", "porn", "explicit", "adult", "sexy")):
         return "sexual"
     if any(term in low for term in ("weapon", "gun", "knife", "firearm")):
@@ -216,6 +218,8 @@ def _signals_from_scores(scores: dict[str, float], metadata: dict[str, Any]) -> 
         if not triggered[label]:
             continue
         signal = explicit_map.get(label) or _default_signal(label)
+        if signal == "ignore":
+            continue
         if probability > top_score:
             top_score = probability
             top_label = label
