@@ -39,6 +39,12 @@ describe('backend gate parsing', () => {
     assert.match(userMessageFor(503, 'age_verification_unavailable', {}), /temporarily/i);
   });
 
+  it('decodes guardian reasons even when the live backend still returns the generic 403 code', () => {
+    assert.match(userMessageFor(403, 'adult_verification_failed', { reason: 'single_face_required' }), /one face/i);
+    assert.match(userMessageFor(403, 'adult_verification_failed', { reason: 'liveness_failed' }), /blink/i);
+    assert.match(userMessageFor(403, 'adult_verification_failed', { reason: 'age_estimate_ambiguous' }), /confidently/i);
+  });
+
   it('explains face-login failure reasons distinctly', () => {
     const spoof = userMessageFor(401, 'face_login_failed', { reason: 'spoof' });
     const missing = userMessageFor(404, 'face_login_failed', { reason: 'not_enrolled' });
