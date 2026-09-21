@@ -60,6 +60,11 @@ image = (
             "TORCH_HOME": "/cache/torch",
             "DEEPFACE_HOME": "/cache/deepface",
             "LITTLENET_DETOXIFY_MODEL": "multilingual",
+            # Custom LittleNet text model is staged separately and cannot affect
+            # production decisions until an operator changes off -> shadow -> enforce.
+            "LITTLENET_TRAINED_TEXT_MODE": "off",
+            "LITTLENET_TRAINED_TEXT_PATH": "/cache/models/littlenet_text_safety",
+            "LITTLENET_TRAINED_TEXT_RELEASE": "unstaged",
             # Scene-aware sampling protects short scene changes. The bounded
             # uniform fallback prevents long reels from multiplying GPU work.
             # Cost-bounded video scan: short clips retain <=4s temporal spacing.
@@ -277,6 +282,28 @@ def trained_image_preflight():
 
 
 @app.function(
+    image=image,
+    cpu=4.0,
+    memory=8192,
+    volumes={"/cache": model_cache},
+    timeout=600,
+    startup_timeout=900,
+    min_containers=0,
+    max_containers=1,
+)
+def trained_text_preflight():
+    """CPU-only verification of the private LittleNet trained-text bundle."""
+    os.chdir("/root/littlenet")
+    Path("/cache/models").mkdir(parents=True, exist_ok=True)
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    os.environ["LITTLENET_DEVICE"] = "cpu"
+    os.environ["LITTLENET_AI_SERVER"] = "1"
+    from safety import littlenet_trained_text as trained
+
+    return trained.preflight()
+
+
+@app.function(
     image=secret_preflight_image,
     secrets=[ai_secret],
     timeout=60,
@@ -419,6 +446,7 @@ def main(
     confirm_gpu_warmup: bool = False,
     prepare_face_cache_only: bool = False,
     trained_image_preflight_only: bool = False,
+    trained_text_preflight_only: bool = False,
     secret_preflight: bool = False,
 ):
     """Cost-guarded maintenance entrypoint."""
@@ -436,10 +464,17 @@ def main(
         if not report.get("available") or not report.get("loadable"):
             raise RuntimeError(f"LittleNet trained image ensemble is not ready: {report}")
         return
+    if trained_text_preflight_only:
+        report = trained_text_preflight.remote()
+        print(f"trained-text-preflight {json.dumps(report, sort_keys=True)}")
+        if not report.get("available") or not report.get("loadable"):
+            raise RuntimeError(f"LittleNet trained text model is not ready: {report}")
+        return
     if not confirm_gpu_warmup:
         print("GPU warmup skipped. This command is intentionally cost-guarded.")
         print("Cheap face-cache preparation: modal run modal_ai.py --prepare-face-cache-only")
         print("CPU trained-image check: modal run modal_ai.py --trained-image-preflight-only")
+        print("CPU trained-text check: modal run modal_ai.py --trained-text-preflight-only")
         print("Full GPU validation only when intentional: modal run modal_ai.py --confirm-gpu-warmup")
         return
     report = warm_models.remote()
