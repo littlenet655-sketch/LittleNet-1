@@ -56,6 +56,40 @@ _CURRENT_V2_LABELS = [
     "contact request",
 ]
 
+# Frozen FINAL V2 dual-threshold policy. Uploaded policy JSON overrides these
+# values; this fallback prevents an accidental generic 0.5 deployment if the
+# JSON shape changes while the verified checkpoint itself is unchanged.
+_CURRENT_V2_REVIEW_THRESHOLDS = {
+    "sexual": 0.080,
+    "grooming": 0.955,
+    "bullying": 0.495,
+    "hate": 0.660,
+    "violence": 0.050,
+    "self harm": 0.750,
+    "drugs": 0.160,
+    "alcohol": 0.510,
+    "smoking": 0.315,
+    "gambling": 0.250,
+    "profanity": 0.725,
+    "pii request": 0.965,
+    "contact request": 0.925,
+}
+_CURRENT_V2_BLOCK_THRESHOLDS = {
+    "sexual": 0.950,
+    "grooming": 0.955,
+    "bullying": 0.640,
+    "hate": 0.960,
+    "violence": 0.985,
+    "self harm": 0.750,
+    "drugs": 0.160,
+    "alcohol": 0.510,
+    "smoking": 0.315,
+    "gambling": 0.250,
+    "profanity": 0.960,
+    "pii request": 0.965,
+    "contact request": 0.925,
+}
+
 _LOCK = threading.Lock()
 _RUNTIME: tuple[Any, Any, dict[str, Any]] | None = None
 
@@ -223,9 +257,28 @@ def _threshold_maps(root: Path, raw: dict[str, Any], labels: list[str]) -> tuple
         # Some exports are a direct label -> threshold mapping.
         review.update(_coerce_threshold_map(single, labels))
 
-    # A missing per-label threshold must not silently make the model permissive.
-    # 0.5 is only a compatibility default; preflight exposes the actual map.
-    review = {label: max(0.01, min(0.99, float(review.get(label, 0.5)))) for label in labels}
+    # For the verified FINAL V2 custom artifact, use the frozen deployment policy
+    # as a fallback. Other/future formats retain a conservative 0.5 review default.
+    is_final_v2 = (root / _CUSTOM_MODEL).is_file() and set(labels) == set(_CURRENT_V2_LABELS)
+    review = {
+        label: max(
+            0.01,
+            min(
+                0.99,
+                float(
+                    review.get(
+                        label,
+                        _CURRENT_V2_REVIEW_THRESHOLDS.get(label, 0.5) if is_final_v2 else 0.5,
+                    )
+                ),
+            ),
+        )
+        for label in labels
+    }
+    if is_final_v2:
+        for label, threshold in _CURRENT_V2_BLOCK_THRESHOLDS.items():
+            block.setdefault(label, threshold)
+
     clean_block: dict[str, float] = {}
     for label, value in block.items():
         try:
