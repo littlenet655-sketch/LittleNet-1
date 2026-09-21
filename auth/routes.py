@@ -142,13 +142,18 @@ def register_page():
     return redirect('/register-parent/?note=parents_create_child_accounts')
 
 
-@auth_bp.route('/verify-parent/<token>/', methods=['GET', 'POST'])
-@limiter.limit('30 per minute')
 def _render_token_verified_result(token, child_data, result):
     """Shared completion step for the token guardian flow after the parent's
     email ownership is proven: run verification, sign in, and route onward."""
     if not result.get('success'):
-        return None
+        # Both call sites guard on success first, so this branch is latent;
+        # render an error page rather than returning None so no caller can
+        # ever produce an empty response from this helper.
+        return render_template(
+            'approval_success.html', is_error=True, title='Verification Failed',
+            message=result.get('error') or 'Parent verification could not be completed. Please try the verification link again.',
+            button_url='/login/', button_text='Go to Login'
+        ), 400
     parent_row = fetch_one('SELECT * FROM users WHERE user_id=%s', (result['parent_id'],))
     if parent_row and parent_row.get('account_status') == 'ACTIVE':
         _set_session(parent_row)

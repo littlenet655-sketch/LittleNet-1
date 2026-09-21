@@ -6,10 +6,16 @@ import { Feather } from '@expo/vector-icons';
 import { ApiError } from '../api/client';
 import { colors, radius, spacing, type } from './tokens';
 
-export function Screen({ children }: { children: ReactNode }) {
+/**
+ * Screen scaffold. `hasNativeHeader = true` (default) means the screen
+ * renders under a native stack header or equivalent top chrome (the kids
+ * tab shell's custom top bar), which already clears the notch — so Screen
+ * skips the top safe-area inset and only applies the bottom one.
+ */
+export function Screen({ children, hasNativeHeader = true }: { children: ReactNode; hasNativeHeader?: boolean }) {
   const insets = useSafeAreaInsets();
   return (
-    <View style={[styles.screen, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
+    <View style={[styles.screen, { paddingTop: hasNativeHeader ? 0 : insets.top, paddingBottom: insets.bottom }]}>
       {children}
     </View>
   );
@@ -274,10 +280,14 @@ export function EmptyState({
   title,
   body,
   icon = 'compass',
+  actionLabel,
+  onAction,
 }: {
   title: string;
   body?: string;
   icon?: keyof typeof Feather.glyphMap;
+  actionLabel?: string;
+  onAction?: () => void;
 }) {
   return (
     <View style={styles.center}>
@@ -286,6 +296,7 @@ export function EmptyState({
       </View>
       <Text style={styles.emptyTitle}>{title}</Text>
       {body ? <Text style={styles.centerText}>{body}</Text> : null}
+      {actionLabel && onAction ? <Button label={actionLabel} onPress={onAction} variant="secondary" /> : null}
     </View>
   );
 }

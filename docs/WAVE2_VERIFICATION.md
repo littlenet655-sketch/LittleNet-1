@@ -2,7 +2,7 @@
 
 This branch is intentionally limited to lightweight safety/privacy hardening:
 
-- real browser-side MediaPipe Face Landmarker blink detection for Parent liveness;
+- ~~real browser-side MediaPipe Face Landmarker blink detection for Parent liveness;~~ (removed — parent verification is email-OTP-only);
 - integrity-verified, self-hosted MediaPipe Tasks Vision 1.0.1 browser runtime and face-landmarker model;
 - replay-resistant two-parent friendship activation at the PostgreSQL trigger layer;
 - canonical post/story visibility checks before local or R2 media delivery;

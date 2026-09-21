@@ -155,8 +155,8 @@ def register_mobile_admin_api(bp):
                 return jsonify(error='user_not_found'), 404
             if new_status == 'ACTIVE' and target['role'] == 'PARENT' and not parent_verification_complete(int(target_user_id)):
                 # Server-side enforcement: an admin must not activate a parent
-                # that never completed identity verification (email OTP + live
-                # adult/liveness). UI hiding is not security.
+                # that never completed identity verification (email OTP only).
+                # UI hiding is not security.
                 conn.rollback()
                 cur.execute(
                     """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)

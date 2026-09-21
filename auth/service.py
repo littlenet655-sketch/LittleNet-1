@@ -242,6 +242,13 @@ def ensure_token_parent_pending(token, form_data):
     valid, error = _validate_token_guardian_form(map_data, form_data)
     if error:
         return {"success": False, "error": error}
+    # The 18+ date-of-birth declaration is required server-side on the initial
+    # guardian form (the template also marks it required). It is deliberately
+    # NOT required in process_parent_verification: the OTP-completion step
+    # re-enters that function without form data, after the declaration was
+    # already collected here.
+    if not valid.get("dob"):
+        return {"success": False, "error": "Please provide the parent or guardian date of birth (18+ declaration)."}
 
     conn = get_db_connection()
     if not conn:

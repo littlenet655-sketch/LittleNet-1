@@ -29,7 +29,13 @@ function readThumbnail(item: NotificationItem): string | null {
 function actionText(item: NotificationItem): string {
   const msg = String(item.message ?? item.notification_type ?? '');
   const actor = (item.actor_name ?? '').trim();
-  if (actor && msg.startsWith(actor)) return msg.slice(actor.length).trim();
+  // Only strip the actor prefix when it is a whole leading token ("Alex liked"
+  // -> "liked"); without the word-boundary check, actor "Al" would turn
+  // "Alex liked your photo" into "ex liked your photo".
+  if (actor && msg.startsWith(actor)) {
+    const rest = msg.slice(actor.length);
+    if (rest === '' || /^\s/.test(rest)) return rest.trim();
+  }
   return msg;
 }
 

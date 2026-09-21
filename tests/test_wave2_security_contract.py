@@ -23,19 +23,21 @@ def test_parent_liveness_page_and_mediapipe_module_are_removed():
     assert 'verify_adult_face' not in service
 
 
-def test_mediapipe_build_assets_are_integrity_verified_not_just_hashed_after_download():
-    installer = _text('tools/install_mediapipe_assets.py')
-    assert 'PACKAGE_SHA256 = "ee318eaa3d42230aa10910d114faf2a488c577c4e4d33c7cb04126924aca505f"' in installer
-    assert 'MODEL_SHA256 = "64184e229b263107bc2b804c6625db1341ff2bb731874b0bcc2fe6544e0bc9ff"' in installer
-    assert 'if actual != expected_sha256:' in installer
-    assert 'SHA-256 mismatch' in installer
-    assert 'registry.npmjs.org/@mediapipe/tasks-vision' in installer
-    assert 'face_landmarker.task' in installer
+def test_mediapipe_liveness_assets_are_fully_removed():
+    # Parent liveness verification was removed by explicit product decision:
+    # no build step may install the MediaPipe assets, no healthcheck may look
+    # for them, and the vendored directory must be gone. (The installer script
+    # tools/install_mediapipe_assets.py was deleted with the rest of the chain.)
+    assert not (ROOT / 'static/vendor/mediapipe').exists()
+    ci = _text('.github/workflows/ci.yml')
     docker = _text('Dockerfile.web')
     modal = _text('modal_web.py')
-    assert 'python tools/install_mediapipe_assets.py' in docker
-    assert 'python tools/install_mediapipe_assets.py' in modal
-    assert 'mediapipe_liveness_assets' in modal
+    assert 'install_mediapipe_assets' not in ci
+    assert 'install_mediapipe_assets' not in docker
+    assert 'install_mediapipe_assets' not in modal
+    assert 'mediapipe' not in ci.lower()
+    assert 'mediapipe' not in docker.lower()
+    assert 'mediapipe' not in modal.lower()
 
 
 def test_message_notes_only_select_active_parent_approved_friends():

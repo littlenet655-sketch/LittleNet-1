@@ -831,7 +831,11 @@ def register_mobile_api(bp):
         data = request.get_json(silent=True) or {}
         identifier = str(data.get("identifier") or request.form.get("identifier") or "").strip().lower()
         mode = str(data.get("mode") or request.form.get("mode") or "kids").strip().lower()
-        role = "PARENT" if mode == "parent" else "CHILD"
+        if mode == "parent":
+            # Face login is kids-only: parent accounts authenticate via
+            # password + email OTP / device auth, never face.
+            return jsonify(error="parent_face_unsupported"), 400
+        role = "CHILD"
         user = fetch_one(
             "SELECT * FROM users WHERE (LOWER(email)=%s OR LOWER(username)=%s) AND role=%s AND account_status='ACTIVE'",
             (identifier, identifier, role),
@@ -899,7 +903,11 @@ def register_mobile_api(bp):
         data = request.get_json(silent=True) or request.form or {}
         identifier = str(data.get("identifier") or "").strip()
         mode = str(data.get("mode") or "kids").strip().lower()
-        role = "PARENT" if mode == "parent" else "CHILD"
+        if mode == "parent":
+            # Face login is kids-only: parent accounts authenticate via
+            # password + email OTP / device auth, never face.
+            return jsonify(error="parent_face_unsupported"), 400
+        role = "CHILD"
         session_ctx = str(data.get("session_context") or "mobile_android").strip()[:128]
 
         user = None

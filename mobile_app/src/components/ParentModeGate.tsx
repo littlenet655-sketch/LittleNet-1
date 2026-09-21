@@ -107,7 +107,7 @@ export function ParentModeGate({ children }: { children: ReactNode }) {
 
   if (phase === 'checking') {
     return (
-      <Screen>
+      <Screen hasNativeHeader={false}>
         <View style={styles.center}>
           <ActivityIndicator size="large" color={colors.brand} />
           <Text style={styles.statusText}>Verifying it&apos;s you…</Text>
@@ -118,7 +118,7 @@ export function ParentModeGate({ children }: { children: ReactNode }) {
 
   if (phase === 'blocked') {
     return (
-      <Screen>
+      <Screen hasNativeHeader={false}>
         <View style={styles.center}>
           <Text style={styles.blockTitle}>Screen lock required</Text>
           <Text style={styles.blockBody}>{NO_LOCK_MESSAGE}</Text>
@@ -141,7 +141,7 @@ export function ParentModeGate({ children }: { children: ReactNode }) {
   }
 
   return (
-    <Screen>
+    <Screen hasNativeHeader={false}>
       <View style={styles.center}>
         <Text style={styles.blockTitle}>Identity check needed</Text>
         <Text style={styles.blockBody}>{deniedMessage}</Text>

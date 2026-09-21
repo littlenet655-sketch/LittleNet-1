@@ -39,7 +39,7 @@ const MODES: {
 
 export function WelcomeScreen({ navigation }: AuthScreenProps<'Welcome'>) {
   return (
-    <Screen>
+    <Screen hasNativeHeader={false}>
       <ScrollView contentContainerStyle={styles.welcomeScroll}>
         <View style={styles.welcomeHero}>
           <View style={styles.logoBadge}>

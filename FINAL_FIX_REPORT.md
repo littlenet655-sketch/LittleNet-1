@@ -17,7 +17,7 @@ Commit B (this integration) is the only other new commit.
 
 ## Commit A — admin activation of unverified parents (recap)
 
-- `auth/service.py`: new `parent_verification_complete(parent_user_id)` — authoritative evidence only: `parent_verifications.verification_status='VERIFIED'`, or `parent_email_otps.verified_at` plus a face profile or a `PARENT_LIVENESS_VERIFIED` activity event.
+- `auth/service.py`: new `parent_verification_complete(parent_user_id)` — authoritative evidence only: `parent_verifications.verification_status='VERIFIED'`, or `parent_email_otps.verified_at` set (verified email OTP is the complete parent identity verification — no face/liveness step).
 - `admin/routes.py`: web admin ACTIVATE of an unverified parent → HTTP 403, logs `USER_ACTIVATE_BLOCKED`.
 - `mobile/admin_api.py`: bearer admin status endpoint → HTTP 403 `{"error":"parent_verification_incomplete"}`, logs `USER_STATUS_BLOCKED`.
 - `tests/test_admin_parent_activation.py`: 13 tests.

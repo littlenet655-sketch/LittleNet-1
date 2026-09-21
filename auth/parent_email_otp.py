@@ -122,6 +122,26 @@ def _send_code(user_id, email, full_name, code):
     return sent
 
 
+def _is_unique_violation(exc):
+    """True for a unique-constraint violation, without importing the DB driver.
+
+    psycopg2 reports SQLSTATE 23505 on the exception; the class-name fallback
+    keeps the race guard working if the driver ever changes. Deliberately
+    narrow: other integrity errors (check/FK) must not be misread as a lost
+    registration race.
+    """
+    if getattr(exc, "pgcode", None) == "23505":
+        return True
+    return type(exc).__name__ == "UniqueViolation"
+
+
+def _raise_duplicate_account(existing, username, email):
+    """Raise the same duplicate-account ValueError the pre-insert check raises."""
+    if (existing.get('username') or '').casefold() == username.casefold():
+        raise ValueError(f"The username '{username}' already exists. Please choose a different username.")
+    raise ValueError(f"The email '{email}' is already used by a LittleNet account. Please log in instead.")
+
+
 def begin_parent_registration(form):
     """Create a pending parent account and send its first OTP."""
     _ensure_table()
@@ -137,18 +157,34 @@ def begin_parent_registration(form):
             )
             existing = cur.fetchone()
             if existing:
-                if (existing.get('username') or '').casefold() == username.casefold():
-                    raise ValueError(f"The username '{username}' already exists. Please choose a different username.")
-                raise ValueError(f"The email '{email}' is already used by a LittleNet account. Please log in instead.")
+                _raise_duplicate_account(existing, username, email)
 
-            cur.execute(
-                """
-                INSERT INTO users(username,full_name,email,password_hash,role,dob,account_status)
-                VALUES(%s,%s,%s,%s,'PARENT',%s,'PENDING_APPROVAL')
-                RETURNING user_id
-                """,
-                (username, full_name, email, hash_password(password), dob_str),
-            )
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO users(username,full_name,email,password_hash,role,dob,account_status)
+                    VALUES(%s,%s,%s,%s,'PARENT',%s,'PENDING_APPROVAL')
+                    RETURNING user_id
+                    """,
+                    (username, full_name, email, hash_password(password), dob_str),
+                )
+            except Exception as exc:
+                if not _is_unique_violation(exc):
+                    raise
+                # Lost a concurrent-registration race: UNIQUE(username) /
+                # UNIQUE(email) fired between our check and our insert. Roll
+                # back the aborted transaction, re-read the winning row, and
+                # report the duplicate exactly as the pre-check would have, so
+                # the success/failure contract is unchanged.
+                conn.rollback()
+                cur.execute(
+                    "SELECT user_id, username, email, role, account_status FROM users WHERE LOWER(username)=LOWER(%s) OR LOWER(email)=LOWER(%s) LIMIT 1",
+                    (username, email),
+                )
+                existing = cur.fetchone()
+                if existing:
+                    _raise_duplicate_account(existing, username, email)
+                raise
             user_id = cur.fetchone()['user_id']
             cur.execute(
                 """

@@ -85,7 +85,6 @@ web_image = (
         ],
         copy=True,
     )
-    .run_commands("cd /root/littlenet && python tools/install_mediapipe_assets.py")
 )
 secret_preflight_image = modal.Image.debian_slim(python_version="3.11")
 
@@ -316,10 +315,6 @@ def web_preflight(deep_ai_probe: bool = False):
 
     pii = analyze_pii("test@example.com")
     pii_ok = bool(pii.get("available") and "EMAIL_ADDRESS" in pii.get("categories", []))
-    vendor = Path("static/vendor/mediapipe")
-    liveness_assets = all((vendor / name).exists() for name in (
-        "vision_bundle.mjs", "face_landmarker.task", "wasm/vision_wasm_internal.wasm"
-    ))
 
     base_url = str(Config.BASE_URL or "").rstrip("/")
     public_base_url = bool(
@@ -349,7 +344,6 @@ def web_preflight(deep_ai_probe: bool = False):
         "ai": ai,
         "job_queue": queue,
         "presidio": pii_ok,
-        "mediapipe_liveness_assets": liveness_assets,
         "base_url": {"ok": public_base_url, "value": base_url},
         "mail": mail,
         "r2": r2,
@@ -361,7 +355,7 @@ def web_preflight(deep_ai_probe: bool = False):
 
     report["ok"] = bool(
         report["database"] and schema_ok and quiz_count > 0 and ai.get("ok")
-        and queue.get("ok") and pii_ok and liveness_assets and public_base_url
+        and queue.get("ok") and pii_ok and public_base_url
         and mail_passes and r2.get("ok") and video_delivery.get("ok") and media_outbox.get("ok")
     )
     return json.loads(json.dumps(report, default=str))

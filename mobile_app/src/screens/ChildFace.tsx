@@ -182,7 +182,7 @@ export function FaceLoginScreen({ navigation, route }: AuthScreenProps<'FaceLogi
 
 /**
  * Mandatory child face enrollment gate. After success the authoritative /me
- * refresh drives the transition (Quiz if required, else KidsHome). A failed
+ * refresh drives the transition (Quiz if required, else KidsTabs). A failed
  * attempt or failed refresh keeps the child gated with retry.
  */
 export function FaceEnrollScreen(_props: ChildScreenProps<'FaceEnroll'>) {

@@ -214,7 +214,7 @@ export function RootNavigator() {
 
   if (status === 'loading') {
     return (
-      <Screen>
+      <Screen hasNativeHeader={false}>
         <LoadingState message="Starting LittleNet…" />
       </Screen>
     );

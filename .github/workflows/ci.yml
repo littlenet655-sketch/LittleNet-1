@@ -63,12 +63,6 @@ jobs:
         run: python tools/audit_all.py
       - name: Enforce parameterized SQL identifiers
         run: python tools/audit_dynamic_sql.py
-      - name: Verify pinned MediaPipe assets
-        run: |
-          python tools/install_mediapipe_assets.py
-          test -s static/vendor/mediapipe/vision_bundle.mjs
-          test -s static/vendor/mediapipe/face_landmarker.task
-          find static/vendor/mediapipe/wasm -name '*.wasm' -type f -size +100k | grep -q .
 
   secret-scan:
     runs-on: ubuntu-latest

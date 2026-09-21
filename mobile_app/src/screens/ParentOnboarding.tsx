@@ -18,6 +18,12 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [submittedToken, setSubmittedToken] = useState<string | null>(null);
+  /**
+   * Synchronous double-tap guard: the `busy` render state does not stop a
+   * rapid second tap dispatched before re-render. This ref check-and-sets
+   * synchronously at the top of submit().
+   */
+  const registerBusyRef = useRef(false);
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState<{
     fullName?: string;
@@ -93,44 +99,50 @@ export function ParentRegisterScreen({ navigation }: AuthScreenProps<'ParentRegi
   };
 
   async function submit() {
-    if (busy || submitted) return;
-    if (!guardianAgreed) {
-      setError('You must certify that you are the legal adult guardian.');
-      return;
-    }
-    const validation = validateRegister();
-    setFieldErrors(validation);
-    if (Object.keys(validation).length > 0) {
-      setError('Please fix the highlighted fields.');
-      return;
-    }
-    setBusy(true);
-    setError('');
+    if (registerBusyRef.current) return;
+    registerBusyRef.current = true;
     try {
-      const response = await registerParent({
-        username: username.trim(),
-        full_name: fullName.trim(),
-        email: email.trim(),
-        password,
-        dob: dob.trim(),
-      });
-      // Registration succeeded: remember the pending token so going back from
-      // the OTP screen offers "Continue to Verification" instead of orphaning
-      // the first token with a second registration.
-      setSubmittedToken(response.pending_token);
-      setSubmitted(true);
-      navigation.navigate('OtpVerify', {
-        pendingToken: response.pending_token,
-        emailSent: response.email_sent,
-        // A release client never consumes an OTP returned by an API, even if a
-        // server is accidentally misconfigured. Explicit dev builds retain the
-        // local-only escape hatch for isolated testing.
-        devCode: __DEV__ ? response.dev_code : undefined,
-      });
-    } catch (err) {
-      setError(errorText(err));
+      if (busy || submitted) return;
+      if (!guardianAgreed) {
+        setError('You must certify that you are the legal adult guardian.');
+        return;
+      }
+      const validation = validateRegister();
+      setFieldErrors(validation);
+      if (Object.keys(validation).length > 0) {
+        setError('Please fix the highlighted fields.');
+        return;
+      }
+      setBusy(true);
+      setError('');
+      try {
+        const response = await registerParent({
+          username: username.trim(),
+          full_name: fullName.trim(),
+          email: email.trim(),
+          password,
+          dob: dob.trim(),
+        });
+        // Registration succeeded: remember the pending token so going back from
+        // the OTP screen offers "Continue to Verification" instead of orphaning
+        // the first token with a second registration.
+        setSubmittedToken(response.pending_token);
+        setSubmitted(true);
+        navigation.navigate('OtpVerify', {
+          pendingToken: response.pending_token,
+          emailSent: response.email_sent,
+          // A release client never consumes an OTP returned by an API, even if a
+          // server is accidentally misconfigured. Explicit dev builds retain the
+          // local-only escape hatch for isolated testing.
+          devCode: __DEV__ ? response.dev_code : undefined,
+        });
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      registerBusyRef.current = false;
     }
   }
 
@@ -280,6 +292,14 @@ export function OtpVerifyScreen({ route }: AuthScreenProps<'OtpVerify'>) {
   const [busy, setBusy] = useState(false);
   const [resending, setResending] = useState(false);
   const [error, setError] = useState('');
+  /**
+   * Synchronous double-tap guards (render-state flags don't stop two taps
+   * dispatched before re-render). Verify and resend also block each other:
+   * the server rotates the OTP code on resend, so a verify in flight during
+   * a resend would spuriously fail, and vice versa.
+   */
+  const verifyBusyRef = useRef(false);
+  const resendBusyRef = useRef(false);
   const [info, setInfo] = useState(
     devCode
       ? `Verification code: ${devCode} (expires in 10 minutes)`
@@ -330,41 +350,53 @@ export function OtpVerifyScreen({ route }: AuthScreenProps<'OtpVerify'>) {
   }, [devCode, pendingToken]);
 
   async function submit() {
-    if (otp.trim().length !== 6) {
-      setError('Enter the 6-digit code from your email.');
-      return;
-    }
-    setBusy(true);
-    setError('');
+    if (verifyBusyRef.current || resendBusyRef.current) return;
+    verifyBusyRef.current = true;
     try {
-      // Email OTP is the final parent activation step: the backend returns a
-      // signed-in session directly. Sign in without a parent selfie step —
-      // device authentication gates Parent Mode locally instead.
-      const response = await verifyParentEmail(pendingToken, otp.trim());
-      await signIn(response);
-    } catch (err) {
-      setError(errorText(err));
+      if (otp.trim().length !== 6) {
+        setError('Enter the 6-digit code from your email.');
+        return;
+      }
+      setBusy(true);
+      setError('');
+      try {
+        // Email OTP is the final parent activation step: the backend returns a
+        // signed-in session directly. Sign in without a parent selfie step —
+        // device authentication gates Parent Mode locally instead.
+        const response = await verifyParentEmail(pendingToken, otp.trim());
+        await signIn(response);
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setBusy(false);
+      }
     } finally {
-      setBusy(false);
+      verifyBusyRef.current = false;
     }
   }
 
   async function resend() {
-    if (resending || busy) return;
-    setResending(true);
-    setError('');
+    if (resendBusyRef.current || verifyBusyRef.current) return;
+    resendBusyRef.current = true;
     try {
-      const response = await resendParentEmail(pendingToken);
-      if (__DEV__ && response.dev_code) {
-        setOtp(response.dev_code);
-        setInfo(`Verification code: ${response.dev_code} (expires in 10 minutes)`);
-      } else {
-        setInfo(response.ok ? 'A fresh code is on its way. It expires in 10 minutes.' : (response.error ?? 'Resend failed. Try again.'));
+      if (resending || busy) return;
+      setResending(true);
+      setError('');
+      try {
+        const response = await resendParentEmail(pendingToken);
+        if (__DEV__ && response.dev_code) {
+          setOtp(response.dev_code);
+          setInfo(`Verification code: ${response.dev_code} (expires in 10 minutes)`);
+        } else {
+          setInfo(response.ok ? 'A fresh code is on its way. It expires in 10 minutes.' : (response.error ?? 'Resend failed. Try again.'));
+        }
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setResending(false);
       }
-    } catch (err) {
-      setError(errorText(err));
     } finally {
-      setResending(false);
+      resendBusyRef.current = false;
     }
   }
 

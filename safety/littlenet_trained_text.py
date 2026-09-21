@@ -146,6 +146,7 @@ def _pipeline():
 def _bucket_scores(rows: list[dict[str, Any]]) -> dict[str, float]:
     sexual = violence = toxic = 0.0
     labels: dict[str, float] = {}
+    mapped = False
     for row in rows or []:
         label = str(row.get("label", "")).lower()
         try:
@@ -156,11 +157,25 @@ def _bucket_scores(rows: list[dict[str, Any]]) -> dict[str, float]:
         labels[label] = max(labels.get(label, 0.0), score)
         if any(hint in label for hint in _SEXUAL_HINTS):
             sexual = max(sexual, score)
+            mapped = True
         if any(hint in label for hint in _VIOLENCE_HINTS):
             violence = max(violence, score)
+            mapped = True
         if any(hint in label for hint in _TOXIC_HINTS):
             toxic = max(toxic, score)
-    return {"sexual": sexual, "violence": violence, "toxic": toxic, "labels": labels}
+            mapped = True
+    return {"sexual": sexual, "violence": violence, "toxic": toxic, "labels": labels, "mapped": mapped}
+
+
+def _is_benign_label_set(labels: dict[str, float]) -> bool:
+    """True only for the conventional benign classifier output.
+
+    A classifier returning exactly ``safe`` (case-insensitive) is the
+    established benign contract (``safe``/0.99 -> ALLOW). Anything else --
+    including ``UNSAFE``, which merely *contains* "safe" as a substring --
+    is not interpretable and must fail closed.
+    """
+    return bool(labels) and all(str(label).strip().lower() == "safe" for label in labels)
 
 
 def predict(text: str) -> dict[str, Any]:
@@ -172,7 +187,8 @@ def predict(text: str) -> dict[str, Any]:
     rows = pipe(snippet)
     if rows and isinstance(rows[0], list):
         rows = rows[0]
-    buckets = _bucket_scores(rows if isinstance(rows, list) else [])
+    rows = rows if isinstance(rows, list) else []
+    buckets = _bucket_scores(rows)
 
     sexual = buckets["sexual"]
     violence = buckets["violence"]
@@ -183,6 +199,15 @@ def predict(text: str) -> dict[str, Any]:
         if sexual >= 0.40
         else ("SEVERE_ABUSE" if violence >= 0.60 else "TEXT")
     )
+    # Fail closed on unmapped classifier output: scores were returned but no
+    # label matched any bucket, so the evidence cannot be interpreted -- it
+    # must never become a silent ALLOW. Recorded as a partial safety failure
+    # so policy routes the text to parent review.
+    errors: list[str] = []
+    partial_failure = False
+    if rows and not buckets["mapped"] and not _is_benign_label_set(buckets["labels"]):
+        errors.append("trained_text_unmapped_labels")
+        partial_failure = True
     return {
         "adult_score": sexual,
         "sexual_score": sexual,
@@ -192,8 +217,8 @@ def predict(text: str) -> dict[str, Any]:
         "general_score": general,
         "category": category,
         "total_safety_failure": False,
-        "partial_safety_failure": False,
-        "errors": [],
+        "partial_safety_failure": partial_failure,
+        "errors": errors,
         "model_signals": {
             "littlenet_trained_text": {
                 "labels": buckets["labels"],

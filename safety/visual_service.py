@@ -365,6 +365,84 @@ def _apply_ocr_stage(result, path, ocr, ran):
     return result
 
 
+def _legacy_image_scores(path, *, include_yolo=True, extra_errors=()):
+    """Run the legacy detector stack and return per-class evidence.
+
+    Never raises: each detector is individually guarded so one failure is
+    recorded as partial safety evidence instead of aborting the stack. Scores
+    start at 0.0, so a failed detector can never downgrade evidence another
+    detector (or the trained ensemble) already produced.
+    """
+    adult=sexual=violence=weapon=general=0.0;ran=0;errors=list(extra_errors or []);details={}
+    for name,fn in [('nudenet',lambda:_nudenet(path)),('falconsai',lambda:_falconsai(path))]:
+        try:
+            score=float(timed_call(name,fn,timeout_seconds(name,90)));ran+=1;adult=max(adult,score);sexual=max(sexual,score);details[name]=score
+        except Exception as exc:errors.append(name+'_timeout' if 'timeout' in str(exc) else name)
+    if include_yolo:
+        try:
+            y=timed_call('yolo',lambda:_yolo_objects(path),timeout_seconds('yolo',90));ran+=1
+            weapon=max(weapon,float(y.get('weapon',0) or 0));general=max(general,weapon);details['yolo']=y
+        except Exception as exc:errors.append('yolo_timeout' if 'timeout' in str(exc) else 'yolo')
+    c=_clip_score(path)
+    if c:ran+=1;adult=max(adult,c['adult']);sexual=max(sexual,c.get('sexual',0));violence=max(violence,c['violence']);weapon=max(weapon,c.get('weapon',0));general=max(general,c['general']);details['clip']=c
+    else:errors.append('clip')
+    if env_flag('LITTLENET_ENABLE_OPENNSFW2'):
+        try:
+            s=float(timed_call('opennsfw2',lambda:_opennsfw2(path),timeout_seconds('opennsfw2',90)));ran+=1;adult=max(adult,s);sexual=max(sexual,s);details['opennsfw2']=s
+        except Exception as exc:errors.append('opennsfw2_timeout' if 'timeout' in str(exc) else 'opennsfw2')
+    if env_flag('LITTLENET_ENABLE_EXTRA_NSFW'):
+        try:
+            s=float(timed_call('extra_nsfw',lambda:_extra_hf_nsfw(path),timeout_seconds('extra_nsfw',90)));ran+=1;adult=max(adult,s);sexual=max(sexual,s);details['extra_nsfw']=s
+        except Exception as exc:errors.append('extra_nsfw_timeout' if 'timeout' in str(exc) else 'extra_nsfw')
+    return {'adult':adult,'sexual':sexual,'violence':violence,'weapon':weapon,'general':general,'ran':ran,'errors':errors,'details':details}
+
+
+# Legacy block lines per class, mirroring the legacy path's own category rule:
+# adult_block for 18+ evidence, weapon_block for weapons. The trained
+# ensemble's per-class thresholds are tuned higher than these; the merge
+# below guarantees the trained path can only strengthen the legacy verdict.
+_LEGACY_BLOCK_LINES={'nudity':0.40,'sexy':0.40,'weapons':0.45,'violence':0.48}
+
+
+def _merge_legacy_into_trained(path, trained):
+    """Defense in depth: run the legacy detector stack alongside the trained
+    ensemble and merge evidence by max.
+
+    The trained ensemble replaces NudeNet/FalconsAI/CLIP on this path, but
+    its per-class thresholds are tuned higher than the legacy block lines
+    (e.g. trained nudity threshold 0.89 vs legacy 0.40). Without this merge,
+    any image the legacy stack would BLOCK but the ensemble scores below its
+    own threshold would flip to ALLOW the day the checkpoints are staged --
+    including images where the ensemble scores low but a legacy detector
+    fires. Merging per-class by max guarantees the trained path can only
+    strengthen the legacy verdict, never weaken it. Fail-closed: the legacy
+    helper never raises and scores merge by max only, so a legacy-detector
+    failure can never downgrade a trained BLOCK; it is recorded as partial
+    safety evidence instead. YOLO is not run here:
+    _merge_yolo_into_trained covers it on this path.
+    """
+    legacy=_legacy_image_scores(path, include_yolo=False)
+    try:
+        trained['adult_score']=max(float(trained.get('adult_score',0) or 0),legacy['adult'],legacy['sexual'])
+        trained['sexual_score']=max(float(trained.get('sexual_score',0) or 0),legacy['sexual'],legacy['adult'])
+        trained['violence_score']=max(float(trained.get('violence_score',0) or 0),legacy['violence'])
+        trained['weapon_score']=max(float(trained.get('weapon_score',0) or 0),legacy['weapon'])
+        trained['general_score']=max(float(trained.get('general_score',0) or 0),legacy['general'],trained['adult_score'],trained['sexual_score'],trained['violence_score'],trained['weapon_score'])
+    except (TypeError,ValueError):pass
+    # The merged category must reflect legacy verdicts so policy.decide sees
+    # them (mirrors the legacy path's own category rule).
+    if max(legacy['adult'],legacy['sexual'])>=0.40:
+        trained['category']='ADULT'
+    elif legacy['weapon']>=0.45 and str(trained.get('category','')).upper()!='ADULT':
+        trained['category']='WEAPON'
+    errors=trained.get('errors')
+    if not isinstance(errors,list):errors=trained['errors']=list(errors or [])
+    errors.extend(legacy['errors'])
+    signals=trained.get('model_signals')
+    if isinstance(signals,dict):signals['legacy']=legacy['details']
+    if legacy['errors']:trained['partial_safety_failure']=True
+
+
 def check_image(path, *, ocr=None):
     """Moderate an image through the local visual stack plus optional OCR.
 
@@ -405,12 +483,14 @@ def check_image(path, *, ocr=None):
         except Exception:return normalize_signals({'category':'IMAGE','total_safety_failure':True,'errors':['remote_ai_unavailable']},category='IMAGE')
 
     # Preferred local path once the private V2/V3 checkpoints are staged on the
-    # persistent Modal model-cache volume. Two EfficientNet-B0 specialists are
-    # much lighter than running NudeNet + FalconsAI + CLIP for every ordinary
-    # image; YOLO dangerous-object detection and the OCR burned-in-text stage
-    # still run on this path (defense in depth). If either checkpoint is
-    # missing or inference fails, the existing detector stack remains the
-    # fail-safe fallback.
+    # persistent Modal model-cache volume. The two EfficientNet-B0 specialists
+    # run first; the legacy detector stack (NudeNet/FalconsAI/CLIP) then also
+    # runs and merges by max (_merge_legacy_into_trained), so the trained path
+    # can only strengthen the legacy verdict, never weaken it. YOLO
+    # dangerous-object detection and the OCR burned-in-text stage still run on
+    # this path (defense in depth). If either checkpoint is missing or
+    # inference fails, the existing detector stack remains the fail-safe
+    # fallback.
     trained_error=None
     try:
         from . import littlenet_trained_image
@@ -418,6 +498,7 @@ def check_image(path, *, ocr=None):
             try:
                 trained=littlenet_trained_image.predict(path)
                 trained['compute_tier']='trained_cpu' if _runtime_device()=='cpu' else 'trained_gpu'
+                _merge_legacy_into_trained(path, trained)
                 _merge_yolo_into_trained(path, trained)
                 _apply_ocr_stage(trained, path, ocr, 1)
                 return normalize_signals(trained,category='IMAGE')
@@ -426,27 +507,8 @@ def check_image(path, *, ocr=None):
     except Exception as exc:
         trained_error=f'trained_image_loader:{type(exc).__name__}'
 
-    adult=sexual=violence=weapon=general=0.0;ran=0;errors=[];details={}
-    if trained_error:errors.append(trained_error)
-    for name,fn in [('nudenet',lambda:_nudenet(path)),('falconsai',lambda:_falconsai(path))]:
-        try:
-            score=float(timed_call(name,fn,timeout_seconds(name,90)));ran+=1;adult=max(adult,score);sexual=max(sexual,score);details[name]=score
-        except Exception as exc:errors.append(name+'_timeout' if 'timeout' in str(exc) else name)
-    try:
-        y=timed_call('yolo',lambda:_yolo_objects(path),timeout_seconds('yolo',90));ran+=1
-        weapon=max(weapon,float(y.get('weapon',0) or 0));general=max(general,weapon);details['yolo']=y
-    except Exception as exc:errors.append('yolo_timeout' if 'timeout' in str(exc) else 'yolo')
-    c=_clip_score(path)
-    if c:ran+=1;adult=max(adult,c['adult']);sexual=max(sexual,c.get('sexual',0));violence=max(violence,c['violence']);weapon=max(weapon,c.get('weapon',0));general=max(general,c['general']);details['clip']=c
-    else:errors.append('clip')
-    if env_flag('LITTLENET_ENABLE_OPENNSFW2'):
-        try:
-            s=float(timed_call('opennsfw2',lambda:_opennsfw2(path),timeout_seconds('opennsfw2',90)));ran+=1;adult=max(adult,s);sexual=max(sexual,s);details['opennsfw2']=s
-        except Exception as exc:errors.append('opennsfw2_timeout' if 'timeout' in str(exc) else 'opennsfw2')
-    if env_flag('LITTLENET_ENABLE_EXTRA_NSFW'):
-        try:
-            s=float(timed_call('extra_nsfw',lambda:_extra_hf_nsfw(path),timeout_seconds('extra_nsfw',90)));ran+=1;adult=max(adult,s);sexual=max(sexual,s);details['extra_nsfw']=s
-        except Exception as exc:errors.append('extra_nsfw_timeout' if 'timeout' in str(exc) else 'extra_nsfw')
+    legacy=_legacy_image_scores(path, extra_errors=[trained_error] if trained_error else [])
+    adult=legacy['adult'];sexual=legacy['sexual'];violence=legacy['violence'];weapon=legacy['weapon'];general=legacy['general'];ran=legacy['ran'];errors=legacy['errors'];details=legacy['details']
     result={'adult_score':adult,'sexual_score':sexual,'violence_score':violence,'weapon_score':weapon,'toxicity_score':0,'general_score':max(general,adult,sexual,violence,weapon),'category':'ADULT' if max(adult,sexual)>=.4 else ('WEAPON' if weapon>=.45 else 'IMAGE'),'total_safety_failure':ran==0,'partial_safety_failure':ran>0 and bool(errors),'errors':errors,'model_signals':details}
     # Burned-in text screening (shared stage; see _apply_ocr_stage).
     _apply_ocr_stage(result, path, ocr, ran)

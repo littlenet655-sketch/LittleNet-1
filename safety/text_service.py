@@ -326,6 +326,12 @@ def check_text(text:str):
                     sexual = max(sexual, float(tts.get('sexual_score', 0) or 0))
                     toxicity = max(toxicity, float(tts.get('toxicity_score', 0) or 0))
                     severe = max(severe, float(tts.get('violence_score', 0) or 0))
+                    if tts.get('partial_safety_failure'):
+                        # The classifier returned scores no bucket could
+                        # interpret (e.g. unknown labels): fail closed to
+                        # parent review, never a silent ALLOW.
+                        tts_errors = [str(e) for e in (tts.get('errors') or []) if e]
+                        errors.extend(tts_errors or ['trained_text_partial_failure'])
                     extras['trained_text'] = (tts.get('model_signals') or {}).get('littlenet_trained_text', {})
                     extras['trained_text_model'] = True
                     ran += 1

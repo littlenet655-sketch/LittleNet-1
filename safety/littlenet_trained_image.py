@@ -149,7 +149,10 @@ def _threshold(checkpoint: dict[str, Any], label: str, fallback: float) -> float
         value = float(raw)
     except (TypeError, ValueError):
         value = fallback
-    return max(0.01, min(0.99, value))
+    # Tighten-only: a checkpoint may lower the policy default (stricter
+    # blocking) but never raise it (looser blocking). ``fallback`` is the
+    # policy default for the label.
+    return max(0.01, min(0.99, min(value, fallback)))
 
 
 def _below_threshold_score(probability: float, threshold: float, ceiling: float) -> float:

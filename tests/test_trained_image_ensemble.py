@@ -1,6 +1,8 @@
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 
 def test_trained_image_ensemble_requires_both_checkpoint_files(tmp_path, monkeypatch):
     from safety import littlenet_trained_image as trained
@@ -106,3 +108,21 @@ def test_visual_service_falls_back_when_private_checkpoints_are_missing(tmp_path
     predict.assert_not_called()
     assert result["total_safety_failure"] is False
     assert result["adult_score"] < 0.40
+
+
+def test_trained_image_checkpoint_thresholds_are_tighten_only():
+    """A checkpoint may only tighten the policy-default thresholds, never
+    loosen them: effective threshold = min(checkpoint_value, policy_default),
+    still clamped to [0.01, 0.99]."""
+    from safety import littlenet_trained_image as trained
+
+    # Loosening attempt: checkpoint 0.95 is clamped down to the 0.89 default.
+    assert trained._threshold({"thresholds": {"nudity": 0.95}}, "nudity", 0.89) == pytest.approx(0.89)
+    # Tightening is honored.
+    assert trained._threshold({"thresholds": {"nudity": 0.50}}, "nudity", 0.89) == pytest.approx(0.50)
+    # Missing / malformed values fall back to the policy default.
+    assert trained._threshold({}, "nudity", 0.89) == pytest.approx(0.89)
+    assert trained._threshold({"thresholds": {"nudity": "high"}}, "nudity", 0.89) == pytest.approx(0.89)
+    # The [0.01, 0.99] clamp is preserved on both ends.
+    assert trained._threshold({"thresholds": {"nudity": 5.0}}, "nudity", 0.89) == pytest.approx(0.89)
+    assert trained._threshold({"thresholds": {"nudity": 0.0}}, "nudity", 0.89) == pytest.approx(0.01)

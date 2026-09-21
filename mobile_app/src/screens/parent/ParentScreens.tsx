@@ -1401,7 +1401,7 @@ export function ParentScreenTimeScreen({ route }: ParentScreenProps<'ScreenTime'
 
   if (dashboard.isPending) return <Screen><LoadingState message="Loading screen time…" /></Screen>;
   if (dashboard.isError) return <Screen><ErrorState message={errorText(dashboard.error)} onRetry={() => void dashboard.refetch()} /></Screen>;
-  if (!child) return <Screen><EmptyState title="Child not found" body="This child is no longer on your dashboard. Pick another child to manage screen time." /></Screen>;
+  if (!child) return <Screen><EmptyState title="Child not found" body="This child is no longer on your dashboard. Pick another child to manage screen time." actionLabel="Choose another child" onAction={() => setChildId(null)} /></Screen>;
 
   const valid = Number.isInteger(Number(minutes)) && Number(minutes) >= 1 && Number(minutes) <= 1440;
   const limit = Number(minutes);

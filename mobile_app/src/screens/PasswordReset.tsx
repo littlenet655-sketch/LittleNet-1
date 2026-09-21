@@ -48,7 +48,7 @@ export function ForgotPasswordScreen({ navigation }: AuthScreenProps<'ForgotPass
         <ScrollView keyboardShouldPersistTaps="handled">
           <BrandHeader title="Reset password" subtitle="Enter your username or email and we will send a 6-digit code (15 minutes)." />
           <Card>
-            <Field label="Username or email" autoCapitalize="none" autoCorrect={false} value={identifier} onChangeText={setIdentifier} />
+            <Field label="Username or email" autoCapitalize="none" autoCorrect={false} keyboardType="email-address" value={identifier} onChangeText={setIdentifier} />
             {error ? <Notice message={error} /> : null}
             <Button label={busy ? 'Sending…' : 'Send reset code'} onPress={submit} loading={busy} disabled={busy} />
           </Card>
@@ -78,6 +78,10 @@ export function ResetPasswordScreen({ navigation, route }: AuthScreenProps<'Rese
     setError('');
     try {
       const response = await resetPassword(userId, code.trim(), password);
+      if (!response.ok) {
+        setError(response.message || 'Could not reset your password. Try again.');
+        return;
+      }
       setDone(response.message);
     } catch (err) {
       setError(errorText(err));

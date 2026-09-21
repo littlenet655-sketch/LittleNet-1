@@ -7,7 +7,7 @@ import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthProvider';
 import { clearPendingDestination, loadPendingDestination, savePendingDestination } from '../auth/session';
 import { secureStoreBackend } from '../auth/storage';
-import type { ChildScreenProps } from '../navigation/types';
+import type { ChildScreenProps, ChildStackParamList } from '../navigation/types';
 import { quizLoadStatus, shouldProceedAfterRefresh } from '../quiz/decision';
 import { Button, Card, GateNotice, LoadingState, Notice, Screen } from '../ui/components';
 import { colors, radius, spacing, type } from '../ui/tokens';
@@ -20,6 +20,27 @@ interface QuizScreenParams {
 type Phase = 'loading' | 'hub' | 'ready' | 'unavailable' | 'complete';
 
 const OPTION_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
+
+/**
+ * Route names the quiz-completion reset is allowed to target. The stored
+ * destination comes from unvalidated SecureStore (via route params), so a
+ * stale or garbage string must fall back to 'KidsTabs' instead of resetting
+ * to a nonexistent route. Typed against the real param list so a typo here
+ * fails typecheck.
+ */
+const KNOWN_QUIZ_DESTINATIONS: ReadonlySet<keyof ChildStackParamList> = new Set([
+  'FaceEnroll', 'Quiz', 'KidsTabs', 'FeedTab', 'DiscoverTab', 'CreateTab', 'ReelsTab',
+  'ProfileTab', 'Stories', 'NotificationsTab', 'Conversations', 'Chat', 'ChatDetails',
+  'NewMessage', 'SavedContent', 'EditProfile', 'Connections', 'PostDetail',
+  'SafetyCentre', 'ReportHistory', 'OtherProfile', 'ProcessingStatus',
+]);
+
+/** Resolve a stored pending destination to a real route, else 'KidsTabs'. */
+function resolveQuizDestination(stored: string | null): keyof ChildStackParamList {
+  return stored && KNOWN_QUIZ_DESTINATIONS.has(stored as keyof ChildStackParamList)
+    ? (stored as keyof ChildStackParamList)
+    : 'KidsTabs';
+}
 
 /**
  * Mandatory onboarding quiz + recurring feed quiz gate with gamified child UI.
@@ -66,6 +87,9 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
 
   const load = useCallback(async () => {
     if (!session) return;
+    // A reload mid-feedback-window must not let a stale timeout skip a
+    // question or double-fire completeQuiz from the previous attempt.
+    clearPendingTimeouts();
     setPhase('loading');
     setError(null);
     setGateMessage('');
@@ -110,10 +134,13 @@ export function QuizScreen({ navigation, route }: ChildScreenProps<'Quiz'>) {
         await load();
         return;
       }
-      const destination = (await loadPendingDestination(secureStoreBackend)) ?? 'KidsTabs';
+      const stored = await loadPendingDestination(secureStoreBackend);
+      const destination = resolveQuizDestination(stored);
       await clearPendingDestination(secureStoreBackend);
-      navigation.reset({ index: 0, routes: [{ name: destination as never }] });
+      navigation.reset({ index: 0, routes: [{ name: destination }] });
     } catch (err) {
+      // 401: the session is cleared upstream and the navigator leaves the
+      // quiz; the finally below still resets busy so nothing is left disabled.
       if (err instanceof ApiError && err.status === 401) return;
       setGateMessage('Could not confirm quiz completion. Check your connection and retry — you are still safely gated.');
     } finally {
