@@ -249,3 +249,28 @@ def test_modal_deployment_keeps_trained_text_off_until_explicit_promotion():
     assert '"LITTLENET_TRAINED_TEXT_MODE": "off"' in ai
     assert '"LITTLENET_TRAINED_TEXT_MODE": "off"' in web
     assert "--trained-text-preflight-only" in ai
+
+
+def test_async_media_fusion_preserves_legacy_behavior_but_carries_enforced_trained_text_risk():
+    from services.media_processor import _merge_signals
+    from safety.policy import decide
+
+    legacy = _merge_signals(
+        {"general_score": 0.90, "toxicity_score": 0.01},
+        {"adult_score": 0.01, "general_score": 0.90},
+    )
+    # Historical async fusion ignored generic general_score; keep that behavior
+    # while the trained model is off/shadow.
+    assert legacy.get("general_score") == 0.0
+
+    trained = _merge_signals(
+        {
+            "trained_text_model": True,
+            "general_score": 0.50,
+            "toxicity_score": 0.01,
+            "model_signals": {"littlenet_trained_text": {"release": "unit"}},
+        },
+        {"adult_score": 0.01},
+    )
+    assert trained["general_score"] == 0.50
+    assert decide(trained, "STRICT").action == "REVIEW"
