@@ -5,6 +5,7 @@ import json
 from flask import g, jsonify, request
 
 from database.connection import fetch_all, fetch_one, get_db_connection
+from auth.service import parent_verification_complete
 from extensions import csrf, limiter
 from mobile.api import _asset_url, _clean, _require_mobile, _resolve_parent_review
 from mobile.stitch_api import register_mobile_stitch_api
@@ -152,6 +153,22 @@ def register_mobile_admin_api(bp):
             if not target:
                 conn.rollback()
                 return jsonify(error='user_not_found'), 404
+            if new_status == 'ACTIVE' and target['role'] == 'PARENT' and not parent_verification_complete(int(target_user_id)):
+                # Server-side enforcement: an admin must not activate a parent
+                # that never completed identity verification (email OTP + live
+                # adult/liveness). UI hiding is not security.
+                conn.rollback()
+                cur.execute(
+                    """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)
+                       VALUES(%s,'USER_STATUS_BLOCKED','USER',%s,%s::jsonb)""",
+                    (
+                        g.mobile_user['user_id'],
+                        target_user_id,
+                        json.dumps({'from': target['account_status'], 'to': new_status, 'role': target['role'], 'reason': 'parent_verification_incomplete'}),
+                    ),
+                )
+                conn.commit()
+                return jsonify(error='parent_verification_incomplete'), 403
             cur.execute("UPDATE users SET account_status=%s, session_version = COALESCE(session_version, 1) + 1 WHERE user_id=%s", (new_status, target_user_id))
             cur.execute(
                 """INSERT INTO admin_audit_logs(admin_id,action,target_type,target_id,details)

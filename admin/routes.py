@@ -1,6 +1,7 @@
 import json
 from flask import Blueprint, render_template, request, redirect, session, jsonify
 from decorators import admin_required
+from auth.service import parent_verification_complete
 from database.connection import fetch_all, fetch_one, execute, get_db_connection
 
 admin_bp = Blueprint('admin', __name__, template_folder='templates')
@@ -112,6 +113,12 @@ def user_action(user_id):
         _admin_audit('USER_DELETE','USER',user_id,{'role':row['role'],'status':row['account_status']})
     else:
         new='SUSPENDED' if action=='SUSPEND' else 'ACTIVE'
+        if new == 'ACTIVE' and row['role'] == 'PARENT' and not parent_verification_complete(user_id):
+            # Server-side enforcement: an admin must not activate a parent
+            # that never completed identity verification (email OTP + live
+            # adult/liveness). UI hiding is not security.
+            _admin_audit('USER_ACTIVATE_BLOCKED','USER',user_id,{'role':row['role'],'status':row['account_status'],'reason':'parent_verification_incomplete'})
+            return ('Parent identity verification is incomplete: activation blocked. The parent must complete email OTP and live adult verification first.',403)
         execute('UPDATE users SET account_status=%s WHERE user_id=%s',(new,user_id))
         _admin_audit('USER_'+action,'USER',user_id,{'from':row['account_status'],'to':new})
     return redirect(request.referrer or '/admin/users/')

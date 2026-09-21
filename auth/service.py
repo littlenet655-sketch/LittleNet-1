@@ -675,6 +675,44 @@ def approve_child_account(token):
     """
     raise RuntimeError("Direct token-only child approval is disabled; parent verification is required")
 
+def parent_verification_complete(parent_user_id):
+    """Authoritative check: has this PARENT completed identity verification?
+
+    Used by admin account-status transitions so an admin can never activate
+    an unverified/pending parent (UI hiding is not security). Evidence is
+    read from existing authoritative records only — no new state invented:
+
+    1. ``parent_verifications`` row with ``verification_status='VERIFIED'``
+       (express/token guardian flow — the same record the database trigger
+       ``littlenet_guard_parent_child_approval`` treats as authoritative), OR
+    2. the OTP+liveness flow: ``parent_email_otps.verified_at`` is set AND
+       liveness evidence exists — either a ``face_profiles`` enrollment row
+       (Face ID captured during liveness) or an ``activity_logs``
+       ``PARENT_LIVENESS_VERIFIED`` audit record (covers parents whose Face
+       ID was legitimately reset after verification).
+    """
+    try:
+        uid = int(parent_user_id)
+    except (TypeError, ValueError):
+        return False
+    verified = fetch_one(
+        "SELECT 1 FROM parent_verifications WHERE parent_user_id=%s AND verification_status='VERIFIED' LIMIT 1",
+        (uid,),
+    )
+    if verified:
+        return True
+    otp = fetch_one("SELECT verified_at FROM parent_email_otps WHERE user_id=%s", (uid,))
+    if not otp or not otp.get("verified_at"):
+        return False
+    face = fetch_one("SELECT 1 FROM face_profiles WHERE child_id=%s LIMIT 1", (uid,))
+    if face:
+        return True
+    audit = fetch_one(
+        "SELECT 1 FROM activity_logs WHERE child_id=%s AND activity_type='PARENT_LIVENESS_VERIFIED' LIMIT 1",
+        (uid,),
+    )
+    return bool(audit)
+
 def login_user(identifier, password):
     val = (identifier or '').strip()
     pwd = password or ''
