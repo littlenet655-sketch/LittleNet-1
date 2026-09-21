@@ -62,7 +62,7 @@ from quiz.service import (
     record_feed_view,
     required_feed_quiz,
 )
-from safety.face_service import clear_child_face, enroll, has_face_profile, verify, verify_adult_face
+from safety.face_service import clear_child_face, enroll, has_face_profile, store_embedding, verify, verify_adult_face
 from safety.moderation_service import evaluate, record, safety_level
 from safety.pii_service import scan_pii
 from safety.policy import Decision, decide
@@ -1183,11 +1183,17 @@ def register_mobile_api(bp):
                     message="Adult verification did not pass. Retake the live selfie and try again.",
                 ), 403
 
-            # Parent activation is independent of optional Face ID enrollment. Never
-            # create an empty/fake face profile when Facenet512 enrollment fails.
+            # The adult-verification AI response normally carries the Facenet512
+            # embedding from the same verified selfie. Persist it directly so signup
+            # does not make a second heavy face-inference round-trip.
             face_id_enrolled = False
             try:
-                enroll(int(pending["uid"]), path)
+                verified_embedding = result.get("embedding")
+                if verified_embedding:
+                    store_embedding(int(pending["uid"]), verified_embedding)
+                else:
+                    # Backward-compatible fallback for an older AI deployment.
+                    enroll(int(pending["uid"]), path)
                 b_key = secrets.token_hex(32)
                 execute(
                     """UPDATE face_profiles
@@ -1197,6 +1203,8 @@ def register_mobile_api(bp):
                 )
                 face_id_enrolled = True
             except Exception:
+                # Parent activation remains based on the completed adult check;
+                # optional Face ID enrollment can be retried later.
                 face_id_enrolled = False
 
             execute("UPDATE users SET account_status='ACTIVE' WHERE user_id=%s AND role='PARENT'", (int(pending["uid"]),))
