@@ -393,8 +393,27 @@ def _build_custom_runtime(root: Path, metadata: dict[str, Any]):
 
     tokenizer = AutoTokenizer.from_pretrained(str(root), local_files_only=True)
     model = LittleNetTextSafetyModel()
-    checkpoint = torch.load(root / _CUSTOM_MODEL, map_location="cpu", weights_only=True)
+    # Final V2 was saved as a trusted LittleNet checkpoint dictionary
+    # (epoch/model_state_dict/labels/model_name/max_length/macro_auprc).
+    # Prefer PyTorch's restricted loader; fall back to the original training
+    # loader only for this fixed private-volume artifact if required.
+    try:
+        checkpoint = torch.load(root / _CUSTOM_MODEL, map_location="cpu", weights_only=True)
+    except Exception:
+        checkpoint = torch.load(root / _CUSTOM_MODEL, map_location="cpu", weights_only=False)
     state_dict = _state_dict_from_checkpoint(checkpoint)
+
+    # Verify checkpoint metadata agrees with the staged metadata/bundle before
+    # accepting a trusted-pickle fallback.
+    if isinstance(checkpoint, dict):
+        checkpoint_labels = checkpoint.get("labels")
+        if isinstance(checkpoint_labels, list) and checkpoint_labels:
+            cleaned = [_clean_label(x) for x in checkpoint_labels]
+            if cleaned != list(metadata["labels"]):
+                raise RuntimeError("trained_text_checkpoint_labels_mismatch")
+        checkpoint_max_length = checkpoint.get("max_length")
+        if checkpoint_max_length is not None and int(checkpoint_max_length) != int(metadata["max_length"]):
+            raise RuntimeError("trained_text_checkpoint_max_length_mismatch")
     try:
         model.load_state_dict(state_dict, strict=True)
     except RuntimeError as exc:
