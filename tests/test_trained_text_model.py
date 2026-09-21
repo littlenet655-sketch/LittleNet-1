@@ -39,22 +39,21 @@ def test_trained_text_bundle_availability_requires_complete_private_bundle(tmp_p
     monkeypatch.setenv("LITTLENET_TRAINED_TEXT_PATH", str(tmp_path))
     assert trained.available() is False
 
-    (tmp_path / "config.json").write_text("{}", encoding="utf-8")
-    (tmp_path / "littlenet_metadata.json").write_text(
-        json.dumps(
-            {
-                "format": "huggingface_sequence_classification",
-                "release": "unit",
-                "labels": ["safe", "unsafe"],
-                "thresholds": {"safe": 0.5, "unsafe": 0.5},
-            }
-        ),
+    (tmp_path / "metadata.json").write_text(
+        json.dumps({"labels": [
+            "sexual", "grooming", "bullying", "hate", "violence", "self_harm",
+            "drugs", "alcohol", "smoking", "gambling", "profanity",
+            "pii_request", "contact_request",
+        ]}),
         encoding="utf-8",
     )
-    (tmp_path / "model.safetensors").write_bytes(b"weights")
+    (tmp_path / "littlenet_text_model.pt").write_bytes(b"weights")
+    (tmp_path / "vocab.txt").write_text("[PAD]\n[UNK]\n", encoding="utf-8")
     assert trained.available() is False
 
-    (tmp_path / "vocab.txt").write_text("[PAD]\n[UNK]\n", encoding="utf-8")
+    encoder = tmp_path / "encoder"
+    encoder.mkdir()
+    (encoder / "config.json").write_text("{}", encoding="utf-8")
     assert trained.available() is True
 
 
