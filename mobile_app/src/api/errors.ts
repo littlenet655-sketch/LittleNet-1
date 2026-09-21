@@ -143,8 +143,18 @@ export function userMessageFor(status: number, code: string, body?: Record<strin
       return 'We could not confidently confirm adult age from this photo. Retake it in clear, even lighting.';
     case 'age_verification_unavailable':
       return 'Adult age verification is temporarily unavailable. Please try again in a moment.';
-    case 'adult_verification_failed':
+    case 'adult_verification_failed': {
+      const reason = typeof body?.reason === 'string' ? body.reason : '';
+      if (reason === 'single_face_required')
+        return 'Keep exactly one face fully inside the oval, then blink again.';
+      if (reason === 'liveness_failed')
+        return 'Live-face verification did not pass. Look straight at the camera in good light and blink again.';
+      if (reason === 'age_estimate_ambiguous')
+        return 'We could not confidently confirm adult age from this photo. Retake it in clear, even lighting.';
+      if (reason === 'age_verification_unavailable')
+        return 'Adult age verification is temporarily unavailable. Please try again in a moment.';
       return 'Adult verification failed. An adult guardian must complete this step.';
+    }
     case 'adult_verification_unavailable':
       return 'Adult verification is temporarily busy. Please try again in a moment.';
     case 'disabled_by_parent':

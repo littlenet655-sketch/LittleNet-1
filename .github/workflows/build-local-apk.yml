@@ -1,0 +1,65 @@
+name: Build LittleNet APK Locally
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  build-apk:
+    if: ${{ github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[build-local-apk]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      CI: "1"
+      NODE_ENV: production
+      EXPO_PUBLIC_API_BASE_URL: https://netlittle2--littlenet-web-web.modal.run
+      GRADLE_OPTS: -Dorg.gradle.jvmargs=-Xmx4g
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.13.0'
+          cache: npm
+          cache-dependency-path: mobile_app/package-lock.json
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install mobile dependencies
+        working-directory: mobile_app
+        run: npm ci
+      - name: Validate mobile source
+        working-directory: mobile_app
+        run: |
+          npm run typecheck
+          npm test
+          npx expo install --check
+      - name: Generate native Android project
+        working-directory: mobile_app
+        run: npx expo prebuild --platform android --clean --no-install
+      - name: Build standalone release APK
+        working-directory: mobile_app/android
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --no-daemon --stacktrace
+      - name: Collect and verify APK
+        run: |
+          set -euo pipefail
+          APK="$(find mobile_app/android/app/build/outputs/apk/release -type f -name '*.apk' | head -n 1)"
+          test -n "$APK"
+          test -s "$APK"
+          cp "$APK" LittleNet-1.0.1-guardian-fix.apk
+          unzip -t LittleNet-1.0.1-guardian-fix.apk >/dev/null
+          sha256sum LittleNet-1.0.1-guardian-fix.apk | tee LittleNet-1.0.1-guardian-fix.apk.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LittleNet-1.0.1-guardian-fix-apk
+          path: |
+            LittleNet-1.0.1-guardian-fix.apk
+            LittleNet-1.0.1-guardian-fix.apk.sha256
+          if-no-files-found: error
+          retention-days: 14
